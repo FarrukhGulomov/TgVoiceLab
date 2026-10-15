@@ -29,7 +29,8 @@ export interface IncomingMessage {
   chat: { type: string; id: string };
   receivedAt: Date;
   text?: string;
-  voice?: { bytes: Uint8Array; mime: string; durationSeconds: number };
+  /** `sizeBytes` lets an adapter report the size WITHOUT downloading an oversized file. */
+  voice?: { bytes: Uint8Array; mime: string; durationSeconds: number; sizeBytes?: number };
   forwarded?: boolean;
 }
 
@@ -41,8 +42,13 @@ export type IntakeResult =
 export class IntakeService {
   constructor(
     private readonly d: {
-      db: Db; crypto: DataCrypto; clock: Clock; tasks: TaskService; reminders: ReminderService;
-      interpreter: TextInterpreterPort; transcription?: TranscriptionPort | undefined;
+      db: Db;
+      crypto: DataCrypto;
+      clock: Clock;
+      tasks: TaskService;
+      reminders: ReminderService;
+      interpreter: TextInterpreterPort;
+      transcription?: TranscriptionPort | undefined;
     },
   ) {}
 
@@ -67,7 +73,7 @@ export class IntakeService {
       outcome = 'forwarded_ignored';
     } else if (m.voice) {
       if (m.voice.durationSeconds > VOICE_MAX_SECONDS) rejection = { key: 'voice_too_long', vars: { limit: VOICE_MAX_SECONDS / 60 } };
-      else if (m.voice.bytes.byteLength > VOICE_MAX_BYTES) rejection = { key: 'voice_too_large' };
+      else if ((m.voice.sizeBytes ?? m.voice.bytes.byteLength) > VOICE_MAX_BYTES) rejection = { key: 'voice_too_large' };
       else if (!this.d.transcription) rejection = { key: 'transcription_unavailable' };
       else {
         try {
@@ -85,12 +91,17 @@ export class IntakeService {
       if (rejection && !outcome) outcome = 'voice_rejected';
     }
 
-    const intent: Intent | null = rejection ? null : await this.d.interpreter.interpret(text, { receivedAt: m.receivedAt, timezone: p.timezone, locale: p.locale });
+    const intent: Intent | null = rejection
+      ? null
+      : await this.d.interpreter.interpret(text, { receivedAt: m.receivedAt, timezone: p.timezone, locale: p.locale });
 
     return db.tx(async (c) => {
       // Durable dedupe + effect in ONE transaction: a crash before commit means redelivery reprocesses from scratch; after
       // commit, redelivery is a no-op. Together that gives exactly-once *effect* for at-least-once *delivery*.
-      const ins = await c.query('INSERT INTO inbound_updates (account_id, update_key) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING 1', [m.accountId, m.updateKey]);
+      const ins = await c.query('INSERT INTO inbound_updates (account_id, update_key) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING 1', [
+        m.accountId,
+        m.updateKey,
+      ]);
       if (!ins.rowCount) return { status: 'duplicate' } as const;
 
       await this.storeMessage(c, p, m, text, confidence);
@@ -116,16 +127,43 @@ export class IntakeService {
        WHERE NOT EXISTS (SELECT 1 FROM conversations WHERE owner_id=$1 AND channel=$2 AND external_id=$3) RETURNING id`,
       [p.ownerId, m.voice ? 'telegram_voice_note' : 'telegram_text', m.chat.id],
     );
-    const convId = conv.rows[0]?.id ?? (await c.query<{ id: string }>('SELECT id FROM conversations WHERE owner_id=$1 AND channel=$2 AND external_id=$3', [p.ownerId, m.voice ? 'telegram_voice_note' : 'telegram_text', m.chat.id])).rows[0]!.id;
+    const convId =
+      conv.rows[0]?.id ??
+      (
+        await c.query<{ id: string }>('SELECT id FROM conversations WHERE owner_id=$1 AND channel=$2 AND external_id=$3', [
+          p.ownerId,
+          m.voice ? 'telegram_voice_note' : 'telegram_text',
+          m.chat.id,
+        ])
+      ).rows[0]!.id;
     await c.query(
       `INSERT INTO messages (owner_id, conversation_id, account_id, provider_message_id, direction, content_enc, confidence, occurred_at, retention_expires_at)
        VALUES ($1,$2,$3,$4,'inbound',$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
-      [p.ownerId, convId, m.accountId, m.providerMessageId, crypto.enc(p.ownerId, 'messages.content', text), confidence, m.receivedAt, new Date(clock.now().getTime() + MESSAGE_RETENTION_MS)],
+      [
+        p.ownerId,
+        convId,
+        m.accountId,
+        m.providerMessageId,
+        crypto.enc(p.ownerId, 'messages.content', text),
+        confidence,
+        m.receivedAt,
+        new Date(clock.now().getTime() + MESSAGE_RETENTION_MS),
+      ],
     );
   }
 
   private async reply(c: pg.PoolClient, p: Principal, text: string) {
-    await emitOutbox(c, { ownerId: p.ownerId, aggregateType: 'owner', aggregateId: p.ownerId, type: 'owner.reply', payload: { textEnc: this.d.crypto.enc(p.ownerId, 'outbox.reply', text) } }, this.d.clock.now());
+    await emitOutbox(
+      c,
+      {
+        ownerId: p.ownerId,
+        aggregateType: 'owner',
+        aggregateId: p.ownerId,
+        type: 'owner.reply',
+        payload: { textEnc: this.d.crypto.enc(p.ownerId, 'outbox.reply', text) },
+      },
+      this.d.clock.now(),
+    );
   }
 
   /** Execute inside a savepoint: a DomainError becomes a user-facing reply and rolls back only that intent's writes. */
@@ -169,7 +207,10 @@ export class IntakeService {
   private async resolveRef(c: pg.PoolClient, ownerId: string, kind: 'tasks' | 'reminders', ref: TaskRef): Promise<string> {
     const bad = (key: MessageKey) => Object.assign(new DomainError('ref', 'unresolved reference'), { details: { key } });
     if (ref.by === 'ordinal') {
-      const s = await c.query<{ item_ids: string[]; created_at: Date }>('SELECT item_ids, created_at FROM list_snapshots WHERE owner_id=$1 AND kind=$2 ORDER BY created_at DESC LIMIT 1', [ownerId, kind]);
+      const s = await c.query<{ item_ids: string[]; created_at: Date }>(
+        'SELECT item_ids, created_at FROM list_snapshots WHERE owner_id=$1 AND kind=$2 ORDER BY created_at DESC LIMIT 1',
+        [ownerId, kind],
+      );
       const snap = s.rows[0];
       if (!snap) throw bad('ref_unresolved');
       if (this.d.clock.now().getTime() - snap.created_at.getTime() > SNAPSHOT_MAX_AGE_MS) throw bad('ref_stale');
@@ -209,7 +250,12 @@ export class IntakeService {
       case 'list_tasks': {
         const list = await tasks.list(c, p.ownerId);
         if (!list.length) return t(loc, 'tasks_empty');
-        await this.saveSnapshot(c, p.ownerId, 'tasks', list.map((x) => x.id));
+        await this.saveSnapshot(
+          c,
+          p.ownerId,
+          'tasks',
+          list.map((x) => x.id),
+        );
         return [t(loc, 'tasks_header'), ...list.map((x, i) => `${i + 1}. ${x.title}${this.fmtDue(x, p.timezone)}`)].join('\n');
       }
       case 'complete_task': {
@@ -228,13 +274,22 @@ export class IntakeService {
       case 'create_reminder': {
         const when = this.local(intent.at, p.timezone);
         // The scheduling confirmation (with exact local date/time/zone) is emitted via the outbox by the service itself.
-        await reminders.create(p.ownerId, { title: intent.title, localDateTime: when.localDateTime, ...(intent.recurrence ? { recurrence: intent.recurrence } : {}) }, c);
+        await reminders.create(
+          p.ownerId,
+          { title: intent.title, localDateTime: when.localDateTime, ...(intent.recurrence ? { recurrence: intent.recurrence } : {}) },
+          c,
+        );
         return null;
       }
       case 'list_reminders': {
         const list = await reminders.listActive(p.ownerId);
         if (!list.length) return t(loc, 'reminders_empty');
-        await this.saveSnapshot(c, p.ownerId, 'reminders', list.map((x) => x.id));
+        await this.saveSnapshot(
+          c,
+          p.ownerId,
+          'reminders',
+          list.map((x) => x.id),
+        );
         return [t(loc, 'reminders_header'), ...list.map((x, i) => `${i + 1}. ${x.title} — ${x.next ? `${x.next.date} ${x.next.time}` : ''}`)].join('\n');
       }
       case 'reschedule_reminder': {

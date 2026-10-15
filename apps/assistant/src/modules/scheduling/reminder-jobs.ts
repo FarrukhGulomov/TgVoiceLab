@@ -6,12 +6,7 @@ import { writeAudit } from '../audit/audit.js';
 import { nextOccurrence, type Recurrence } from './recurrence.js';
 import { inQuietHours, type QuietHours } from './quiet-hours.js';
 
-export type FireOutcome =
-  | 'fired'
-  | 'fired_late'
-  | 'call_downgraded_to_message'
-  | 'missed_summarized'
-  | 'stale_rejected';
+export type FireOutcome = 'fired' | 'fired_late' | 'call_downgraded_to_message' | 'missed_summarized' | 'stale_rejected';
 
 export const MESSAGE_GRACE_MS = 24 * 3600_000; // spec §7: deliver overdue message reminders within 24h, once
 export const CALL_GRACE_MS = 5 * 60_000; // spec §7: call reminders missed by >5 min become message notices
@@ -21,8 +16,14 @@ export interface FireDeps {
 }
 
 interface ReminderRow {
-  id: string; owner_id: string; status: string; schedule_version: number; mode: 'message' | 'call';
-  recurrence: Recurrence | null; timezone: string; local: string;
+  id: string;
+  owner_id: string;
+  status: string;
+  schedule_version: number;
+  mode: 'message' | 'call';
+  recurrence: Recurrence | null;
+  timezone: string;
+  local: string;
 }
 
 export async function fireReminderOccurrence(db: Db, job: ClaimedJob, deps: FireDeps): Promise<FireOutcome> {
@@ -42,9 +43,19 @@ export async function fireReminderOccurrence(db: Db, job: ClaimedJob, deps: Fire
     const r = rem.rows[0];
     const o = occ.rows[0];
 
-    const stale = !r || !o || r.status !== 'active' || r.schedule_version !== scheduleVersion || o.schedule_version !== scheduleVersion || o.state !== 'scheduled';
+    const stale =
+      !r || !o || r.status !== 'active' || r.schedule_version !== scheduleVersion || o.schedule_version !== scheduleVersion || o.state !== 'scheduled';
     if (stale) {
-      await writeAudit(c, { ownerId: job.ownerId, actorType: 'system', action: 'reminder.fire', resourceType: 'reminder', resourceId: reminderId, allowed: false, reasonCode: 'stale_schedule_rejected', metadata: { occurrenceId, jobScheduleVersion: scheduleVersion, currentScheduleVersion: r?.schedule_version ?? null } });
+      await writeAudit(c, {
+        ownerId: job.ownerId,
+        actorType: 'system',
+        action: 'reminder.fire',
+        resourceType: 'reminder',
+        resourceId: reminderId,
+        allowed: false,
+        reasonCode: 'stale_schedule_rejected',
+        metadata: { occurrenceId, jobScheduleVersion: scheduleVersion, currentScheduleVersion: r?.schedule_version ?? null },
+      });
       if (o && o.state === 'scheduled') await c.query(`UPDATE reminder_occurrences SET state='skipped_stale' WHERE id=$1`, [occurrenceId]);
       if (!(await completeJob(c, job))) throw new LostLeaseError(job.id);
       return 'stale_rejected' as const;
@@ -76,13 +87,17 @@ export async function fireReminderOccurrence(db: Db, job: ClaimedJob, deps: Fire
       }
     }
 
-    await emitOutbox(c, {
-      ownerId: job.ownerId,
-      aggregateType: 'reminder',
-      aggregateId: reminderId,
-      type: 'reminder.notify',
-      payload: { reminderId, occurrenceId, variant, silent: quiet, scheduledAt: o.scheduled_at.toISOString() },
-    }, now);
+    await emitOutbox(
+      c,
+      {
+        ownerId: job.ownerId,
+        aggregateType: 'reminder',
+        aggregateId: reminderId,
+        type: 'reminder.notify',
+        payload: { reminderId, occurrenceId, variant, silent: quiet, scheduledAt: o.scheduled_at.toISOString() },
+      },
+      now,
+    );
 
     // Schedule the next occurrence (recurring) or complete the reminder, in the same transaction as the firing.
     if (r.recurrence) {
@@ -103,13 +118,24 @@ export async function fireReminderOccurrence(db: Db, job: ClaimedJob, deps: Fire
       await c.query(`UPDATE reminders SET status='completed', next_occurrence_at=NULL WHERE id=$1`, [reminderId]);
     }
 
-    await writeAudit(c, { ownerId: job.ownerId, actorType: 'system', action: 'reminder.fire', resourceType: 'reminder', resourceId: reminderId, allowed: true, reasonCode: outcome, metadata: { occurrenceId, lateMs } });
+    await writeAudit(c, {
+      ownerId: job.ownerId,
+      actorType: 'system',
+      action: 'reminder.fire',
+      resourceType: 'reminder',
+      resourceId: reminderId,
+      allowed: true,
+      reasonCode: outcome,
+      metadata: { occurrenceId, lateMs },
+    });
     // Settle the job LAST and in the same tx: if we lost the lease (e.g. concurrent reschedule/cancel), everything rolls back.
     if (!(await completeJob(c, job))) throw new LostLeaseError(job.id);
     return outcome;
   });
 }
 
-export const reminderFireHandler = (deps: FireDeps): JobHandler => async (job, db) => {
-  await fireReminderOccurrence(db, job, deps);
-};
+export const reminderFireHandler =
+  (deps: FireDeps): JobHandler =>
+  async (job, db) => {
+    await fireReminderOccurrence(db, job, deps);
+  };

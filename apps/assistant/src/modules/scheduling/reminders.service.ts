@@ -25,8 +25,16 @@ export interface ReminderView {
 }
 
 interface Row {
-  id: string; title_enc: string; local_wall_clock: Date | string; timezone: string; recurrence: Recurrence | null;
-  next_occurrence_at: Date | null; mode: 'message' | 'call'; status: ReminderView['status']; version: number; schedule_version: number;
+  id: string;
+  title_enc: string;
+  local_wall_clock: Date | string;
+  timezone: string;
+  recurrence: Recurrence | null;
+  next_occurrence_at: Date | null;
+  mode: 'message' | 'call';
+  status: ReminderView['status'];
+  version: number;
+  schedule_version: number;
 }
 const COLS = `id, title_enc, to_char(local_wall_clock, 'YYYY-MM-DD"T"HH24:MI') AS local_wall_clock, timezone, recurrence, next_occurrence_at, mode, status, version, schedule_version`;
 
@@ -40,7 +48,11 @@ export interface CreateReminderInput {
 }
 
 export class ReminderService {
-  constructor(private readonly db: Db, private readonly crypto: DataCrypto, private readonly clock: Clock) {}
+  constructor(
+    private readonly db: Db,
+    private readonly crypto: DataCrypto,
+    private readonly clock: Clock,
+  ) {}
 
   private view(ownerId: string, r: Row): ReminderView {
     return {
@@ -83,14 +95,22 @@ export class ReminderService {
     );
     if (!occ.rows[0]) throw new VersionConflictError('reminder occurrence'); // would indicate a duplicate materialization
     const occurrenceId = occ.rows[0].id;
-    await enqueueJob(c, { ownerId, kind: 'reminder.fire', dueAt: at, dedupeKey: `occ:${occurrenceId}`, payload: { reminderId, occurrenceId, scheduleVersion } });
+    await enqueueJob(c, {
+      ownerId,
+      kind: 'reminder.fire',
+      dueAt: at,
+      dedupeKey: `occ:${occurrenceId}`,
+      payload: { reminderId, occurrenceId, scheduleVersion },
+    });
     await c.query('UPDATE reminders SET next_occurrence_at=$2 WHERE id=$1', [reminderId, at]);
     return occurrenceId;
   }
 
   /** Cancel the scheduled occurrence(s) and their jobs; bumping the fencing token also fences out a worker mid-run. */
   private async cancelScheduled(c: pg.PoolClient, reminderId: string): Promise<void> {
-    const occ = await c.query<{ id: string }>(`UPDATE reminder_occurrences SET state='cancelled' WHERE reminder_id=$1 AND state='scheduled' RETURNING id`, [reminderId]);
+    const occ = await c.query<{ id: string }>(`UPDATE reminder_occurrences SET state='cancelled' WHERE reminder_id=$1 AND state='scheduled' RETURNING id`, [
+      reminderId,
+    ]);
     if (occ.rows.length)
       await c.query(
         `UPDATE jobs SET status='cancelled', lease_owner=NULL, lease_expires_at=NULL, fencing_token=fencing_token+1
@@ -109,18 +129,58 @@ export class ReminderService {
       const ins = await c.query<Row>(
         `INSERT INTO reminders (owner_id, task_id, title_enc, local_wall_clock, timezone, recurrence, mode)
          VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING ${COLS}`,
-        [ownerId, i.taskId ?? null, this.crypto.enc(ownerId, 'reminders.title', title), i.localDateTime.replace('T', ' '), tz, i.recurrence ? JSON.stringify(i.recurrence) : null, i.mode ?? 'message'],
+        [
+          ownerId,
+          i.taskId ?? null,
+          this.crypto.enc(ownerId, 'reminders.title', title),
+          i.localDateTime.replace('T', ' '),
+          tz,
+          i.recurrence ? JSON.stringify(i.recurrence) : null,
+          i.mode ?? 'message',
+        ],
       );
       const id = ins.rows[0]!.id;
       const occurrenceId = await this.materialize(c, ownerId, id, 1, first.utc);
-      await emitOutbox(c, { ownerId, aggregateType: 'reminder', aggregateId: id, type: 'owner.notice', payload: { template: 'reminder_scheduled', reminderId: id, occurrenceId, scheduledAt: first.utc.toISOString(), timezone: tz, dstGap: first.kind === 'gap_shifted_forward' } }, this.clock.now());
-      await writeAudit(c, { ownerId, actorType: 'owner', action: 'reminder.create', resourceType: 'reminder', resourceId: id, allowed: true, reasonCode: 'ok' });
+      await emitOutbox(
+        c,
+        {
+          ownerId,
+          aggregateType: 'reminder',
+          aggregateId: id,
+          type: 'owner.notice',
+          payload: {
+            template: 'reminder_scheduled',
+            reminderId: id,
+            occurrenceId,
+            scheduledAt: first.utc.toISOString(),
+            timezone: tz,
+            dstGap: first.kind === 'gap_shifted_forward',
+          },
+        },
+        this.clock.now(),
+      );
+      await writeAudit(c, {
+        ownerId,
+        actorType: 'owner',
+        action: 'reminder.create',
+        resourceType: 'reminder',
+        resourceId: id,
+        allowed: true,
+        reasonCode: 'ok',
+      });
       return this.view(ownerId, (await c.query<Row>(`SELECT ${COLS} FROM reminders WHERE id=$1`, [id])).rows[0]!);
     };
     return idemCtx ? run(idemCtx) : this.db.tx(run);
   }
 
-  async reschedule(ownerId: string, id: string, expectedVersion: number, localDateTime: string, timezone?: string, idemCtx?: pg.PoolClient): Promise<ReminderView> {
+  async reschedule(
+    ownerId: string,
+    id: string,
+    expectedVersion: number,
+    localDateTime: string,
+    timezone?: string,
+    idemCtx?: pg.PoolClient,
+  ): Promise<ReminderView> {
     const run = async (c: pg.PoolClient) => {
       const cur = await c.query<Row>(`SELECT ${COLS} FROM reminders WHERE id=$1 AND owner_id=$2 FOR UPDATE`, [id, ownerId]);
       if (!cur.rows[0]) throw new NotFoundError('reminder');
@@ -132,10 +192,41 @@ export class ReminderService {
       const first = this.firstInstant(localDateTime, tz, r.recurrence ?? undefined, this.clock.now());
       await this.cancelScheduled(c, id);
       const newSv = r.schedule_version + 1;
-      await c.query(`UPDATE reminders SET local_wall_clock=$2, timezone=$3, schedule_version=$4, version=version+1 WHERE id=$1`, [id, localDateTime.replace('T', ' '), tz, newSv]);
+      await c.query(`UPDATE reminders SET local_wall_clock=$2, timezone=$3, schedule_version=$4, version=version+1 WHERE id=$1`, [
+        id,
+        localDateTime.replace('T', ' '),
+        tz,
+        newSv,
+      ]);
       const occurrenceId = await this.materialize(c, ownerId, id, newSv, first.utc);
-      await emitOutbox(c, { ownerId, aggregateType: 'reminder', aggregateId: id, type: 'owner.notice', payload: { template: 'reminder_rescheduled', reminderId: id, occurrenceId, scheduledAt: first.utc.toISOString(), timezone: tz, dstGap: first.kind === 'gap_shifted_forward' } }, this.clock.now());
-      await writeAudit(c, { ownerId, actorType: 'owner', action: 'reminder.reschedule', resourceType: 'reminder', resourceId: id, allowed: true, reasonCode: 'ok', metadata: { scheduleVersion: newSv } });
+      await emitOutbox(
+        c,
+        {
+          ownerId,
+          aggregateType: 'reminder',
+          aggregateId: id,
+          type: 'owner.notice',
+          payload: {
+            template: 'reminder_rescheduled',
+            reminderId: id,
+            occurrenceId,
+            scheduledAt: first.utc.toISOString(),
+            timezone: tz,
+            dstGap: first.kind === 'gap_shifted_forward',
+          },
+        },
+        this.clock.now(),
+      );
+      await writeAudit(c, {
+        ownerId,
+        actorType: 'owner',
+        action: 'reminder.reschedule',
+        resourceType: 'reminder',
+        resourceId: id,
+        allowed: true,
+        reasonCode: 'ok',
+        metadata: { scheduleVersion: newSv },
+      });
       return this.view(ownerId, (await c.query<Row>(`SELECT ${COLS} FROM reminders WHERE id=$1`, [id])).rows[0]!);
     };
     return idemCtx ? run(idemCtx) : this.db.tx(run);
@@ -147,9 +238,23 @@ export class ReminderService {
       if (!cur.rows[0]) throw new NotFoundError('reminder');
       if (cur.rows[0].version !== expectedVersion) throw new VersionConflictError('reminder');
       await this.cancelScheduled(c, id);
-      await c.query(`UPDATE reminders SET status='cancelled', next_occurrence_at=NULL, schedule_version=schedule_version+1, version=version+1 WHERE id=$1`, [id]);
-      await emitOutbox(c, { ownerId, aggregateType: 'reminder', aggregateId: id, type: 'owner.notice', payload: { template: 'reminder_cancelled', reminderId: id } }, this.clock.now());
-      await writeAudit(c, { ownerId, actorType: 'owner', action: 'reminder.cancel', resourceType: 'reminder', resourceId: id, allowed: true, reasonCode: 'ok' });
+      await c.query(`UPDATE reminders SET status='cancelled', next_occurrence_at=NULL, schedule_version=schedule_version+1, version=version+1 WHERE id=$1`, [
+        id,
+      ]);
+      await emitOutbox(
+        c,
+        { ownerId, aggregateType: 'reminder', aggregateId: id, type: 'owner.notice', payload: { template: 'reminder_cancelled', reminderId: id } },
+        this.clock.now(),
+      );
+      await writeAudit(c, {
+        ownerId,
+        actorType: 'owner',
+        action: 'reminder.cancel',
+        resourceType: 'reminder',
+        resourceId: id,
+        allowed: true,
+        reasonCode: 'ok',
+      });
       return this.view(ownerId, (await c.query<Row>(`SELECT ${COLS} FROM reminders WHERE id=$1`, [id])).rows[0]!);
     };
     return idemCtx ? run(idemCtx) : this.db.tx(run);
@@ -162,7 +267,10 @@ export class ReminderService {
   }
 
   async listActive(ownerId: string, limit = 50): Promise<ReminderView[]> {
-    const r = await this.db.query<Row>(`SELECT ${COLS} FROM reminders WHERE owner_id=$1 AND status='active' ORDER BY next_occurrence_at NULLS LAST LIMIT $2`, [ownerId, limit]);
+    const r = await this.db.query<Row>(`SELECT ${COLS} FROM reminders WHERE owner_id=$1 AND status='active' ORDER BY next_occurrence_at NULLS LAST LIMIT $2`, [
+      ownerId,
+      limit,
+    ]);
     return r.rows.map((x) => this.view(ownerId, x));
   }
 }

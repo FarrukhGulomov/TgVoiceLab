@@ -23,7 +23,10 @@ const EN: Case[] = [
   ['remind me in 2 hours to call back', reminder('call back', '2026-10-15', '12:00')],
   ['remind me on monday at 10:00 to plan the week', reminder('plan the week', '2026-10-19', '10:00')],
   ['remind me every day at 08:00 to take vitamins', reminder('take vitamins', '2026-10-16', '08:00', { recurrence: { freq: 'daily', interval: 1 } })],
-  ['remind me every monday at 9am to send the weekly report', reminder('send the weekly report', '2026-10-19', '09:00', { recurrence: { freq: 'weekly', interval: 1, byWeekday: [1] } })],
+  [
+    'remind me every monday at 9am to send the weekly report',
+    reminder('send the weekly report', '2026-10-19', '09:00', { recurrence: { freq: 'weekly', interval: 1, byWeekday: [1] } }),
+  ],
   ['remind me 2026-11-03 at 14:00 to renew the licence', reminder('renew the licence', '2026-11-03', '14:00')],
   ['remind me at 5pm to leave', reminder('leave', '2026-10-15', '17:00')],
   ['remind me tonight at 8 to call mum', reminder('call mum', '2026-10-15', '20:00')],
@@ -63,7 +66,10 @@ const UZ: Case[] = [
   ['2 soatdan keyin dorini ichishni eslat', reminder('dorini ichish', '2026-10-15', '12:00')],
   ['30 daqiqadan keyin choy damlashni eslat', reminder('choy damlash', '2026-10-15', '10:30')],
   ['har kuni soat 8 da vitamin ichishni eslat', reminder('vitamin ichish', '2026-10-16', '08:00', { recurrence: { freq: 'daily', interval: 1 } })],
-  ['har dushanba soat 10:00 da haftalik hisobotni yuborishni eslat', reminder('haftalik hisobotni yuborish', '2026-10-19', '10:00', { recurrence: { freq: 'weekly', interval: 1, byWeekday: [1] } })],
+  [
+    'har dushanba soat 10:00 da haftalik hisobotni yuborishni eslat',
+    reminder('haftalik hisobotni yuborish', '2026-10-19', '10:00', { recurrence: { freq: 'weekly', interval: 1, byWeekday: [1] } }),
+  ],
   ["ertaga kechqurun soat 8 da Javlonga qo'ng'iroq qilishni eslat", reminder("Javlonga qo'ng'iroq qilish", '2026-10-16', '20:00')],
   ['indinga soat 14:00 da shifokorga borishni eslat', reminder('shifokorga borish', '2026-10-17', '14:00')],
   ['juma kuni soat 11 da majlisni eslat', reminder('majlis', '2026-10-16', '11:00')],
@@ -105,7 +111,7 @@ describe('language evaluation — Uzbek', () => {
 
 describe('safety properties of the interpreter', () => {
   it('never produces a call/dial intent (there is no such intent kind) and never executes contact-related text', async () => {
-    for (const u of ['call Javlon now', 'Javlonga qo\'ng\'iroq qil', 'phone everyone in my contacts', 'dial 998901234567']) {
+    for (const u of ['call Javlon now', "Javlonga qo'ng'iroq qil", 'phone everyone in my contacts', 'dial 998901234567']) {
       expect(['unknown', 'clarify']).toContain((await run(u)).kind);
     }
   });

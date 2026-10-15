@@ -5,13 +5,13 @@ Production calling stays disabled. Prepared 2026-10-15 in a sandbox with no Tele
 
 ## 1. What this document is and is not
 
-It records what was *actually inspected*, with the exact artifacts, and keeps three evidence classes apart:
+It records what was _actually inspected_, with the exact artifacts, and keeps three evidence classes apart:
 
-| Class | Meaning | Can pass a real-media gate? |
-|---|---|---|
-| **Inspected** | Package metadata, headers, type definitions and wheels/tarballs downloaded from registries and read | No |
-| **Offline-executed** | Native module loaded and exercised on this host without contacting Telegram (`experiments/telegram-calls/evidence/offline-smoke.json`) | No |
-| **Live** | Real Telegram account, real consenting peer, real phone | Only this class |
+| Class                | Meaning                                                                                                                                | Can pass a real-media gate? |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| **Inspected**        | Package metadata, headers, type definitions and wheels/tarballs downloaded from registries and read                                    | No                          |
+| **Offline-executed** | Native module loaded and exercised on this host without contacting Telegram (`experiments/telegram-calls/evidence/offline-smoke.json`) | No                          |
+| **Live**             | Real Telegram account, real consenting peer, real phone                                                                                | Only this class             |
 
 Only the first two classes exist today.
 
@@ -32,19 +32,19 @@ Action for the owner: allow `core.telegram.org`, `github.com` and `developers.op
 
 `Y` = present in inspected code/types; `?` = unverified; `N` = absent. Nothing here is a live result.
 
-| Capability | `telegram` (GramJS) 2.26.22 | `ntgcalls` 3.0.3 (Node + Python) | `py-tgcalls` 3.0.0 | `tgcalls` 2.0.0 (MarshalX) |
-|---|---|---|---|---|
-| User-account login (MTProto) | Y (MIT) | N (media engine only) | via Pyrogram/Telethon | N |
-| `phone.requestCall` / `acceptCall` / `confirmCall` / `receivedCall` / `discardCall` / `sendSignalingData` TL methods | **Y** (in bundled TL, layer 198) | N (caller supplies) | Y (via Pyrogram raw) | N |
-| `updatePhoneCall`, `updatePhoneCallSignalingData` | **Y** | N | Y | N |
-| Private (P2P) call media engine | N | **Y** — `createP2pCall`, `initExchange`, `exchangeKeys`, `skipExchange`, `connectP2p`, `onSignalingData`, `sendSignalingData` | wraps ntgcalls | README: private calls "not in release version" (stale: last release 2023-01) |
-| PCM injection to remote | N | **Y** — `MediaSource.EXTERNAL` + `sendExternalFrame` | partial (`send_frame`) | ? |
-| PCM extraction from remote | N | **Y** — `onFrames(chatId, mode, device, frames)` | partial | ? |
-| Headless (no audio device) | Y | Y (external source; no device required — to be proven live) | Y | ? |
-| Linux x64 prebuilt | pure JS | **Y** — `@ntgcalls/linux-x64` (98.5 MB `.node`) | pure Python | cp37–cp39 wheels only |
-| Linux arm64 prebuilt | pure JS | Y (`@ntgcalls/linux-arm64`) | — | ? |
-| License | MIT | **LGPL-3.0-only** | (LGPL dependency) | LGPLv3 |
-| Maintenance (registry timestamps) | active | releases 3.0.1 (2026-10-04), 3.0.2 (10-06), 3.0.3 (10-11) | 3.0.0 (2026-09-25), 3.0.1b1 (10-11) | stale (last 2023-01-09) |
+| Capability                                                                                                           | `telegram` (GramJS) 2.26.22      | `ntgcalls` 3.0.3 (Node + Python)                                                                                              | `py-tgcalls` 3.0.0                  | `tgcalls` 2.0.0 (MarshalX)                                                   |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------- |
+| User-account login (MTProto)                                                                                         | Y (MIT)                          | N (media engine only)                                                                                                         | via Pyrogram/Telethon               | N                                                                            |
+| `phone.requestCall` / `acceptCall` / `confirmCall` / `receivedCall` / `discardCall` / `sendSignalingData` TL methods | **Y** (in bundled TL, layer 198) | N (caller supplies)                                                                                                           | Y (via Pyrogram raw)                | N                                                                            |
+| `updatePhoneCall`, `updatePhoneCallSignalingData`                                                                    | **Y**                            | N                                                                                                                             | Y                                   | N                                                                            |
+| Private (P2P) call media engine                                                                                      | N                                | **Y** — `createP2pCall`, `initExchange`, `exchangeKeys`, `skipExchange`, `connectP2p`, `onSignalingData`, `sendSignalingData` | wraps ntgcalls                      | README: private calls "not in release version" (stale: last release 2023-01) |
+| PCM injection to remote                                                                                              | N                                | **Y** — `MediaSource.EXTERNAL` + `sendExternalFrame`                                                                          | partial (`send_frame`)              | ?                                                                            |
+| PCM extraction from remote                                                                                           | N                                | **Y** — `onFrames(chatId, mode, device, frames)`                                                                              | partial                             | ?                                                                            |
+| Headless (no audio device)                                                                                           | Y                                | Y (external source; no device required — to be proven live)                                                                   | Y                                   | ?                                                                            |
+| Linux x64 prebuilt                                                                                                   | pure JS                          | **Y** — `@ntgcalls/linux-x64` (98.5 MB `.node`)                                                                               | pure Python                         | cp37–cp39 wheels only                                                        |
+| Linux arm64 prebuilt                                                                                                 | pure JS                          | Y (`@ntgcalls/linux-arm64`)                                                                                                   | —                                   | ?                                                                            |
+| License                                                                                                              | MIT                              | **LGPL-3.0-only**                                                                                                             | (LGPL dependency)                   | LGPLv3                                                                       |
+| Maintenance (registry timestamps)                                                                                    | active                           | releases 3.0.1 (2026-10-04), 3.0.2 (10-06), 3.0.3 (10-11)                                                                     | 3.0.0 (2026-09-25), 3.0.1b1 (10-11) | stale (last 2023-01-09)                                                      |
 
 Interpretation:
 
@@ -56,16 +56,16 @@ Interpretation:
 
 ## 4. Pinned artifacts (reproducibility)
 
-| Artifact | Version | Identifier |
-|---|---|---|
-| `ntgcalls` (npm, JS shim) | 3.0.3 | see `experiments/telegram-calls/package-lock.json` (integrity hashes) |
-| `@ntgcalls/linux-x64` (npm, native) | 3.0.3 | lockfile integrity; `ntgcalls.node` 98,528,104 bytes |
-| `ntgcalls` sdist (PyPI) | 3.0.3 | uploaded 2026-10-11; LGPL-3.0 `LICENSE` inspected |
-| `py-tgcalls` | 3.0.0 | uploaded 2026-09-25; used only as a reference for the handshake sequence |
-| `telegram` (GramJS) | 2.26.22 | MIT; bundled TL layer **198** |
+| Artifact                            | Version | Identifier                                                               |
+| ----------------------------------- | ------- | ------------------------------------------------------------------------ |
+| `ntgcalls` (npm, JS shim)           | 3.0.3   | see `experiments/telegram-calls/package-lock.json` (integrity hashes)    |
+| `@ntgcalls/linux-x64` (npm, native) | 3.0.3   | lockfile integrity; `ntgcalls.node` 98,528,104 bytes                     |
+| `ntgcalls` sdist (PyPI)             | 3.0.3   | uploaded 2026-10-11; LGPL-3.0 `LICENSE` inspected                        |
+| `py-tgcalls`                        | 3.0.0   | uploaded 2026-09-25; used only as a reference for the handshake sequence |
+| `telegram` (GramJS)                 | 2.26.22 | MIT; bundled TL layer **198**                                            |
 
 Upstream build inputs read from the sdist `version.properties`: libwebrtc `152.7977.0.3`, Boost `1.92.0`, FFmpeg `9.0.1`, OpenH264 `2.6.0`, clang 22.
-Building from source (instead of the prebuilt binary) is a heavy WebRTC build and is *not* attempted; the prebuilt binary is the pinned deliverable.
+Building from source (instead of the prebuilt binary) is a heavy WebRTC build and is _not_ attempted; the prebuilt binary is the pinned deliverable.
 
 ## 5. Offline-executed evidence (this host: linux-x64, Node v22.22.0)
 
@@ -95,7 +95,7 @@ Outgoing private call, owner account = caller:
 7. `setStreamSources(peer, CAPTURE, {microphone: {mediaSource: EXTERNAL, sampleRate, channelCount:1}})`, then `sendExternalFrame`; receive via `onFrames`.
 8. `phone.discardCall` on end; handle `phoneCallDiscarded` (busy/declined/missed reasons).
 
-Whether the exact private-call DH/`confirmCall` details match the *current* Telegram server behavior at layer 198+ is exactly what G0-B must prove.
+Whether the exact private-call DH/`confirmCall` details match the _current_ Telegram server behavior at layer 198+ is exactly what G0-B must prove.
 
 ## 7. Architecture consequence (ADR-0001 draft)
 
@@ -110,14 +110,14 @@ call-worker process of the same codebase). No Python sidecar is required by this
 
 ## 8. Known limitations / open risks
 
-| ID | Risk | Mitigation / gate |
-|---|---|---|
-| R-P1 | Protocol descriptor (`minLayer=maxLayer=92`, lib versions 8–13) may not interoperate with current official clients | G0-B/G0-F on real devices; disable capability on failure |
-| R-P2 | GramJS TL is layer 198; server may require newer layers for some constructors | G0-A/G0-B live; pin and canary |
-| R-P3 | Echo cancellation / speakerphone loop not provided by external-source mode | Measure at G0-C/D; bridge must never feed own output to the model |
-| R-P4 | 98.5 MB native binary; supply-chain and license review | Lockfile integrity, ADR, LGPL notices |
-| R-P5 | Account restrictions/flood waits when automating a user account | Narrow owner-authorized use; no loops; runbook |
-| R-P6 | Docs for Telegram/OpenAI not re-read (proxy) | §2 action; blocks Realtime adapter finalization |
+| ID   | Risk                                                                                                               | Mitigation / gate                                                 |
+| ---- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| R-P1 | Protocol descriptor (`minLayer=maxLayer=92`, lib versions 8–13) may not interoperate with current official clients | G0-B/G0-F on real devices; disable capability on failure          |
+| R-P2 | GramJS TL is layer 198; server may require newer layers for some constructors                                      | G0-A/G0-B live; pin and canary                                    |
+| R-P3 | Echo cancellation / speakerphone loop not provided by external-source mode                                         | Measure at G0-C/D; bridge must never feed own output to the model |
+| R-P4 | 98.5 MB native binary; supply-chain and license review                                                             | Lockfile integrity, ADR, LGPL notices                             |
+| R-P5 | Account restrictions/flood waits when automating a user account                                                    | Narrow owner-authorized use; no loops; runbook                    |
+| R-P6 | Docs for Telegram/OpenAI not re-read (proxy)                                                                       | §2 action; blocks Realtime adapter finalization                   |
 
 ## 9. Live gate checklist (run locally; exact commands)
 

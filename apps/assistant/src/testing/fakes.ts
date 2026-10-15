@@ -23,7 +23,16 @@ export class FakeMessaging implements MessagingPort {
   }
 }
 
-import type { ApprovedCallPlan, CallEvent, CallHandle, CallAdapterCapabilities, PcmFrame, ReconcileResult, TelegramCallAdapter, CallEndReason } from '@tgvl/contracts';
+import type {
+  ApprovedCallPlan,
+  CallEvent,
+  CallHandle,
+  CallAdapterCapabilities,
+  PcmFrame,
+  ReconcileResult,
+  TelegramCallAdapter,
+  CallEndReason,
+} from '@tgvl/contracts';
 import { DialOutcomeUnknownError, DialRejectedError } from '@tgvl/contracts';
 
 export type FakeCallScript =
@@ -62,30 +71,45 @@ export class FakeCallAdapter implements TelegramCallAdapter {
       queue.push({ eventId: e.eventId ?? `${e.type}-${queue.length}`, occurredAt: new Date().toISOString(), ...e } as CallEvent);
       wake?.();
     };
-    const close = () => { closed = true; wake?.(); };
+    const close = () => {
+      closed = true;
+      wake?.();
+    };
     const callId = plan.callRequestId;
     const providerCallId = `fake-provider-${this.dials.length}`;
     const adapterEnded = this.ended;
     const handle: CallHandle = {
       callId,
-      incomingAudio: (async function* (): AsyncGenerator<PcmFrame> { /* no media in the fake */ })(),
+      incomingAudio: (async function* (): AsyncGenerator<PcmFrame> {
+        /* no media in the fake */
+      })(),
       events: (async function* () {
         for (;;) {
           while (queue.length) yield queue.shift()!;
           if (closed) return;
-          await new Promise<void>((r) => { wake = r; });
+          await new Promise<void>((r) => {
+            wake = r;
+          });
         }
       })(),
       async sendAudio() {},
       async flushOutput() {},
-      async end(reason) { adapterEnded.push({ callId, reason }); push({ type: 'ended', reason }); close(); },
+      async end(reason) {
+        adapterEnded.push({ callId, reason });
+        push({ type: 'ended', reason });
+        close();
+      },
     };
     queueMicrotask(() => {
       push({ type: 'ringing', providerCallId });
       if (s.kind === 'answer') setTimeout(() => push({ type: 'connected', providerCallId }), 1);
-      else if (s.kind === 'no_answer') { /* never answers: the orchestrator's ring timeout must fire */ }
-      else if (s.kind === 'event_stream_dies') setTimeout(close, 5);
-      else if (s.kind === 'duplicate_events') { push({ type: 'connected', providerCallId, eventId: 'dup-1' }); push({ type: 'connected', providerCallId, eventId: 'dup-1' }); }
+      else if (s.kind === 'no_answer') {
+        /* never answers: the orchestrator's ring timeout must fire */
+      } else if (s.kind === 'event_stream_dies') setTimeout(close, 5);
+      else if (s.kind === 'duplicate_events') {
+        push({ type: 'connected', providerCallId, eventId: 'dup-1' });
+        push({ type: 'connected', providerCallId, eventId: 'dup-1' });
+      }
     });
     return handle;
   }

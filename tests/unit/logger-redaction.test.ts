@@ -32,7 +32,12 @@ describe('log redaction', () => {
 
   it('end-to-end: secrets never appear in emitted JSON log lines', async () => {
     const chunks: string[] = [];
-    const sink = new Writable({ write(c, _e, cb) { chunks.push(c.toString()); cb(); } });
+    const sink = new Writable({
+      write(c, _e, cb) {
+        chunks.push(c.toString());
+        cb();
+      },
+    });
     const log = createLogger('info', sink);
     log.info({ apiHash: 'SECRETHASH', req: { headers: { authorization: 'Bearer SECRETTOKEN123' } }, callId: 'c1' }, 'event with Bearer SECRETTOKEN456 inside');
     const line = chunks.join('');

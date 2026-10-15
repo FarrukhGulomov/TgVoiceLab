@@ -2,8 +2,23 @@ import type { CallEndReason } from '@tgvl/contracts';
 import type { Queryable } from '../../infrastructure/db/db.js';
 
 export type CallState =
-  | 'preflight' | 'dialing' | 'ringing' | 'connected' | 'awaiting_consent' | 'active' | 'ending'
-  | 'ended' | 'rejected' | 'cancelled' | 'expired' | 'declined' | 'busy' | 'no_answer' | 'failed' | 'outcome_unknown' | 'consent_denied';
+  | 'preflight'
+  | 'dialing'
+  | 'ringing'
+  | 'connected'
+  | 'awaiting_consent'
+  | 'active'
+  | 'ending'
+  | 'ended'
+  | 'rejected'
+  | 'cancelled'
+  | 'expired'
+  | 'declined'
+  | 'busy'
+  | 'no_answer'
+  | 'failed'
+  | 'outcome_unknown'
+  | 'consent_denied';
 
 /** Spec §7 state machine. Terminal states have no outgoing edges (except outcome_unknown, which is resolved by reconciliation). */
 const EDGES: Record<CallState, readonly CallState[]> = {
@@ -15,15 +30,36 @@ const EDGES: Record<CallState, readonly CallState[]> = {
   active: ['ending', 'failed'],
   ending: ['ended', 'failed'],
   outcome_unknown: ['ended', 'failed', 'cancelled'],
-  ended: [], rejected: [], cancelled: [], expired: [], declined: [], busy: [], no_answer: [], failed: [], consent_denied: [],
+  ended: [],
+  rejected: [],
+  cancelled: [],
+  expired: [],
+  declined: [],
+  busy: [],
+  no_answer: [],
+  failed: [],
+  consent_denied: [],
 };
 
 /** States that no longer occupy the account (mirrors the partial unique index in the schema). */
-export const TERMINAL: ReadonlySet<CallState> = new Set(['ended', 'rejected', 'cancelled', 'expired', 'declined', 'busy', 'no_answer', 'failed', 'consent_denied']);
+export const TERMINAL: ReadonlySet<CallState> = new Set([
+  'ended',
+  'rejected',
+  'cancelled',
+  'expired',
+  'declined',
+  'busy',
+  'no_answer',
+  'failed',
+  'consent_denied',
+]);
 const NEEDS_END_REASON: ReadonlySet<CallState> = new Set(['ended', 'declined', 'busy', 'no_answer', 'failed', 'consent_denied', 'cancelled']);
 
 export class IllegalTransitionError extends Error {
-  constructor(readonly from: CallState, readonly to: CallState) {
+  constructor(
+    readonly from: CallState,
+    readonly to: CallState,
+  ) {
     super(`illegal call transition ${from} -> ${to}`);
     this.name = 'IllegalTransitionError';
   }
@@ -43,7 +79,13 @@ export interface TransitionPatch {
  * Atomic compare-and-set transition. Idempotent for terminal events: re-applying the state we are already in is a no-op
  * (`changed: false`), so duplicate provider events cannot double-apply side effects. An illegal edge throws.
  */
-export async function transitionCall(q: Queryable, ownerId: string, callId: string, to: CallState, p: TransitionPatch): Promise<{ changed: boolean; state: CallState }> {
+export async function transitionCall(
+  q: Queryable,
+  ownerId: string,
+  callId: string,
+  to: CallState,
+  p: TransitionPatch,
+): Promise<{ changed: boolean; state: CallState }> {
   if (NEEDS_END_REASON.has(to) && !p.endReason) throw new Error(`transition to ${to} requires an end reason`);
   const r = await q.query<{ state: CallState }>(
     `UPDATE calls SET state=$4,

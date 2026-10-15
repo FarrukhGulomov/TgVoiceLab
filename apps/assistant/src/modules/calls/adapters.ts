@@ -4,7 +4,10 @@ import type { DerivedCapabilities } from './capability-evidence.js';
 
 /** Fail-closed default: reports every capability false and refuses to dial. */
 export class DisabledCallAdapter implements TelegramCallAdapter {
-  constructor(private readonly fingerprint: string, private readonly reasons: string[] = ['calling adapter disabled']) {}
+  constructor(
+    private readonly fingerprint: string,
+    private readonly reasons: string[] = ['calling adapter disabled'],
+  ) {}
   async capabilities(): Promise<CallAdapterCapabilities> {
     return { privateOutbound: false, privateInbound: false, pcmSend: false, pcmReceive: false, evidenceArtifact: null, buildFingerprint: this.fingerprint };
   }
@@ -21,11 +24,16 @@ export class DisabledCallAdapter implements TelegramCallAdapter {
  * inner adapter's own claims or any config flag. If evidence does not show production calling is allowed, `dial` refuses.
  */
 export class EvidenceGatedCallAdapter implements TelegramCallAdapter {
-  constructor(private readonly inner: TelegramCallAdapter, private readonly derive: () => DerivedCapabilities) {}
+  constructor(
+    private readonly inner: TelegramCallAdapter,
+    private readonly derive: () => DerivedCapabilities,
+  ) {}
   async capabilities(): Promise<CallAdapterCapabilities> {
     const d = this.derive();
     const { productionCallingAllowed: _p, thirdPartyConsentMechanismProven: _t, reasons: _r, ...caps } = d;
-    void _p; void _t; void _r;
+    void _p;
+    void _t;
+    void _r;
     return caps;
   }
   async dial(plan: ApprovedCallPlan, signal: AbortSignal): Promise<CallHandle> {

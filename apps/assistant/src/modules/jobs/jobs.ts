@@ -45,7 +45,15 @@ export async function claimJobs(db: Db, a: { workerId: string; leaseMs: number; 
        WHERE status='leased' AND lease_expires_at < $1 AND attempts >= max_attempts`,
       [a.now],
     );
-    const r = await c.query<{ id: string; owner_id: string; kind: string; payload: Record<string, unknown>; attempts: number; max_attempts: number; fencing_token: string }>(
+    const r = await c.query<{
+      id: string;
+      owner_id: string;
+      kind: string;
+      payload: Record<string, unknown>;
+      attempts: number;
+      max_attempts: number;
+      fencing_token: string;
+    }>(
       `WITH c AS (
          SELECT id FROM jobs
          WHERE ((status='pending' AND due_at <= $1) OR (status='leased' AND lease_expires_at < $1))
@@ -59,7 +67,16 @@ export async function claimJobs(db: Db, a: { workerId: string; leaseMs: number; 
        RETURNING j.id, j.owner_id, j.kind, j.payload, j.attempts, j.max_attempts, j.fencing_token`,
       [a.now, a.limit, a.workerId, a.leaseMs, a.kinds ?? null],
     );
-    return r.rows.map((x) => ({ id: x.id, ownerId: x.owner_id, kind: x.kind, payload: x.payload, attempts: x.attempts, maxAttempts: x.max_attempts, fencingToken: x.fencing_token, leaseOwner: a.workerId }));
+    return r.rows.map((x) => ({
+      id: x.id,
+      ownerId: x.owner_id,
+      kind: x.kind,
+      payload: x.payload,
+      attempts: x.attempts,
+      maxAttempts: x.max_attempts,
+      fencingToken: x.fencing_token,
+      leaseOwner: a.workerId,
+    }));
   });
 }
 
@@ -82,8 +99,7 @@ export async function completeJob(q: Queryable, j: ClaimedJob): Promise<boolean>
   return r.rowCount === 1;
 }
 
-export const backoffMs = (attempt: number, rnd: () => number = Math.random): number =>
-  Math.min(15 * 60_000, 2 ** attempt * 1000) * (0.5 + rnd() * 0.5);
+export const backoffMs = (attempt: number, rnd: () => number = Math.random): number => Math.min(15 * 60_000, 2 ** attempt * 1000) * (0.5 + rnd() * 0.5);
 
 export async function failJob(q: Queryable, j: ClaimedJob, error: string, now: Date, rnd: () => number = Math.random): Promise<'retry' | 'dead' | 'lost'> {
   const dead = j.attempts >= j.maxAttempts;

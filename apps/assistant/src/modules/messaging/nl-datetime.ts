@@ -22,15 +22,31 @@ export interface ParsedWhen {
 }
 
 const WEEKDAYS: Record<string, number> = {
-  monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 7,
-  dushanba: 1, seshanba: 2, chorshanba: 3, payshanba: 4, juma: 5, shanba: 6, yakshanba: 7,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+  sunday: 7,
+  dushanba: 1,
+  seshanba: 2,
+  chorshanba: 3,
+  payshanba: 4,
+  juma: 5,
+  shanba: 6,
+  yakshanba: 7,
 };
 const WD = Object.keys(WEEKDAYS).join('|');
 const NUM_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
 const NW = Object.keys(NUM_WORDS).join('|');
 
 export const normalizeApostrophes = (s: string): string => s.replace(/[‘’ʻʼ`´]/g, "'");
-const squash = (s: string) => s.replace(/\s{2,}/g, ' ').replace(/\s+([,.;:!?])/g, '$1').trim();
+const squash = (s: string) =>
+  s
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim();
 
 /** Remove the first match of `re` from `text`, returning the captured groups. */
 function take(text: string, re: RegExp): { text: string; m: RegExpExecArray | null } {
@@ -85,24 +101,42 @@ export function extractWhen(input: string, ctx: ExtractCtx): ParsedWhen {
   if ((r = take(text, /\b(\d{4})-(\d{2})-(\d{2})\b/)).m) {
     out.date = `${r.m![1]}-${r.m![2]}-${r.m![3]}`;
     if (!DateTime.fromISO(out.date).isValid) out.invalid = true;
-    text = r.text; dateFound = true;
+    text = r.text;
+    dateFound = true;
   } else if ((r = take(text, /\b(?:day\s+after\s+tomorrow|indinga)\b/i)).m) {
-    out.date = now.plus({ days: 2 }).toFormat('yyyy-LL-dd'); text = r.text; dateFound = true;
+    out.date = now.plus({ days: 2 }).toFormat('yyyy-LL-dd');
+    text = r.text;
+    dateFound = true;
   } else if ((r = take(text, /\b(?:tomorrow|ertaga)\b/i)).m) {
-    out.date = now.plus({ days: 1 }).toFormat('yyyy-LL-dd'); text = r.text; dateFound = true;
+    out.date = now.plus({ days: 1 }).toFormat('yyyy-LL-dd');
+    text = r.text;
+    dateFound = true;
   } else if ((r = take(text, /\b(?:today|bugun)\b/i)).m) {
-    out.date = now.toFormat('yyyy-LL-dd'); text = r.text; dateFound = true;
+    out.date = now.toFormat('yyyy-LL-dd');
+    text = r.text;
+    dateFound = true;
   } else if ((r = take(text, /\b(\d{1,3})\s+(?:days?\s+from\s+now|kundan\s+keyin)\b/i)).m) {
-    out.date = now.plus({ days: +r.m![1]! }).toFormat('yyyy-LL-dd'); text = r.text; dateFound = true;
+    out.date = now.plus({ days: +r.m![1]! }).toFormat('yyyy-LL-dd');
+    text = r.text;
+    dateFound = true;
   } else if ((r = take(text, new RegExp(`\\b(?:(?:next|on|keyingi)\\s+)?(${WD})(?:\\s+kuni)?\\b`, 'i'))).m && !out.recurrence) {
-    out.date = nextWeekday(now, WEEKDAYS[r.m![1]!.toLowerCase()]!).toFormat('yyyy-LL-dd'); text = r.text; dateFound = true;
+    out.date = nextWeekday(now, WEEKDAYS[r.m![1]!.toLowerCase()]!).toFormat('yyyy-LL-dd');
+    text = r.text;
+    dateFound = true;
   }
 
   // ---- period words (affect bare hours) -----------------------------------------------------------------------
   let period: 'am' | 'pm' | 'night' | null = null;
-  if ((r = take(text, /\b(?:in\s+the\s+morning|morning|ertalab(?:ki)?)\b/i)).m) { period = 'am'; text = r.text; }
-  else if ((r = take(text, /\b(?:in\s+the\s+afternoon|afternoon|tushdan\s+keyin|in\s+the\s+evening|evening|tonight|kechqurun|kechki)\b/i)).m) { period = 'pm'; text = r.text; }
-  else if ((r = take(text, /\b(?:at\s+night|night|kechasi|tunda)\b/i)).m) { period = 'night'; text = r.text; }
+  if ((r = take(text, /\b(?:in\s+the\s+morning|morning|ertalab(?:ki)?)\b/i)).m) {
+    period = 'am';
+    text = r.text;
+  } else if ((r = take(text, /\b(?:in\s+the\s+afternoon|afternoon|tushdan\s+keyin|in\s+the\s+evening|evening|tonight|kechqurun|kechki)\b/i)).m) {
+    period = 'pm';
+    text = r.text;
+  } else if ((r = take(text, /\b(?:at\s+night|night|kechasi|tunda)\b/i)).m) {
+    period = 'night';
+    text = r.text;
+  }
 
   // ---- time of day --------------------------------------------------------------------------------------------
   let hour: number | undefined;
@@ -111,20 +145,39 @@ export function extractWhen(input: string, ctx: ExtractCtx): ParsedWhen {
   let zeroPadded = false;
   let twentyFourHourHint = false;
   if ((r = take(text, /\b(?:at\s+|soat\s+)?(\d{1,2})[:.](\d{2})\s*(am|pm)?(?:\s*(?:da|dan|ga))?\b/i)).m) {
-    hour = +r.m![1]!; minute = +r.m![2]!; mer = (r.m![3]?.toLowerCase() as 'am' | 'pm' | undefined); zeroPadded = r.m![1]!.length === 2 && r.m![1]!.startsWith('0');
-    twentyFourHourHint = hour >= 13 || zeroPadded; text = r.text;
+    hour = +r.m![1]!;
+    minute = +r.m![2]!;
+    mer = r.m![3]?.toLowerCase() as 'am' | 'pm' | undefined;
+    zeroPadded = r.m![1]!.length === 2 && r.m![1]!.startsWith('0');
+    twentyFourHourHint = hour >= 13 || zeroPadded;
+    text = r.text;
   } else if ((r = take(text, /\b(?:at|soat)\s+(\d{1,2})\s*(am|pm)?(?:\s*(?:da|dan|ga))?\b/i)).m) {
-    hour = +r.m![1]!; mer = r.m![2]?.toLowerCase() as 'am' | 'pm' | undefined; twentyFourHourHint = hour >= 13; text = r.text;
+    hour = +r.m![1]!;
+    mer = r.m![2]?.toLowerCase() as 'am' | 'pm' | undefined;
+    twentyFourHourHint = hour >= 13;
+    text = r.text;
   } else if ((r = take(text, /\b(\d{1,2})\s*(am|pm)\b/i)).m) {
-    hour = +r.m![1]!; mer = r.m![2]!.toLowerCase() as 'am' | 'pm'; text = r.text;
+    hour = +r.m![1]!;
+    mer = r.m![2]!.toLowerCase() as 'am' | 'pm';
+    text = r.text;
   } else if ((r = take(text, new RegExp(`\\bat\\s+(${NW})(?:\\s+o'clock)?(?:\\s+(am|pm))?\\b`, 'i'))).m) {
-    hour = NUM_WORDS[r.m![1]!.toLowerCase()]!; mer = r.m![2]?.toLowerCase() as 'am' | 'pm' | undefined; text = r.text;
+    hour = NUM_WORDS[r.m![1]!.toLowerCase()]!;
+    mer = r.m![2]?.toLowerCase() as 'am' | 'pm' | undefined;
+    text = r.text;
   } else if ((r = take(text, /\b(\d{1,2})\s+(?:da|ga)\b/i)).m) {
-    hour = +r.m![1]!; twentyFourHourHint = hour >= 13; text = r.text;
+    hour = +r.m![1]!;
+    twentyFourHourHint = hour >= 13;
+    text = r.text;
   } else if ((r = take(text, /\b(?:at\s+noon|noon|tushda|tush\s+payti)\b/i)).m) {
-    hour = 12; minute = 0; mer = 'pm'; text = r.text;
+    hour = 12;
+    minute = 0;
+    mer = 'pm';
+    text = r.text;
   } else if ((r = take(text, /\b(?:at\s+midnight|midnight|yarim\s+tunda)\b/i)).m) {
-    hour = 0; minute = 0; twentyFourHourHint = true; text = r.text;
+    hour = 0;
+    minute = 0;
+    twentyFourHourHint = true;
+    text = r.text;
   }
 
   if (hour !== undefined) {
@@ -137,7 +190,10 @@ export function extractWhen(input: string, ctx: ExtractCtx): ParsedWhen {
     } else if (period && hour <= 12 && !twentyFourHourHint) {
       if (period === 'pm' && hour < 12) hour += 12;
       else if (period === 'am' && hour === 12) hour = 0;
-      else if (period === 'night') { if (hour >= 6 && hour < 12) hour += 12; else if (hour === 12) hour = 0; }
+      else if (period === 'night') {
+        if (hour >= 6 && hour < 12) hour += 12;
+        else if (hour === 12) hour = 0;
+      }
     } else if (!twentyFourHourHint && hour >= 1 && hour <= 6) {
       out.ambiguousHour = hour; // 1..6 with no clue: morning or afternoon?
     }
@@ -165,6 +221,7 @@ function nextWeekday(now: DateTime, wd: number, allowToday = false, time?: strin
     const [h, m] = time.split(':').map(Number);
     if (now.set({ hour: h!, minute: m!, second: 0, millisecond: 0 }) > now) return d;
   }
-  do d = d.plus({ days: 1 }); while (d.weekday !== wd);
+  do d = d.plus({ days: 1 });
+  while (d.weekday !== wd);
   return d;
 }

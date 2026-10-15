@@ -33,23 +33,39 @@ export async function bootstrapOwner(
       throw new ValidationError('an owner already exists; this MVP supports exactly one owner');
     const found = existing.rows.find((r) => r.telegram_user_id === i.ownerTelegramId);
     if (found) {
-      const acc = await c.query<{ id: string }>('SELECT id FROM telegram_accounts WHERE owner_id=$1 AND assistant_telegram_user_id=$2', [found.id, i.assistantTelegramId]);
+      const acc = await c.query<{ id: string }>('SELECT id FROM telegram_accounts WHERE owner_id=$1 AND assistant_telegram_user_id=$2', [
+        found.id,
+        i.assistantTelegramId,
+      ]);
       if (!acc.rows[0]) throw new ValidationError('owner exists with a different assistant account');
       return { ownerId: found.id, accountId: acc.rows[0].id, created: false };
     }
-    const o = await c.query<{ id: string }>('INSERT INTO owners (telegram_user_id, timezone, locale) VALUES ($1,$2,$3) RETURNING id', [i.ownerTelegramId, i.timezone, i.locale ?? 'uz']);
+    const o = await c.query<{ id: string }>('INSERT INTO owners (telegram_user_id, timezone, locale) VALUES ($1,$2,$3) RETURNING id', [
+      i.ownerTelegramId,
+      i.timezone,
+      i.locale ?? 'uz',
+    ]);
     const ownerId = o.rows[0]!.id;
     const a = await c.query<{ id: string }>(
       `INSERT INTO telegram_accounts (owner_id, assistant_telegram_user_id, session_secret_ref, status) VALUES ($1,$2,$3,'unprovisioned') RETURNING id`,
       [ownerId, i.assistantTelegramId, i.sessionSecretRef],
     );
     await c.query('INSERT INTO operation_settings (owner_id) VALUES ($1)', [ownerId]); // calling kill switch defaults ON
-    await writeAudit(c, { ownerId, actorType: 'system', action: 'identity.bootstrap', resourceType: 'owner', resourceId: ownerId, allowed: true, reasonCode: 'ok' });
+    await writeAudit(c, {
+      ownerId,
+      actorType: 'system',
+      action: 'identity.bootstrap',
+      resourceType: 'owner',
+      resourceId: ownerId,
+      allowed: true,
+      reasonCode: 'ok',
+    });
     return { ownerId, accountId: a.rows[0]!.id, created: true };
   });
 }
 
-export type AuthResult = { ok: true; principal: Principal } | { ok: false; reason: 'unknown_sender' | 'not_private_chat' | 'owner_disabled' | 'account_mismatch' };
+export type AuthResult =
+  { ok: true; principal: Principal } | { ok: false; reason: 'unknown_sender' | 'not_private_chat' | 'owner_disabled' | 'account_mismatch' };
 
 /** Owner commands are accepted only from the owner's numeric id, in a private chat, on the owner's own assistant account. */
 export async function authenticateOwnerMessage(

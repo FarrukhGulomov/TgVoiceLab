@@ -44,6 +44,9 @@ importers:
       '@tgvl/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      big-integer:
+        specifier: 1.6.52
+        version: 1.6.52
       fastify:
         specifier: 5.12.7
         version: 5.12.7
@@ -56,6 +59,9 @@ importers:
       pino:
         specifier: 10.4.0
         version: 10.4.0
+      telegram:
+        specifier: 2.26.22
+        version: 2.26.22
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -69,6 +75,9 @@ importers:
 
   experiments/telegram-calls:
     dependencies:
+      big-integer:
+        specifier: 1.6.52
+        version: 1.6.52
       ntgcalls:
         specifier: 3.0.3
         version: 3.0.3

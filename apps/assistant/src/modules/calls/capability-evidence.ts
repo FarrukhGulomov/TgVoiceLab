@@ -17,6 +17,11 @@ const Gate = z.object({
 export const GATE_IDS = ['G0-A', 'G0-B', 'G0-C', 'G0-D', 'G0-E', 'G0-F'] as const;
 export const EvidenceSchema = z.object({
   schemaVersion: z.literal(1),
+  /**
+   * Who produced the live runs. Evidence from the Phase 0 SPIKE ('spike') proves the library/approach is feasible but can
+   * never enable production: only a live run of the production adapter itself ('production-adapter') can.
+   */
+  producedBy: z.literal('production-adapter'),
   buildFingerprint: z.string().min(16),
   dependencyPins: z.record(z.string(), z.string()),
   gates: z.object({ 'G0-A': Gate, 'G0-B': Gate, 'G0-C': Gate, 'G0-D': Gate, 'G0-E': Gate, 'G0-F': Gate }),
@@ -34,13 +39,24 @@ export interface DerivedCapabilities extends CallAdapterCapabilities {
 }
 
 const NONE = (fp: string, reasons: string[]): DerivedCapabilities => ({
-  privateOutbound: false, privateInbound: false, pcmSend: false, pcmReceive: false, evidenceArtifact: null,
-  buildFingerprint: fp, productionCallingAllowed: false, thirdPartyConsentMechanismProven: false, reasons,
+  privateOutbound: false,
+  privateInbound: false,
+  pcmSend: false,
+  pcmReceive: false,
+  evidenceArtifact: null,
+  buildFingerprint: fp,
+  productionCallingAllowed: false,
+  thirdPartyConsentMechanismProven: false,
+  reasons,
 });
 
 const livePass = (g: { result: string; kind: string } | undefined) => !!g && g.result === 'PASS' && g.kind === 'live';
 
-export function deriveCapabilities(evidencePath: string | null | undefined, currentFingerprint: string, read: (p: string) => string = (p) => readFileSync(p, 'utf8')): DerivedCapabilities {
+export function deriveCapabilities(
+  evidencePath: string | null | undefined,
+  currentFingerprint: string,
+  read: (p: string) => string = (p) => readFileSync(p, 'utf8'),
+): DerivedCapabilities {
   if (!evidencePath) return NONE(currentFingerprint, ['no feasibility evidence artifact configured']);
   let raw: unknown;
   try {
@@ -79,7 +95,10 @@ export function computeBuildFingerprint(repoRoot: string): string {
   const h = createHash('sha256');
   h.update(readFileSync(join(repoRoot, 'pnpm-lock.yaml')));
   const dir = join(repoRoot, 'apps/assistant/src/infrastructure/telegram');
-  const walk = (d: string): string[] => readdirSync(d).sort().flatMap((n) => (statSync(join(d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]));
+  const walk = (d: string): string[] =>
+    readdirSync(d)
+      .sort()
+      .flatMap((n) => (statSync(join(d, n)).isDirectory() ? walk(join(d, n)) : [join(d, n)]));
   try {
     for (const f of walk(dir)) h.update(f.slice(repoRoot.length)).update(readFileSync(f));
   } catch {

@@ -9,11 +9,17 @@ const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}
 
 function makePlan(over: Partial<ApprovedCallPlan> = {}): ApprovedCallPlan {
   const base = {
-    callRequestId: U(1), ownerId: U(2), recipientTelegramId: '555000111', topic: 'credit-workflow',
+    callRequestId: U(1),
+    ownerId: U(2),
+    recipientTelegramId: '555000111',
+    topic: 'credit-workflow',
     purpose: 'Find out whether today’s credit-workflow errors are fixed',
     questions: ['Are the errors fixed?', 'If not, what blocks the fix and when will it be ready?'],
-    allowedContext: ['credit workflow incident of 2026-10-15'], forbiddenCommitments: ['payments', 'contracts', 'deadlines on the owner’s behalf'],
-    language: 'en' as const, maxDurationSeconds: 300, expiresAt: '2026-10-15T09:00:00.000Z',
+    allowedContext: ['credit workflow incident of 2026-10-15'],
+    forbiddenCommitments: ['payments', 'contracts', 'deadlines on the owner’s behalf'],
+    language: 'en' as const,
+    maxDurationSeconds: 300,
+    expiresAt: '2026-10-15T09:00:00.000Z',
     ...over,
   };
   const planHash = computePlanHash(planBodyOf({ ...base, authorizationId: U(3), permissionVersion: 4, planHash: '0'.repeat(64) }));
@@ -23,14 +29,40 @@ function makePlan(over: Partial<ApprovedCallPlan> = {}): ApprovedCallPlan {
 function baseline(over: Partial<DialPolicyInput> = {}, planOver: Partial<ApprovedCallPlan> = {}): DialPolicyInput {
   const plan = makePlan(planOver);
   return {
-    now: NOW, kind: 'contact_call', policyVersion: 7,
-    owner: { id: U(2), disabled: false, timezone: 'Asia/Samarkand', quietHours: { enabled: true, start: '22:00', end: '08:00' }, callOptOut: false, verified: true },
+    now: NOW,
+    kind: 'contact_call',
+    policyVersion: 7,
+    owner: {
+      id: U(2),
+      disabled: false,
+      timezone: 'Asia/Samarkand',
+      quietHours: { enabled: true, start: '22:00', end: '08:00' },
+      callOptOut: false,
+      verified: true,
+    },
     plan,
     authorization: { id: U(3), ownerId: U(2), state: 'approved', expiresAt: new Date(plan.expiresAt), planHash: plan.planHash },
     contact: { id: U(9), telegramUserId: '555000111', verifiedAt: new Date('2026-10-01T00:00:00Z'), timezone: 'Asia/Samarkand' },
-    permission: { version: 4, allowCall: true, topicScopes: ['credit-workflow'], allowedHours: { start: '09:00', end: '18:00' }, expiresAt: new Date('2026-12-01T00:00:00Z'), revokedAt: null },
-    capability: { privateOutbound: true, pcmSend: true, pcmReceive: true, productionCallingAllowed: true, thirdPartyConsentMechanismProven: true, buildFingerprintMatches: true },
-    accountHealthy: true, killSwitchOn: false, activeCallExists: false, budgetReserved: true,
+    permission: {
+      version: 4,
+      allowCall: true,
+      topicScopes: ['credit-workflow'],
+      allowedHours: { start: '09:00', end: '18:00' },
+      expiresAt: new Date('2026-12-01T00:00:00Z'),
+      revokedAt: null,
+    },
+    capability: {
+      privateOutbound: true,
+      pcmSend: true,
+      pcmReceive: true,
+      productionCallingAllowed: true,
+      thirdPartyConsentMechanismProven: true,
+      buildFingerprintMatches: true,
+    },
+    accountHealthy: true,
+    killSwitchOn: false,
+    activeCallExists: false,
+    budgetReserved: true,
     ...over,
   };
 }
@@ -60,7 +92,13 @@ describe('dial policy (spec §9.1)', () => {
     ['plan_hash_mismatch', (b) => ({ plan: { ...b.plan, recipientTelegramId: '999' } })],
     ['plan_hash_mismatch', (b) => ({ plan: { ...b.plan, questions: [...b.plan.questions, 'Also, can you pay invoice 42?'] } })],
     ['plan_hash_mismatch', (b) => ({ authorization: { ...b.authorization!, planHash: 'f'.repeat(64) } })],
-    ['plan_expired', (b) => { const p = makePlan({ expiresAt: '2026-10-15T05:59:59.000Z' }); return { plan: p, authorization: { ...b.authorization!, planHash: p.planHash } }; }],
+    [
+      'plan_expired',
+      (b) => {
+        const p = makePlan({ expiresAt: '2026-10-15T05:59:59.000Z' });
+        return { plan: p, authorization: { ...b.authorization!, planHash: p.planHash } };
+      },
+    ],
     ['recipient_missing', () => ({ contact: null })],
     ['recipient_unverified', (b) => ({ contact: { ...b.contact!, verifiedAt: null } })],
     ['recipient_mismatch', (b) => ({ contact: { ...b.contact!, telegramUserId: '555000999' } })],
@@ -119,6 +157,8 @@ describe('call state machine edges', () => {
     for (const s of ['connected', 'awaiting_consent', 'active'] as CallState[]) expect(canTransition(s, 'ending')).toBe(true);
   });
   it('a transition without an end reason to a reason-requiring terminal state is a programming error', async () => {
-    await expect(transitionCall({ query: async () => ({ rows: [], rowCount: 0 } as never) }, 'o', 'c', 'declined', { now: NOW })).rejects.toThrow(/requires an end reason/);
+    await expect(transitionCall({ query: async () => ({ rows: [], rowCount: 0 }) as never }, 'o', 'c', 'declined', { now: NOW })).rejects.toThrow(
+      /requires an end reason/,
+    );
   });
 });

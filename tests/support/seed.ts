@@ -12,7 +12,10 @@ export async function seedOwner(db: Db, overrides: { telegramUserId?: string; lo
   const n = ++counter + Math.floor(Math.random() * 1e6);
   const telegramUserId = overrides.telegramUserId ?? String(10_000_000 + n);
   const assistantTelegramUserId = String(20_000_000 + n);
-  const o = await db.query<{ id: string }>(`INSERT INTO owners (telegram_user_id, locale) VALUES ($1, $2) RETURNING id`, [telegramUserId, overrides.locale ?? 'en']);
+  const o = await db.query<{ id: string }>(`INSERT INTO owners (telegram_user_id, locale) VALUES ($1, $2) RETURNING id`, [
+    telegramUserId,
+    overrides.locale ?? 'en',
+  ]);
   const ownerId = o.rows[0]!.id;
   const a = await db.query<{ id: string }>(
     `INSERT INTO telegram_accounts (owner_id, assistant_telegram_user_id, session_secret_ref, status) VALUES ($1,$2,'env:TEST_SESSION','active') RETURNING id`,

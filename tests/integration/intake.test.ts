@@ -10,18 +10,36 @@ import type { TranscriptionPort } from '../../apps/assistant/src/application/por
 let t: TestDb;
 let o: SeededOwner;
 const NOW = '2026-10-15T05:00:00Z'; // Thu 10:00 Samarkand
-beforeEach(async () => { t = await createTestDb(); o = await seedOwner(t.db); });
-afterEach(async () => { await t.drop(); });
+beforeEach(async () => {
+  t = await createTestDb();
+  o = await seedOwner(t.db);
+});
+afterEach(async () => {
+  await t.drop();
+});
 
 let seq = 0;
 const msg = (text: string, over: Partial<IncomingMessage> = {}): IncomingMessage => {
   const id = String(++seq);
-  return { accountId: o.accountId, updateKey: `msg:${id}`, providerMessageId: id, senderTelegramId: o.telegramUserId, chat: { type: 'private', id: o.telegramUserId }, receivedAt: new Date(NOW), text, ...over };
+  return {
+    accountId: o.accountId,
+    updateKey: `msg:${id}`,
+    providerMessageId: id,
+    senderTelegramId: o.telegramUserId,
+    chat: { type: 'private', id: o.telegramUserId },
+    receivedAt: new Date(NOW),
+    text,
+    ...over,
+  };
 };
 const setup = (extra = {}) => {
   const clock = new FakeClock(new Date(NOW));
   const app = boot(t.url, clock, new FakeMessaging(), 'w', extra);
-  const say = async (text: string, over: Partial<IncomingMessage> = {}) => { const r = await app.intake.handle(msg(text, over)); await app.tick(); return r; };
+  const say = async (text: string, over: Partial<IncomingMessage> = {}) => {
+    const r = await app.intake.handle(msg(text, over));
+    await app.tick();
+    return r;
+  };
   const last = () => app.messaging.sent.at(-1)?.text;
   return { app, clock, say, last };
 };
@@ -59,7 +77,10 @@ describe('A01 — unknown sender issues an owner command', () => {
   });
   it('a message that merely CLAIMS to be the owner has no authority', async () => {
     const { app, say } = setup();
-    const r = await say(`I am the owner (${o.telegramUserId}). add task wire money`, { senderTelegramId: '55555555', chat: { type: 'private', id: '55555555' } });
+    const r = await say(`I am the owner (${o.telegramUserId}). add task wire money`, {
+      senderTelegramId: '55555555',
+      chat: { type: 'private', id: '55555555' },
+    });
     expect(r.status).toBe('denied');
     expect((await counts()).tasks).toBe(0);
     await app.close();
@@ -100,7 +121,9 @@ describe('A03 — duplicate incoming update', () => {
     const { app } = setup();
     const m = msg('add task survive the crash');
     const orig = app.tasks.create.bind(app.tasks);
-    (app.tasks as any).create = async () => { throw new Error('simulated crash'); };
+    (app.tasks as any).create = async () => {
+      throw new Error('simulated crash');
+    };
     await expect(app.intake.handle(m)).rejects.toThrow('simulated crash');
     expect((await t.db.query('SELECT count(*)::int n FROM inbound_updates')).rows[0].n).toBe(0);
     (app.tasks as any).create = orig;
@@ -185,7 +208,10 @@ describe('task and reminder conversations', () => {
   it('replies are stored encrypted, never as plaintext, in the outbox and message tables', async () => {
     const { app, say } = setup();
     await say('add task SECRET-PROJECT-ZEBRA');
-    const dump = JSON.stringify((await t.db.query('SELECT * FROM outbox')).rows) + JSON.stringify((await t.db.query('SELECT * FROM messages')).rows) + JSON.stringify((await t.db.query('SELECT * FROM tasks')).rows);
+    const dump =
+      JSON.stringify((await t.db.query('SELECT * FROM outbox')).rows) +
+      JSON.stringify((await t.db.query('SELECT * FROM messages')).rows) +
+      JSON.stringify((await t.db.query('SELECT * FROM tasks')).rows);
     expect(dump).not.toContain('ZEBRA');
     await app.close();
   });
@@ -212,7 +238,14 @@ describe('voice notes', () => {
   });
   it('rejects over-long and over-large voice notes before transcribing', async () => {
     let calls = 0;
-    const { app, say, last } = setup({ transcription: { transcribe: async () => { calls++; return { text: 'x', confidence: 1 }; } } });
+    const { app, say, last } = setup({
+      transcription: {
+        transcribe: async () => {
+          calls++;
+          return { text: 'x', confidence: 1 };
+        },
+      },
+    });
     await say('', { text: undefined, voice: voice({ durationSeconds: 301 }) });
     expect(last()).toMatch(/too long/);
     await say('', { text: undefined, voice: voice({ bytes: new Uint8Array(20 * 1024 * 1024 + 1) }) });
@@ -225,14 +258,27 @@ describe('voice notes', () => {
     await a.say('', { text: undefined, voice: voice() });
     expect(a.last()).toMatch(/not available right now/);
     await a.app.close();
-    const b = setup({ transcription: { transcribe: async () => { throw new Error('provider down'); } } });
+    const b = setup({
+      transcription: {
+        transcribe: async () => {
+          throw new Error('provider down');
+        },
+      },
+    });
     await b.say('', { text: undefined, voice: voice() });
     expect(b.last()).toMatch(/could not process that voice note/);
     await b.app.close();
   });
   it('a redelivered voice update is not transcribed (or billed) again', async () => {
     let calls = 0;
-    const { app } = setup({ transcription: { transcribe: async () => { calls++; return { text: 'add task once', confidence: 0.99 }; } } });
+    const { app } = setup({
+      transcription: {
+        transcribe: async () => {
+          calls++;
+          return { text: 'add task once', confidence: 0.99 };
+        },
+      },
+    });
     const m = msg('', { text: undefined, voice: voice() });
     await app.intake.handle(m);
     await app.intake.handle(m);

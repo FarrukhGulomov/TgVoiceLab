@@ -117,14 +117,21 @@ export type PolicyDecision = z.infer<typeof PolicyDecisionSchema>;
 
 /** Adapter error taxonomy. Adapters MUST classify: unknown outcome is not the same as rejection (spec §7). */
 export class DialRejectedError extends Error {
-  constructor(readonly reason: CallEndReason, message = `dial rejected: ${reason}`, readonly retryAfterSeconds?: number) {
+  constructor(
+    readonly reason: CallEndReason,
+    message = `dial rejected: ${reason}`,
+    readonly retryAfterSeconds?: number,
+  ) {
     super(message);
     this.name = 'DialRejectedError';
   }
 }
 /** The request may or may not have reached Telegram (timeout/crash after send). Never auto-redial. */
 export class DialOutcomeUnknownError extends Error {
-  constructor(message = 'dial outcome unknown', readonly providerCallId?: string) {
+  constructor(
+    message = 'dial outcome unknown',
+    readonly providerCallId?: string,
+  ) {
     super(message);
     this.name = 'DialOutcomeUnknownError';
   }

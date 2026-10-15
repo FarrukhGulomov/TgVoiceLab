@@ -11,13 +11,23 @@ export interface ActiveCallControl {
 }
 export class ActiveCallRegistry {
   private readonly m = new Map<string, ActiveCallControl>();
-  add(c: ActiveCallControl) { this.m.set(c.callId, c); }
-  remove(id: string) { this.m.delete(id); }
-  list(ownerId: string) { return [...this.m.values()].filter((c) => c.ownerId === ownerId); }
+  add(c: ActiveCallControl) {
+    this.m.set(c.callId, c);
+  }
+  remove(id: string) {
+    this.m.delete(id);
+  }
+  list(ownerId: string) {
+    return [...this.m.values()].filter((c) => c.ownerId === ownerId);
+  }
 }
 
 export class OperationsService {
-  constructor(private readonly db: Db, private readonly clock: Clock, private readonly registry: ActiveCallRegistry) {}
+  constructor(
+    private readonly db: Db,
+    private readonly clock: Clock,
+    private readonly registry: ActiveCallRegistry,
+  ) {}
 
   /**
    * Persist the kill switch FIRST (so new dials are blocked even if termination below fails), then end live media.
@@ -31,19 +41,31 @@ export class OperationsService {
          ON CONFLICT (owner_id) DO UPDATE SET calling_kill_switch=$2, reason=$3, version=operation_settings.version+1, changed_at=$4`,
         [ownerId, on, reason.slice(0, 200), this.clock.now()],
       );
-      if (on) await c.query(`UPDATE call_requests SET status='cancelled' WHERE owner_id=$1 AND status IN ('requested','pending_authorization','queued')`, [ownerId]);
+      if (on)
+        await c.query(`UPDATE call_requests SET status='cancelled' WHERE owner_id=$1 AND status IN ('requested','pending_authorization','queued')`, [ownerId]);
       await writeAudit(c, { ownerId, actorType: 'owner', action: on ? 'killswitch.on' : 'killswitch.off', allowed: true, reasonCode: 'ok' });
     });
     let terminated = 0;
-    if (on) for (const call of this.registry.list(ownerId)) { await call.end('cancelled'); terminated++; }
+    if (on)
+      for (const call of this.registry.list(ownerId)) {
+        await call.end('cancelled');
+        terminated++;
+      }
     return { on, terminated, elapsedMs: performance.now() - t0 };
   }
 
   /** Revocation cancels queued work for the contact and interrupts any live call with them. */
   async onPermissionRevoked(ownerId: string, contactId: string): Promise<{ terminated: number }> {
-    await this.db.query(`UPDATE call_requests SET status='cancelled' WHERE owner_id=$1 AND contact_id=$2 AND status IN ('requested','pending_authorization','queued')`, [ownerId, contactId]);
+    await this.db.query(
+      `UPDATE call_requests SET status='cancelled' WHERE owner_id=$1 AND contact_id=$2 AND status IN ('requested','pending_authorization','queued')`,
+      [ownerId, contactId],
+    );
     let terminated = 0;
-    for (const call of this.registry.list(ownerId)) if (call.contactId === contactId) { await call.end('consent_withdrawn'); terminated++; }
+    for (const call of this.registry.list(ownerId))
+      if (call.contactId === contactId) {
+        await call.end('consent_withdrawn');
+        terminated++;
+      }
     return { terminated };
   }
 

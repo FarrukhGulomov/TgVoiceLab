@@ -22,8 +22,26 @@ describe('config validation', () => {
   });
 
   it('refuses fake adapters in production', () => {
-    expect(() => loadConfig({ ...base, NODE_ENV: 'production', CALL_ADAPTER: 'fake', DATA_ENCRYPTION_KEY_REF: 'env:K', ADMIN_TOKEN_SECRET_REF: 'env:T', OWNER_TELEGRAM_USER_ID: '1' })).toThrow(/fake adapter is forbidden/);
-    expect(() => loadConfig({ ...base, NODE_ENV: 'production', MESSAGING_ADAPTER: 'fake', DATA_ENCRYPTION_KEY_REF: 'env:K', ADMIN_TOKEN_SECRET_REF: 'env:T', OWNER_TELEGRAM_USER_ID: '1' })).toThrow(/fake adapter is forbidden/);
+    expect(() =>
+      loadConfig({
+        ...base,
+        NODE_ENV: 'production',
+        CALL_ADAPTER: 'fake',
+        DATA_ENCRYPTION_KEY_REF: 'env:K',
+        ADMIN_TOKEN_SECRET_REF: 'env:T',
+        OWNER_TELEGRAM_USER_ID: '1',
+      }),
+    ).toThrow(/fake adapter is forbidden/);
+    expect(() =>
+      loadConfig({
+        ...base,
+        NODE_ENV: 'production',
+        MESSAGING_ADAPTER: 'fake',
+        DATA_ENCRYPTION_KEY_REF: 'env:K',
+        ADMIN_TOKEN_SECRET_REF: 'env:T',
+        OWNER_TELEGRAM_USER_ID: '1',
+      }),
+    ).toThrow(/fake adapter is forbidden/);
   });
 
   it('a CALLS_ENABLED boolean alone cannot enable calling', () => {

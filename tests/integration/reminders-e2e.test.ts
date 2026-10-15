@@ -10,8 +10,13 @@ import { fireReminderOccurrence } from '../../apps/assistant/src/modules/schedul
 let t: TestDb;
 let o: SeededOwner;
 // One database per test: a worker tick processes every owner's due work, so shared state would cross-talk between tests.
-beforeEach(async () => { t = await createTestDb(); o = await seedOwner(t.db); });
-afterEach(async () => { await t.drop(); });
+beforeEach(async () => {
+  t = await createTestDb();
+  o = await seedOwner(t.db);
+});
+afterEach(async () => {
+  await t.drop();
+});
 
 // Owner timezone is Asia/Samarkand (UTC+5). 2026-10-15 12:00 local = 07:00Z.
 const START = '2026-10-15T07:00:00Z';
@@ -74,7 +79,10 @@ describe('reschedule -> stale job rejected (A02, A03)', () => {
     const fires = msgs.sent.filter((m) => m.text.startsWith('⏰'));
     expect(fires).toHaveLength(1); // exactly one firing, never two
     const occ = await t.db.query(`SELECT schedule_version, state FROM reminder_occurrences WHERE reminder_id=$1 ORDER BY schedule_version`, [rem.id]);
-    expect(occ.rows).toEqual([{ schedule_version: 1, state: 'cancelled' }, { schedule_version: 2, state: 'fired' }]);
+    expect(occ.rows).toEqual([
+      { schedule_version: 1, state: 'cancelled' },
+      { schedule_version: 2, state: 'fired' },
+    ]);
     await app.close();
   });
 

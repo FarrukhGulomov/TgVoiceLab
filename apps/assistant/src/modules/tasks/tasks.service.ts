@@ -17,8 +17,15 @@ export interface Task {
 }
 
 interface Row {
-  id: string; title_enc: string; description_enc: string | null; status: TaskStatus; priority: number;
-  due_at: Date | null; version: number; created_at: Date; completed_at: Date | null;
+  id: string;
+  title_enc: string;
+  description_enc: string | null;
+  status: TaskStatus;
+  priority: number;
+  due_at: Date | null;
+  version: number;
+  created_at: Date;
+  completed_at: Date | null;
 }
 const COLS = 'id, title_enc, description_enc, status, priority, due_at, version, created_at, completed_at';
 
@@ -39,12 +46,23 @@ export class TaskService {
     };
   }
 
-  async create(q: Queryable, ownerId: string, i: { title: string; description?: string | undefined; priority?: number | undefined; dueAt?: Date | undefined; sourceRef?: string | undefined }): Promise<Task> {
+  async create(
+    q: Queryable,
+    ownerId: string,
+    i: { title: string; description?: string | undefined; priority?: number | undefined; dueAt?: Date | undefined; sourceRef?: string | undefined },
+  ): Promise<Task> {
     const title = i.title.trim();
     if (!title) throw new ValidationError('title is required');
     const r = await q.query<Row>(
       `INSERT INTO tasks (owner_id, title_enc, description_enc, priority, due_at, source_ref) VALUES ($1,$2,$3,$4,$5,$6) RETURNING ${COLS}`,
-      [ownerId, this.crypto.enc(ownerId, 'tasks.title', title), this.crypto.encOpt(ownerId, 'tasks.description', i.description), i.priority ?? 1, i.dueAt ?? null, i.sourceRef ?? null],
+      [
+        ownerId,
+        this.crypto.enc(ownerId, 'tasks.title', title),
+        this.crypto.encOpt(ownerId, 'tasks.description', i.description),
+        i.priority ?? 1,
+        i.dueAt ?? null,
+        i.sourceRef ?? null,
+      ],
     );
     const t = this.map(ownerId, r.rows[0]!);
     await writeAudit(q, { ownerId, actorType: 'owner', action: 'task.create', resourceType: 'task', resourceId: t.id, allowed: true, reasonCode: 'ok' });
@@ -71,12 +89,24 @@ export class TaskService {
     ownerId: string,
     id: string,
     expectedVersion: number,
-    p: { title?: string | undefined; description?: string | null | undefined; priority?: number | undefined; dueAt?: Date | null | undefined; status?: TaskStatus | undefined },
+    p: {
+      title?: string | undefined;
+      description?: string | null | undefined;
+      priority?: number | undefined;
+      dueAt?: Date | null | undefined;
+      status?: TaskStatus | undefined;
+    },
   ): Promise<Task> {
     const sets: string[] = [];
     const vals: unknown[] = [id, ownerId, expectedVersion];
-    const add = (col: string, v: unknown) => { vals.push(v); sets.push(`${col}=$${vals.length}`); };
-    if (p.title !== undefined) { if (!p.title.trim()) throw new ValidationError('title cannot be empty'); add('title_enc', this.crypto.enc(ownerId, 'tasks.title', p.title.trim())); }
+    const add = (col: string, v: unknown) => {
+      vals.push(v);
+      sets.push(`${col}=$${vals.length}`);
+    };
+    if (p.title !== undefined) {
+      if (!p.title.trim()) throw new ValidationError('title cannot be empty');
+      add('title_enc', this.crypto.enc(ownerId, 'tasks.title', p.title.trim()));
+    }
     if (p.description !== undefined) add('description_enc', this.crypto.encOpt(ownerId, 'tasks.description', p.description));
     if (p.priority !== undefined) add('priority', p.priority);
     if (p.dueAt !== undefined) add('due_at', p.dueAt);
@@ -85,10 +115,7 @@ export class TaskService {
       add('completed_at', p.status === 'done' ? new Date() : null);
     }
     if (!sets.length) throw new ValidationError('nothing to update');
-    const r = await q.query<Row>(
-      `UPDATE tasks SET ${sets.join(', ')}, version=version+1 WHERE id=$1 AND owner_id=$2 AND version=$3 RETURNING ${COLS}`,
-      vals,
-    );
+    const r = await q.query<Row>(`UPDATE tasks SET ${sets.join(', ')}, version=version+1 WHERE id=$1 AND owner_id=$2 AND version=$3 RETURNING ${COLS}`, vals);
     if (!r.rows[0]) {
       const exists = await q.query('SELECT 1 FROM tasks WHERE id=$1 AND owner_id=$2', [id, ownerId]);
       throw exists.rowCount ? new VersionConflictError('task') : new NotFoundError('task');

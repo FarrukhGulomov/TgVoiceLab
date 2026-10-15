@@ -1,6 +1,11 @@
 /** Domain errors carry a stable machine code; the HTTP layer maps them to statuses. */
 export class DomainError extends Error {
-  constructor(readonly code: string, message: string, readonly retryable = false, readonly details?: unknown) {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly retryable = false,
+    readonly details?: unknown,
+  ) {
     super(message);
     this.name = 'DomainError';
   }

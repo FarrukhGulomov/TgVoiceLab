@@ -10,9 +10,9 @@ export class DataCrypto {
     return this.envelope.decrypt(ciphertext, aad(ownerId, column));
   }
   encOpt(ownerId: string, column: string, v: string | null | undefined): string | null {
-    return v == null ? null : this.enc(ownerId, column, v);
+    return v === null || v === undefined ? null : this.enc(ownerId, column, v);
   }
   decOpt(ownerId: string, column: string, v: string | null): string | null {
-    return v == null ? null : this.dec(ownerId, column, v);
+    return v === null ? null : this.dec(ownerId, column, v);
   }
 }

@@ -11,7 +11,11 @@ pg.types.setTypeParser(20, (v) => v); // int8 stays string (Telegram ids, fencin
 
 export class Db {
   readonly pool: pg.Pool;
-  constructor(connectionString: string, private readonly log?: Logger, max = 10) {
+  constructor(
+    connectionString: string,
+    private readonly log?: Logger,
+    max = 10,
+  ) {
     this.pool = new pg.Pool({ connectionString, max });
     this.pool.on('error', (err) => this.log?.error({ err: err.message }, 'idle pg client error'));
   }

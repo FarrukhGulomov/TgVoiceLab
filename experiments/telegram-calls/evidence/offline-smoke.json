@@ -10,29 +10,47 @@
       "detail": null
     },
     {
-      "name": "initExchange with Buffer args (documented typing) -> expected to FAIL on 3.0.3",
+      "name": "Buffer args are rejected by the native layer (typing/runtime mismatch F-1)",
       "ok": true,
       "expectedFailure": true,
-      "ms": 0.6,
+      "ms": 0.4,
       "finding": "An array was expected"
     },
     {
-      "name": "initExchange with number[] args (runtime-accepted form)",
+      "name": "setStreamSources(CAPTURE, EXTERNAL microphone 48 kHz mono) — before initExchange, as py-tgcalls does",
       "ok": true,
-      "ms": 4.8,
+      "ms": 0.4,
+      "detail": null
+    },
+    {
+      "name": "initExchange(outgoing: no ga_hash) returns a 32-byte g_a_hash",
+      "ok": true,
+      "ms": 2.7,
       "detail": {
-        "returnedType": "[object Uint8Array]",
-        "length": 256
+        "gaHashBytes": 32
       }
     },
     {
-      "name": "onFrames/onSignalingData/onConnectionChange register",
+      "name": "sendExternalFrame accepts a 20 ms 48 kHz s16le frame once an external source exists",
+      "ok": true,
+      "ms": 0.8,
+      "detail": "accepted (no peer connected)"
+    },
+    {
+      "name": "a frame sent for an unknown call is rejected (fail-closed)",
+      "ok": true,
+      "expectedFailure": true,
+      "ms": 0.8,
+      "finding": "Connection with chat id \"99999\" not found"
+    },
+    {
+      "name": "event callbacks register (onFrames, onSignalingData, onConnectionChange)",
       "ok": true,
       "ms": 0.1,
       "detail": "registered"
     },
     {
-      "name": "static getProtocol() (layer/library versions to advertise in phone.requestCall)",
+      "name": "static getProtocol() — the descriptor advertised in phone.requestCall",
       "ok": true,
       "ms": 0.1,
       "detail": {
@@ -49,20 +67,19 @@
       }
     },
     {
-      "name": "calls() list",
+      "name": "calls() reflects the P2P call",
       "ok": true,
-      "ms": 0.6,
+      "ms": 0.3,
       "detail": {
         "size": 1
       }
-    },
-    {
-      "name": "sendExternalFrame before connect must reject (fail-closed expectation)",
-      "ok": true,
-      "ms": 1.7,
-      "detail": "rejected: External source not initialized"
     }
   ],
-  "capturedAt": "2026-10-15T16:32:10.278Z",
+  "findings": [
+    "F-1: index.d.ts declares Buffer for byte arguments; the native layer accepts plain number[] and rejects Buffer/Uint8Array.",
+    "F-2: index.d.ts lists enums as sequential ordinals, but runtime enums are bit flags (MediaSource.EXTERNAL=32, ConnectionState.CONNECTED=2). Always use the runtime enum objects.",
+    "F-3: for an OUTGOING call initExchange must receive no ga_hash (undefined/null/omitted -> returns the 32-byte g_a_hash); an empty array is treated as the INCOMING case (returns 256-byte g_b)."
+  ],
+  "capturedAt": "2026-10-15T17:09:41.782Z",
   "ntgcallsVersion": "3.0.3"
 }

@@ -29,7 +29,11 @@
     "spike:login": "pnpm --filter @tgvl/telegram-calls-spike run login",
     "spike:call": "pnpm --filter @tgvl/telegram-calls-spike run call",
     "live:test": "pnpm --filter @tgvl/telegram-calls-spike run call",
-    "ci": "pnpm run lint && pnpm run typecheck && pnpm run test:all"
+    "ci": "pnpm run lint && pnpm run typecheck && pnpm run test:all",
+    "bootstrap:owner": "pnpm --filter @tgvl/assistant run bootstrap:owner",
+    "dev:secrets": "pnpm --filter @tgvl/assistant run dev:secrets",
+    "spike:record-gate": "pnpm --filter @tgvl/telegram-calls-spike run record-gate",
+    "spike:evidence": "pnpm --filter @tgvl/telegram-calls-spike run evidence"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",

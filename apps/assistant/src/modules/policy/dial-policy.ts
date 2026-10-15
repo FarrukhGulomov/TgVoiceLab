@@ -16,12 +16,20 @@ export interface DialPolicyInput {
   authorization: { id: string; ownerId: string; state: string; expiresAt: Date; planHash: string } | null;
   contact: { id: string; telegramUserId: string; verifiedAt: Date | null; timezone: string | null } | null;
   permission: {
-    version: number; allowCall: boolean; topicScopes: readonly string[]; allowedHours: { start: string; end: string } | null;
-    expiresAt: Date; revokedAt: Date | null;
+    version: number;
+    allowCall: boolean;
+    topicScopes: readonly string[];
+    allowedHours: { start: string; end: string } | null;
+    expiresAt: Date;
+    revokedAt: Date | null;
   } | null;
   capability: {
-    privateOutbound: boolean; pcmSend: boolean; pcmReceive: boolean; productionCallingAllowed: boolean;
-    thirdPartyConsentMechanismProven: boolean; buildFingerprintMatches: boolean;
+    privateOutbound: boolean;
+    pcmSend: boolean;
+    pcmReceive: boolean;
+    productionCallingAllowed: boolean;
+    thirdPartyConsentMechanismProven: boolean;
+    buildFingerprintMatches: boolean;
   };
   accountHealthy: boolean;
   killSwitchOn: boolean;
@@ -30,11 +38,31 @@ export interface DialPolicyInput {
 }
 
 export type DialDenial =
-  | 'owner_disabled' | 'owner_unverified' | 'kill_switch_on' | 'calling_not_verified' | 'account_unhealthy' | 'active_call_exists'
-  | 'authorization_missing' | 'authorization_owner_mismatch' | 'authorization_not_approved' | 'authorization_expired'
-  | 'plan_hash_mismatch' | 'plan_expired' | 'recipient_missing' | 'recipient_unverified' | 'recipient_mismatch'
-  | 'permission_missing' | 'permission_revoked' | 'permission_expired' | 'permission_version_stale' | 'permission_denies_call'
-  | 'topic_not_permitted' | 'outside_allowed_hours' | 'owner_opted_out' | 'quiet_hours' | 'budget_not_reserved'
+  | 'owner_disabled'
+  | 'owner_unverified'
+  | 'kill_switch_on'
+  | 'calling_not_verified'
+  | 'account_unhealthy'
+  | 'active_call_exists'
+  | 'authorization_missing'
+  | 'authorization_owner_mismatch'
+  | 'authorization_not_approved'
+  | 'authorization_expired'
+  | 'plan_hash_mismatch'
+  | 'plan_expired'
+  | 'recipient_missing'
+  | 'recipient_unverified'
+  | 'recipient_mismatch'
+  | 'permission_missing'
+  | 'permission_revoked'
+  | 'permission_expired'
+  | 'permission_version_stale'
+  | 'permission_denies_call'
+  | 'topic_not_permitted'
+  | 'outside_allowed_hours'
+  | 'owner_opted_out'
+  | 'quiet_hours'
+  | 'budget_not_reserved'
   | 'consent_mechanism_unproven';
 
 const withinWindow = (at: Date, tz: string, w: { start: string; end: string }): boolean => {
@@ -49,7 +77,13 @@ export function evaluateDialPolicy(i: DialPolicyInput): PolicyDecision {
   if (i.owner.disabled) return deny('owner_disabled');
   if (!i.owner.verified) return deny('owner_unverified');
   if (i.killSwitchOn) return deny('kill_switch_on');
-  if (!i.capability.buildFingerprintMatches || !i.capability.privateOutbound || !i.capability.pcmSend || !i.capability.pcmReceive || !i.capability.productionCallingAllowed)
+  if (
+    !i.capability.buildFingerprintMatches ||
+    !i.capability.privateOutbound ||
+    !i.capability.pcmSend ||
+    !i.capability.pcmReceive ||
+    !i.capability.productionCallingAllowed
+  )
     return deny('calling_not_verified');
   if (!i.accountHealthy) return deny('account_unhealthy');
   if (i.activeCallExists) return deny('active_call_exists');

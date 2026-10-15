@@ -12,31 +12,86 @@ import type { CallPlanBody } from '@tgvl/contracts';
  * The orchestrator is exercised against a FAKE adapter and TEST-ONLY "all gates passed" capabilities. This verifies the
  * control logic (policy, state machine, uncertainty handling). It says NOTHING about real Telegram calling.
  */
-const ALL_PASS: DerivedCapabilities = { privateOutbound: true, privateInbound: false, pcmSend: true, pcmReceive: true, evidenceArtifact: 'TEST-ONLY', buildFingerprint: 'test', productionCallingAllowed: true, thirdPartyConsentMechanismProven: true, reasons: [] };
+const ALL_PASS: DerivedCapabilities = {
+  privateOutbound: true,
+  privateInbound: false,
+  pcmSend: true,
+  pcmReceive: true,
+  evidenceArtifact: 'TEST-ONLY',
+  buildFingerprint: 'test',
+  productionCallingAllowed: true,
+  thirdPartyConsentMechanismProven: true,
+  reasons: [],
+};
 
 const NOW = '2026-10-15T06:00:00Z'; // 11:00 Samarkand
 let t: TestDb;
 let o: SeededOwner;
-beforeEach(async () => { t = await createTestDb(); o = await seedOwner(t.db); });
-afterEach(async () => { await t.drop(); });
+beforeEach(async () => {
+  t = await createTestDb();
+  o = await seedOwner(t.db);
+});
+afterEach(async () => {
+  await t.drop();
+});
 
-async function world(opts: { script?: FakeCallAdapter['script']; caps?: DerivedCapabilities; killOff?: boolean; budget?: number; ringTimeoutMs?: number; sessionRunner?: any } = {}) {
+async function world(
+  opts: {
+    script?: FakeCallAdapter['script'];
+    caps?: DerivedCapabilities;
+    killOff?: boolean;
+    budget?: number;
+    ringTimeoutMs?: number;
+    sessionRunner?: any;
+  } = {},
+) {
   const clock = new FakeClock(new Date(NOW));
   const adapter = new FakeCallAdapter();
   if (opts.script) adapter.script = opts.script;
-  const app = boot(t.url, clock, new FakeMessaging(), 'w', { callAdapter: adapter, deriveCapabilities: () => opts.caps ?? ALL_PASS, ringTimeoutMs: opts.ringTimeoutMs ?? 200, ...(opts.sessionRunner ? { sessionRunner: opts.sessionRunner } : {}) });
+  const app = boot(t.url, clock, new FakeMessaging(), 'w', {
+    callAdapter: adapter,
+    deriveCapabilities: () => opts.caps ?? ALL_PASS,
+    ringTimeoutMs: opts.ringTimeoutMs ?? 200,
+    ...(opts.sessionRunner ? { sessionRunner: opts.sessionRunner } : {}),
+  });
   if (opts.killOff !== false) await app.operations.setKillSwitch(o.ownerId, false, 'test');
   await ensureDailyBudget(t.db, o.ownerId, '2026-10-15', opts.budget ?? 5_000_000);
-  const contact = await app.contacts.create(t.db, o.ownerId, { telegramUserId: '555000111', displayName: 'Javlon', verificationSource: 'owner_confirmed_numeric_id' }, clock.now());
+  const contact = await app.contacts.create(
+    t.db,
+    o.ownerId,
+    { telegramUserId: '555000111', displayName: 'Javlon', verificationSource: 'owner_confirmed_numeric_id' },
+    clock.now(),
+  );
   const grant = (over: Partial<Parameters<typeof app.contacts.grant>[3]> = {}) =>
-    app.contacts.grant(t.db, o.ownerId, contact.id, { allowCall: true, topicScopes: ['credit-workflow'], allowedHours: { start: '09:00', end: '18:00' }, expiresAt: new Date('2026-12-01T00:00:00Z'), ...over }, clock.now());
+    app.contacts.grant(
+      t.db,
+      o.ownerId,
+      contact.id,
+      {
+        allowCall: true,
+        topicScopes: ['credit-workflow'],
+        allowedHours: { start: '09:00', end: '18:00' },
+        expiresAt: new Date('2026-12-01T00:00:00Z'),
+        ...over,
+      },
+      clock.now(),
+    );
   await grant();
   let n = 0;
   const body = (over: Partial<CallPlanBody> = {}): CallPlanBody => ({
-    callRequestId: crypto.randomUUID(), ownerId: o.ownerId, recipientTelegramId: '555000111', topic: 'credit-workflow',
-    purpose: 'Find out whether the credit-workflow errors are fixed', questions: ['Are they fixed?', 'What blocks the fix?'],
-    allowedContext: ['credit workflow incident'], forbiddenCommitments: ['payments'], language: 'en', maxDurationSeconds: 300,
-    expiresAt: '2026-10-15T09:00:00.000Z', ...over, ...(n++ >= 0 ? {} : {}),
+    callRequestId: crypto.randomUUID(),
+    ownerId: o.ownerId,
+    recipientTelegramId: '555000111',
+    topic: 'credit-workflow',
+    purpose: 'Find out whether the credit-workflow errors are fixed',
+    questions: ['Are they fixed?', 'What blocks the fix?'],
+    allowedContext: ['credit workflow incident'],
+    forbiddenCommitments: ['payments'],
+    language: 'en',
+    maxDurationSeconds: 300,
+    expiresAt: '2026-10-15T09:00:00.000Z',
+    ...over,
+    ...(n++ >= 0 ? {} : {}),
   });
   const request = (over: Partial<CallPlanBody> = {}) => app.authorizations.createCallRequest(o.ownerId, body(over), { ownerExplicitCommand: true });
   const callCount = async () => (await t.db.query('SELECT count(*)::int n FROM calls')).rows[0].n as number;
@@ -119,7 +174,9 @@ describe('A04 — denials place no call and consume nothing', () => {
     const w = await world();
     await t.db.query(`UPDATE contacts SET verified_at=NULL, verification_source=NULL WHERE id=$1`, [w.contact.id]);
     await expect(w.request()).rejects.toMatchObject({ code: 'invalid_input' });
-    await expect(w.app.authorizations.createCallRequest(o.ownerId, w.body({ recipientTelegramId: '999999999' }), { ownerExplicitCommand: true })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(
+      w.app.authorizations.createCallRequest(o.ownerId, w.body({ recipientTelegramId: '999999999' }), { ownerExplicitCommand: true }),
+    ).rejects.toMatchObject({ code: 'not_found' });
     await w.app.close();
   });
   it('topic not granted to the contact', async () => {
@@ -152,9 +209,36 @@ describe('A04 — denials place no call and consume nothing', () => {
     const app = boot(t.url, clock);
     await app.operations.setKillSwitch(o.ownerId, false, 'test');
     await ensureDailyBudget(t.db, o.ownerId, '2026-10-15', 5_000_000);
-    const c = await app.contacts.create(t.db, o.ownerId, { telegramUserId: '555000111', displayName: 'J', verificationSource: 'owner_confirmed_numeric_id' }, clock.now());
-    await app.contacts.grant(t.db, o.ownerId, c.id, { allowCall: true, topicScopes: ['credit-workflow'], expiresAt: new Date('2026-12-01T00:00:00Z') }, clock.now());
-    const req = await app.authorizations.createCallRequest(o.ownerId, { callRequestId: crypto.randomUUID(), ownerId: o.ownerId, recipientTelegramId: '555000111', topic: 'credit-workflow', purpose: 'check status please', questions: [], allowedContext: [], forbiddenCommitments: [], language: 'en', maxDurationSeconds: 60, expiresAt: '2026-10-15T09:00:00.000Z' }, { ownerExplicitCommand: true });
+    const c = await app.contacts.create(
+      t.db,
+      o.ownerId,
+      { telegramUserId: '555000111', displayName: 'J', verificationSource: 'owner_confirmed_numeric_id' },
+      clock.now(),
+    );
+    await app.contacts.grant(
+      t.db,
+      o.ownerId,
+      c.id,
+      { allowCall: true, topicScopes: ['credit-workflow'], expiresAt: new Date('2026-12-01T00:00:00Z') },
+      clock.now(),
+    );
+    const req = await app.authorizations.createCallRequest(
+      o.ownerId,
+      {
+        callRequestId: crypto.randomUUID(),
+        ownerId: o.ownerId,
+        recipientTelegramId: '555000111',
+        topic: 'credit-workflow',
+        purpose: 'check status please',
+        questions: [],
+        allowedContext: [],
+        forbiddenCommitments: [],
+        language: 'en',
+        maxDurationSeconds: 60,
+        expiresAt: '2026-10-15T09:00:00.000Z',
+      },
+      { ownerExplicitCommand: true },
+    );
     expect(await app.orchestrator.dial(o.ownerId, req.callRequestId)).toMatchObject({ status: 'rejected', reason: 'calling_not_verified' });
     await app.close();
   });
@@ -206,7 +290,9 @@ describe('A11 — uncertain dial outcome: reconcile, never blindly redial', () =
     const w = await world({ script: { kind: 'hang_in_dial' } });
     const req = await w.request();
     const p = w.app.orchestrator.dial(o.ownerId, req.callRequestId);
-    await new Promise((r) => setTimeout(r, 50));
+    // Deterministic: wait until the adapter is actually inside dial() (the request is "in flight"), not a fixed sleep.
+    for (let i = 0; i < 500 && w.adapter.dials.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(w.adapter.dials).toHaveLength(1);
     await w.app.operations.setKillSwitch(o.ownerId, true, 'abort pending dial');
     expect(await p).toMatchObject({ status: 'outcome_unknown' });
     await w.app.close();
@@ -215,7 +301,10 @@ describe('A11 — uncertain dial outcome: reconcile, never blindly redial', () =
 
 describe('A14 — refusals, busy, privacy, flood wait: terminal, notified, never retried', () => {
   it.each([
-    ['declined', 'declined'], ['busy', 'busy'], ['no_answer', 'no_answer'], ['privacy_restricted', 'failed'],
+    ['declined', 'declined'],
+    ['busy', 'busy'],
+    ['no_answer', 'no_answer'],
+    ['privacy_restricted', 'failed'],
   ] as const)('%s', async (reason, state) => {
     const w = await world({ script: { kind: 'reject', reason } });
     const req = await w.request();
@@ -247,7 +336,12 @@ describe('A14 — refusals, busy, privacy, flood wait: terminal, notified, never
 });
 
 describe('A12 — kill switch / revocation during a live call', () => {
-  const holdingRunner = { run: () => new Promise(() => { /* conversation that never ends by itself */ }) };
+  const holdingRunner = {
+    run: () =>
+      new Promise(() => {
+        /* conversation that never ends by itself */
+      }),
+  };
   it('kill switch ends the live call fast, blocks new calls, and persists independently of the model', async () => {
     const w = await world({ script: { kind: 'answer' }, sessionRunner: holdingRunner });
     const req = await w.request();
@@ -298,7 +392,10 @@ describe('A13 / state-machine robustness', () => {
     await w.app.close();
   });
   it('two concurrent dials: exactly one proceeds, the other is refused (one active call per account)', async () => {
-    const w = await world({ script: { kind: 'answer' }, sessionRunner: { run: () => new Promise((r) => setTimeout(() => r({ endReason: 'completed' }), 150)) } });
+    const w = await world({
+      script: { kind: 'answer' },
+      sessionRunner: { run: () => new Promise((r) => setTimeout(() => r({ endReason: 'completed' }), 150)) },
+    });
     const a = await w.request();
     const b = await w.request();
     const [ra, rb] = await Promise.all([w.app.orchestrator.dial(o.ownerId, a.callRequestId), w.app.orchestrator.dial(o.ownerId, b.callRequestId)]);

@@ -9,14 +9,18 @@
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "db:migrate": "tsx src/infrastructure/db/migrate-cli.ts",
-    "db:seed": "tsx src/infrastructure/db/seed-cli.ts"
+    "db:seed": "tsx src/infrastructure/db/seed-cli.ts",
+    "bootstrap:owner": "tsx src/cli/bootstrap-owner.ts",
+    "dev:secrets": "tsx src/cli/dev-secrets.ts"
   },
   "dependencies": {
     "@tgvl/contracts": "workspace:*",
+    "big-integer": "1.6.52",
     "fastify": "5.12.7",
     "luxon": "3.7.2",
     "pg": "8.23.1",
     "pino": "10.4.0",
+    "telegram": "2.26.22",
     "zod": "4.6.7"
   },
   "devDependencies": {

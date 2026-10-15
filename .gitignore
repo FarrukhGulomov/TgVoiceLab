@@ -10,3 +10,5 @@ secrets/
 experiments/**/evidence/*.local.json
 *.log
 .DS_Store
+
+*.local.wav

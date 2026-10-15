@@ -2,10 +2,7 @@ import { createHash } from 'node:crypto';
 import type pg from 'pg';
 import type { Db } from '../../infrastructure/db/db.js';
 
-export type IdempotentOutcome<T> =
-  | { kind: 'executed'; status: number; body: T }
-  | { kind: 'replayed'; status: number; body: T }
-  | { kind: 'conflict' };
+export type IdempotentOutcome<T> = { kind: 'executed'; status: number; body: T } | { kind: 'replayed'; status: number; body: T } | { kind: 'conflict' };
 
 export const hashRequest = (body: unknown): string => createHash('sha256').update(canonicalJson(body)).digest('hex');
 
@@ -14,7 +11,11 @@ export function canonicalJson(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';
   if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
   const o = v as Record<string, unknown>;
-  return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(',')}}`;
+  return `{${Object.keys(o)
+    .filter((k) => o[k] !== undefined)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
+    .join(',')}}`;
 }
 
 /**
@@ -43,7 +44,13 @@ export async function runIdempotent<T>(
       return { kind: 'replayed', status: row.status_code, body: row.response } as const;
     }
     const out = await handler(c);
-    await c.query(`UPDATE idempotency_keys SET state='done', status_code=$4, response=$5 WHERE owner_id=$1 AND action=$2 AND key=$3`, [args.ownerId, args.action, args.key, out.status, JSON.stringify(out.body)]);
+    await c.query(`UPDATE idempotency_keys SET state='done', status_code=$4, response=$5 WHERE owner_id=$1 AND action=$2 AND key=$3`, [
+      args.ownerId,
+      args.action,
+      args.key,
+      out.status,
+      JSON.stringify(out.body),
+    ]);
     return { kind: 'executed', status: out.status, body: out.body } as const;
   });
 }

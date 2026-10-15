@@ -15,9 +15,7 @@ export async function adminClient(): Promise<pg.Client> {
     await c.connect();
   } catch (e) {
     // Fail loudly: a silently skipped DB suite would look like success.
-    throw new Error(
-      `Integration tests need PostgreSQL at ${new URL(ADMIN_URL).host} (set TEST_DATABASE_ADMIN_URL). Original error: ${(e as Error).message}`,
-    );
+    throw new Error(`Integration tests need PostgreSQL at ${new URL(ADMIN_URL).host} (set TEST_DATABASE_ADMIN_URL). Original error: ${(e as Error).message}`);
   }
   return c;
 }

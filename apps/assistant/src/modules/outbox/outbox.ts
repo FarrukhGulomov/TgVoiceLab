@@ -44,7 +44,16 @@ export async function dispatchOutboxOnce(
   a: { workerId: string; now: Date; limit?: number; leaseMs?: number; maxAttempts?: number },
 ): Promise<{ delivered: number; failed: number; dead: number }> {
   const leaseMs = a.leaseMs ?? 60_000;
-  const rows = await db.query<{ event_id: string; owner_id: string; aggregate_type: string; aggregate_id: string; type: string; version: number; payload: Record<string, unknown>; attempts: number }>(
+  const rows = await db.query<{
+    event_id: string;
+    owner_id: string;
+    aggregate_type: string;
+    aggregate_id: string;
+    type: string;
+    version: number;
+    payload: Record<string, unknown>;
+    attempts: number;
+  }>(
     `WITH c AS (
        SELECT event_id FROM outbox
        WHERE delivery_state='pending' AND next_attempt_at <= $1 AND (lease_expires_at IS NULL OR lease_expires_at < $1)
@@ -57,17 +66,31 @@ export async function dispatchOutboxOnce(
   );
   const out = { delivered: 0, failed: 0, dead: 0 };
   for (const r of rows.rows) {
-    const row: OutboxRow = { eventId: r.event_id, ownerId: r.owner_id, aggregateType: r.aggregate_type, aggregateId: r.aggregate_id, type: r.type, version: r.version, payload: r.payload, attempts: r.attempts };
+    const row: OutboxRow = {
+      eventId: r.event_id,
+      ownerId: r.owner_id,
+      aggregateType: r.aggregate_type,
+      aggregateId: r.aggregate_id,
+      type: r.type,
+      version: r.version,
+      payload: r.payload,
+      attempts: r.attempts,
+    };
     try {
       await handlers[row.type]!(row);
-      await db.query(`UPDATE outbox SET delivery_state='delivered', delivered_at=$2, lease_owner=NULL, lease_expires_at=NULL WHERE event_id=$1`, [row.eventId, a.now]);
+      await db.query(`UPDATE outbox SET delivery_state='delivered', delivered_at=$2, lease_owner=NULL, lease_expires_at=NULL WHERE event_id=$1`, [
+        row.eventId,
+        a.now,
+      ]);
       out.delivered++;
     } catch (err) {
       const dead = row.attempts >= (a.maxAttempts ?? 8);
-      await db.query(
-        `UPDATE outbox SET delivery_state=$2, next_attempt_at=$3, last_error=$4, lease_owner=NULL, lease_expires_at=NULL WHERE event_id=$1`,
-        [row.eventId, dead ? 'dead' : 'pending', new Date(a.now.getTime() + backoffMs(row.attempts)), (err instanceof Error ? err.message : String(err)).slice(0, 500)],
-      );
+      await db.query(`UPDATE outbox SET delivery_state=$2, next_attempt_at=$3, last_error=$4, lease_owner=NULL, lease_expires_at=NULL WHERE event_id=$1`, [
+        row.eventId,
+        dead ? 'dead' : 'pending',
+        new Date(a.now.getTime() + backoffMs(row.attempts)),
+        (err instanceof Error ? err.message : String(err)).slice(0, 500),
+      ]);
       if (dead) out.dead++;
       else out.failed++;
     }

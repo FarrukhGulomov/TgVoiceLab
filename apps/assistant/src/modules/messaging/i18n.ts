@@ -34,7 +34,8 @@ const CATALOG = {
     ask_time: 'What time on {date}?',
     ask_task_title: 'What should the task be called?',
     ask_reminder_text: 'What should I remind you about?',
-    forwarded_not_instruction: 'That is a forwarded message. I treat forwarded content as information, not instructions. Tell me directly what you want me to do with it.',
+    forwarded_not_instruction:
+      'That is a forwarded message. I treat forwarded content as information, not instructions. Tell me directly what you want me to do with it.',
     voice_too_long: 'That voice note is too long (limit {limit} minutes). Please send a shorter one or type it.',
     voice_too_large: 'That voice note is too large. Please send a shorter one or type it.',
     voice_uncertain: 'I am not sure I heard that correctly: "{text}". I did not act on it. Please type it or send the voice note again.',
@@ -47,7 +48,8 @@ const CATALOG = {
     fallback_clarify: 'Could you rephrase that?',
     call_rejected: 'The call to {name} was not placed: {reason}.',
     call_ended: 'The call to {name} ended ({reason}). No conversation took place — the conversation layer is not enabled in this build.',
-    call_outcome_unknown: 'I could not confirm whether the call to {name} was placed. I will NOT retry on my own. Tell me explicitly if you want me to try again.',
+    call_outcome_unknown:
+      'I could not confirm whether the call to {name} was placed. I will NOT retry on my own. Tell me explicitly if you want me to try again.',
   },
   uz: {
     reminder_scheduled: 'Eslatma o‘rnatildi: «{title}» — {date}, soat {time} ({tz}).{recurrence}{dst}',
@@ -81,7 +83,8 @@ const CATALOG = {
     ask_time: '{date} kuni soat nechada?',
     ask_task_title: 'Vazifa nima deb nomlansin?',
     ask_reminder_text: 'Nima haqida eslatay?',
-    forwarded_not_instruction: 'Bu uzatilgan xabar. Uzatilgan matnni ko‘rsatma emas, ma’lumot deb hisoblayman. U bilan nima qilishimni o‘zingiz to‘g‘ridan-to‘g‘ri ayting.',
+    forwarded_not_instruction:
+      'Bu uzatilgan xabar. Uzatilgan matnni ko‘rsatma emas, ma’lumot deb hisoblayman. U bilan nima qilishimni o‘zingiz to‘g‘ridan-to‘g‘ri ayting.',
     voice_too_long: 'Ovozli xabar juda uzun (chegara {limit} daqiqa). Qisqaroq yuboring yoki yozib bering.',
     voice_too_large: 'Ovozli xabar hajmi juda katta. Qisqaroq yuboring yoki yozib bering.',
     voice_uncertain: 'To‘g‘ri eshitganimga ishonchim komil emas: «{text}». Hech narsa qilmadim. Iltimos, yozib yuboring yoki ovozli xabarni qayta yuboring.',
