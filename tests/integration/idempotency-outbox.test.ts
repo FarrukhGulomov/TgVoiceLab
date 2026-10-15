@@ -67,7 +67,7 @@ describe('transactional outbox', () => {
     const before = (await t.db.query('SELECT count(*)::int AS n FROM outbox')).rows[0].n;
     await expect(t.db.tx(async (c) => {
       const r = await c.query(`INSERT INTO tasks (owner_id, title_enc) VALUES ($1,'e1.x') RETURNING id`, [o.ownerId]);
-      await emitOutbox(c, { ownerId: o.ownerId, aggregateType: 'task', aggregateId: r.rows[0].id, type: 'task.created' });
+      await emitOutbox(c, { ownerId: o.ownerId, aggregateType: 'task', aggregateId: r.rows[0].id, type: 'task.created' }, NOW);
       throw new Error('abort');
     })).rejects.toThrow('abort');
     expect((await t.db.query('SELECT count(*)::int AS n FROM outbox')).rows[0].n).toBe(before);

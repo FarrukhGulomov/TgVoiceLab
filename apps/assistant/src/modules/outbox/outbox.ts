@@ -12,11 +12,11 @@ export interface OutboxEvent {
 }
 
 /** Write inside the same transaction as the state change it describes. */
-export async function emitOutbox(q: Queryable, e: OutboxEvent, now?: Date): Promise<string> {
+export async function emitOutbox(q: Queryable, e: OutboxEvent, now: Date): Promise<string> {
   const r = await q.query<{ event_id: string }>(
-    `INSERT INTO outbox (owner_id, aggregate_type, aggregate_id, type, version, payload, next_attempt_at)
-     VALUES ($1,$2,$3,$4,$5,$6,coalesce($7, now())) RETURNING event_id`,
-    [e.ownerId, e.aggregateType, e.aggregateId, e.type, e.version ?? 1, JSON.stringify(e.payload ?? {}), now ?? null],
+    `INSERT INTO outbox (owner_id, aggregate_type, aggregate_id, type, version, payload, created_at, next_attempt_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$7) RETURNING event_id`,
+    [e.ownerId, e.aggregateType, e.aggregateId, e.type, e.version ?? 1, JSON.stringify(e.payload ?? {}), now],
   );
   return r.rows[0]!.event_id;
 }
@@ -62,11 +62,11 @@ export async function dispatchOutboxOnce(
       await handlers[row.type]!(row);
       await db.query(`UPDATE outbox SET delivery_state='delivered', delivered_at=$2, lease_owner=NULL, lease_expires_at=NULL WHERE event_id=$1`, [row.eventId, a.now]);
       out.delivered++;
-    } catch {
+    } catch (err) {
       const dead = row.attempts >= (a.maxAttempts ?? 8);
       await db.query(
-        `UPDATE outbox SET delivery_state=$2, next_attempt_at=$3, lease_owner=NULL, lease_expires_at=NULL WHERE event_id=$1`,
-        [row.eventId, dead ? 'dead' : 'pending', new Date(a.now.getTime() + backoffMs(row.attempts))],
+        `UPDATE outbox SET delivery_state=$2, next_attempt_at=$3, last_error=$4, lease_owner=NULL, lease_expires_at=NULL WHERE event_id=$1`,
+        [row.eventId, dead ? 'dead' : 'pending', new Date(a.now.getTime() + backoffMs(row.attempts)), (err instanceof Error ? err.message : String(err)).slice(0, 500)],
       );
       if (dead) out.dead++;
       else out.failed++;
