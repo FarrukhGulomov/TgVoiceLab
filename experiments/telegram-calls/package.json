@@ -1,0 +1,16 @@
+{
+  "name": "@tgvl/telegram-calls-spike",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Phase 0 Telegram private-call feasibility spike (not production code)",
+  "scripts": {
+    "smoke": "node smoke-offline.mjs",
+    "login": "node login.mjs",
+    "call": "node live-call.mjs"
+  },
+  "dependencies": {
+    "ntgcalls": "3.0.3",
+    "telegram": "2.26.22"
+  }
+}

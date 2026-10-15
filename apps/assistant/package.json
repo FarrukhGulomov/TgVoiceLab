@@ -1,0 +1,26 @@
+{
+  "name": "@tgvl/assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "db:migrate": "tsx src/infrastructure/db/migrate-cli.ts",
+    "db:seed": "tsx src/infrastructure/db/seed-cli.ts"
+  },
+  "dependencies": {
+    "@tgvl/contracts": "workspace:*",
+    "fastify": "5.12.7",
+    "luxon": "3.7.2",
+    "pg": "8.23.1",
+    "pino": "10.4.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/luxon": "3.7.6",
+    "@types/pg": "8.23.1"
+  }
+}

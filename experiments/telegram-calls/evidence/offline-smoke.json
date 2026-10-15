@@ -1,0 +1,68 @@
+{
+  "kind": "OFFLINE_SMOKE_NOT_LIVE_EVIDENCE",
+  "node": "v22.22.0",
+  "arch": "linux-x64",
+  "steps": [
+    {
+      "name": "createP2pCall",
+      "ok": true,
+      "ms": 2.3,
+      "detail": null
+    },
+    {
+      "name": "initExchange with Buffer args (documented typing) -> expected to FAIL on 3.0.3",
+      "ok": true,
+      "expectedFailure": true,
+      "ms": 0.6,
+      "finding": "An array was expected"
+    },
+    {
+      "name": "initExchange with number[] args (runtime-accepted form)",
+      "ok": true,
+      "ms": 4.8,
+      "detail": {
+        "returnedType": "[object Uint8Array]",
+        "length": 256
+      }
+    },
+    {
+      "name": "onFrames/onSignalingData/onConnectionChange register",
+      "ok": true,
+      "ms": 0.1,
+      "detail": "registered"
+    },
+    {
+      "name": "static getProtocol() (layer/library versions to advertise in phone.requestCall)",
+      "ok": true,
+      "ms": 0.1,
+      "detail": {
+        "minLayer": 92,
+        "maxLayer": 92,
+        "udpP2p": true,
+        "udpReflector": true,
+        "libraryVersions": [
+          "8.0.0",
+          "9.0.0",
+          "12.0.0",
+          "13.0.0"
+        ]
+      }
+    },
+    {
+      "name": "calls() list",
+      "ok": true,
+      "ms": 0.6,
+      "detail": {
+        "size": 1
+      }
+    },
+    {
+      "name": "sendExternalFrame before connect must reject (fail-closed expectation)",
+      "ok": true,
+      "ms": 1.7,
+      "detail": "rejected: External source not initialized"
+    }
+  ],
+  "capturedAt": "2026-10-15T16:32:10.278Z",
+  "ntgcallsVersion": "3.0.3"
+}
