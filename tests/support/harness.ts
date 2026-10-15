@@ -9,8 +9,8 @@ import { buildContainer } from '../../apps/assistant/src/bootstrap/container.js'
 export const TEST_KEYRING = JSON.stringify({ active: 'k1', keys: { k1: randomBytes(32).toString('base64') } });
 
 /** Build a container on a (possibly pre-existing) database — a fresh Db pool simulates a process restart. */
-export function boot(url: string, clock: FakeClock, messaging = new FakeMessaging(), workerId = 'w-test') {
+export function boot(url: string, clock: FakeClock, messaging = new FakeMessaging(), workerId = 'w-test', extra: Partial<Parameters<typeof buildContainer>[0]> = {}) {
   const db = new Db(url, undefined, 6);
   const crypto = new DataCrypto(new Envelope(parseKeyRing(TEST_KEYRING)));
-  return { ...buildContainer({ db, crypto, clock, messaging, workerId }), messaging, close: () => db.close() };
+  return { ...buildContainer({ db, crypto, clock, messaging, workerId, ...extra }), messaging, close: () => db.close() };
 }

@@ -15,6 +15,17 @@ const recurrenceText = (loc: Locale, rec: Recurrence | null): string => {
   return t(loc, key, { n: rec.interval });
 };
 
+const REASONS: Record<string, string> = {
+  kill_switch_on: 'calling is switched off', calling_not_verified: 'real calling is not verified on this deployment',
+  consent_mechanism_unproven: 'the consent mechanism for third-party calls is not proven', permission_revoked: 'permission was revoked',
+  permission_expired: 'permission expired', permission_version_stale: 'permissions changed after you approved the plan',
+  plan_hash_mismatch: 'the plan changed after approval', authorization_expired: 'the approval expired', authorization_not_approved: 'there is no valid approval',
+  active_call_exists: 'another call is in progress', budget_not_reserved: 'the daily budget is exhausted', quiet_hours: 'quiet hours',
+  outside_allowed_hours: 'outside the hours this contact allows', topic_not_permitted: 'topic not permitted for this contact',
+  declined: 'declined', busy: 'busy', no_answer: 'no answer', privacy_restricted: 'the contact’s privacy settings do not allow calls',
+  transport_error: 'connection problem', cancelled: 'cancelled', duration_limit: 'time limit reached', outcome_unknown: 'outcome unknown',
+};
+
 /** Outbox -> Telegram. Idempotent on the outbox event id (used as the provider dedupe key). */
 export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging: MessagingPort }): Record<string, OutboxHandler> {
   const { db, crypto, messaging } = deps;
@@ -57,6 +68,18 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
       const key = ({ normal: 'reminder_fire', late: 'reminder_fire_late', degraded_call: 'reminder_degraded_call', call_missed: 'reminder_call_missed', missed_summary: 'reminder_missed_summary' } as Record<string, MessageKey>)[p.variant] ?? 'reminder_fire';
       const text = t(owner.locale, key, { title: rem.title, date: sched.toFormat('yyyy-LL-dd'), time: sched.toFormat('HH:mm') });
       await messaging.sendMessage({ toTelegramUserId: owner.telegram_user_id, text, silent: p.silent, idempotencyKey: row.eventId });
+    },
+
+    'call.notify': async (row) => {
+      const p = row.payload as { variant: 'rejected' | 'ended' | 'outcome_unknown'; reason?: string };
+      const owner = await loadOwner(row.ownerId);
+      const q = row.aggregateType === 'call'
+        ? 'SELECT c.display_name FROM calls k JOIN call_requests r ON r.id=k.call_request_id JOIN contacts c ON c.id=r.contact_id WHERE k.id=$1 AND k.owner_id=$2'
+        : 'SELECT c.display_name FROM call_requests r JOIN contacts c ON c.id=r.contact_id WHERE r.id=$1 AND r.owner_id=$2';
+      const name = (await db.query<{ display_name: string }>(q, [row.aggregateId, row.ownerId])).rows[0]?.display_name ?? '?';
+      const reason = REASONS[p.reason ?? ''] ?? p.reason ?? '';
+      const key: MessageKey = p.variant === 'rejected' ? 'call_rejected' : p.variant === 'outcome_unknown' ? 'call_outcome_unknown' : 'call_ended';
+      await messaging.sendMessage({ toTelegramUserId: owner.telegram_user_id, text: t(owner.locale, key, { name, reason }), idempotencyKey: row.eventId });
     },
 
     // Direct replies to owner messages (chat intake) travel through the outbox too, so they survive a crash after commit.

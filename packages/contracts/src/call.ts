@@ -38,6 +38,8 @@ export const ApprovedCallPlanSchema = z.object({
   callRequestId: UuidSchema,
   ownerId: UuidSchema,
   recipientTelegramId: TelegramUserIdSchema,
+  /** Short slug matched against the contact's topic-scoped permission (extension to the spec interface; see docs/adr/0002). */
+  topic: z.string().regex(/^[a-z0-9_.-]{1,64}$/),
   purpose: z.string().min(3).max(500),
   questions: z.array(z.string().min(1).max(300)).max(10),
   allowedContext: z.array(z.string().min(1).max(500)).max(20),
@@ -112,3 +114,18 @@ export const PolicyDecisionSchema = z.object({
   authorizationId: UuidSchema.optional(),
 });
 export type PolicyDecision = z.infer<typeof PolicyDecisionSchema>;
+
+/** Adapter error taxonomy. Adapters MUST classify: unknown outcome is not the same as rejection (spec §7). */
+export class DialRejectedError extends Error {
+  constructor(readonly reason: CallEndReason, message = `dial rejected: ${reason}`, readonly retryAfterSeconds?: number) {
+    super(message);
+    this.name = 'DialRejectedError';
+  }
+}
+/** The request may or may not have reached Telegram (timeout/crash after send). Never auto-redial. */
+export class DialOutcomeUnknownError extends Error {
+  constructor(message = 'dial outcome unknown', readonly providerCallId?: string) {
+    super(message);
+    this.name = 'DialOutcomeUnknownError';
+  }
+}
