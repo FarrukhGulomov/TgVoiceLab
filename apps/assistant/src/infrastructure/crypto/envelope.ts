@@ -32,6 +32,11 @@ export function parseKeyRing(json: string): KeyRing {
 export class Envelope {
   constructor(private readonly ring: KeyRing) {}
 
+  /** Envelope prefix of the active key; ciphertext not starting with it needs rotation. */
+  get activePrefix(): string {
+    return `e1.${this.ring.activeKeyId}.`;
+  }
+
   encrypt(plaintext: string, aad: string): string {
     const key = this.ring.keys.get(this.ring.activeKeyId)!;
     const nonce = randomBytes(12);

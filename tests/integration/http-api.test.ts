@@ -44,7 +44,7 @@ afterEach(async () => {
   await t.drop();
 });
 
-const call = (method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown, headers: Record<string, string> = {}, auth: string | null = TOKEN) =>
+const call_ = (method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown, headers: Record<string, string> = {}, auth: string | null = TOKEN) =>
   srv.inject({
     method,
     url,
@@ -58,25 +58,25 @@ const call = (method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown, 
 
 describe('authentication', () => {
   it('liveness is open and minimal; everything else needs a bearer token', async () => {
-    expect((await call('GET', '/health/live', undefined, {}, null)).json()).toEqual({ status: 'ok' });
+    expect((await call_('GET', '/health/live', undefined, {}, null)).json()).toEqual({ status: 'ok' });
     for (const [m, u] of [
       ['GET', '/v1/tasks'],
       ['GET', '/v1/capabilities'],
       ['GET', '/health/ready'],
       ['POST', '/v1/tasks'],
     ] as const) {
-      const r = await call(m, u, {}, {}, null);
+      const r = await call_(m, u, {}, {}, null);
       expect(r.statusCode).toBe(401);
       expect(r.json().error.code).toBe('unauthenticated');
     }
-    expect((await call('GET', '/v1/tasks', undefined, {}, 'wrong-token-wrong-token-wrong-token-1234')).statusCode).toBe(401);
+    expect((await call_('GET', '/v1/tasks', undefined, {}, 'wrong-token-wrong-token-wrong-token-1234')).statusCode).toBe(401);
   });
   it('supports token rotation (either configured token works)', async () => {
-    expect((await call('GET', '/v1/tasks', undefined, {}, TOKEN)).statusCode).toBe(200);
-    expect((await call('GET', '/v1/tasks', undefined, {}, ROTATED)).statusCode).toBe(200);
+    expect((await call_('GET', '/v1/tasks', undefined, {}, TOKEN)).statusCode).toBe(200);
+    expect((await call_('GET', '/v1/tasks', undefined, {}, ROTATED)).statusCode).toBe(200);
   });
   it('failed auth is audited without the token', async () => {
-    await call('GET', '/v1/tasks', undefined, {}, 'leaky-secret-token-should-not-be-logged-00');
+    await call_('GET', '/v1/tasks', undefined, {}, 'leaky-secret-token-should-not-be-logged-00');
     const a = await t.db.query(`SELECT reason_code, metadata::text AS m FROM audit_events WHERE action='admin_api'`);
     expect(a.rows[0].reason_code).toBe('bad_token');
     expect(a.rows[0].m).not.toContain('leaky');
@@ -91,51 +91,51 @@ describe('envelope, idempotency and conflicts', () => {
   });
   it('replays safely, 409 on key reuse with a different body, and validates input', async () => {
     const key = { 'idempotency-key': 'stable-key-12345' };
-    const a = await call('POST', '/v1/tasks', { title: 'Review the credit workflow' }, key);
-    const b = await call('POST', '/v1/tasks', { title: 'Review the credit workflow' }, key);
+    const a = await call_('POST', '/v1/tasks', { title: 'Review the credit workflow' }, key);
+    const b = await call_('POST', '/v1/tasks', { title: 'Review the credit workflow' }, key);
     expect(a.statusCode).toBe(201);
     expect(b.statusCode).toBe(201);
     expect(b.headers['idempotent-replayed']).toBe('true');
     expect(b.json().data.id).toBe(a.json().data.id);
     expect(a.json().requestId).toBeTruthy();
-    const c = await call('POST', '/v1/tasks', { title: 'Something else' }, key);
+    const c = await call_('POST', '/v1/tasks', { title: 'Something else' }, key);
     expect(c.statusCode).toBe(409);
     expect(c.json().error.code).toBe('idempotency_conflict');
-    expect((await call('POST', '/v1/tasks', { title: '' })).statusCode).toBe(400);
+    expect((await call_('POST', '/v1/tasks', { title: '' })).statusCode).toBe(400);
     expect((await t.db.query('SELECT count(*)::int n FROM tasks')).rows[0].n).toBe(1);
   });
   it('optimistic concurrency on PATCH returns 409 with a stable code', async () => {
-    const created = (await call('POST', '/v1/tasks', { title: 'T' })).json().data;
-    const ok = await call('PATCH', `/v1/tasks/${created.id}`, { expectedVersion: 1, status: 'done' });
+    const created = (await call_('POST', '/v1/tasks', { title: 'T' })).json().data;
+    const ok = await call_('PATCH', `/v1/tasks/${created.id}`, { expectedVersion: 1, status: 'done' });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().data.status).toBe('done');
-    const stale = await call('PATCH', `/v1/tasks/${created.id}`, { expectedVersion: 1, title: 'late' });
+    const stale = await call_('PATCH', `/v1/tasks/${created.id}`, { expectedVersion: 1, title: 'late' });
     expect(stale.statusCode).toBe(409);
     expect(stale.json().error.code).toBe('version_conflict');
   });
   it("another owner's object is indistinguishable from a missing one (404)", async () => {
     const other = await seedOwner(t.db);
     const foreign = await t.db.query<{ id: string }>(`INSERT INTO tasks (owner_id, title_enc) VALUES ($1,'e1.x') RETURNING id`, [other.ownerId]);
-    const r1 = await call('PATCH', `/v1/tasks/${foreign.rows[0]!.id}`, { expectedVersion: 1, status: 'done' });
+    const r1 = await call_('PATCH', `/v1/tasks/${foreign.rows[0]!.id}`, { expectedVersion: 1, status: 'done' });
     // The API serves the single bootstrapped owner; with two owners present it must refuse to guess rather than leak.
     expect([404, 503]).toContain(r1.statusCode);
-    const miss = await call('PATCH', `/v1/tasks/00000000-0000-4000-8000-000000000000`, { expectedVersion: 1, status: 'done' });
+    const miss = await call_('PATCH', `/v1/tasks/00000000-0000-4000-8000-000000000000`, { expectedVersion: 1, status: 'done' });
     expect([404, 503]).toContain(miss.statusCode);
   });
   it('reminders: create, reschedule with version check, cancel; confirmation is queued via the outbox', async () => {
-    const r = await call('POST', '/v1/reminders', { title: 'Call Javlon', localDateTime: '2026-10-16T09:00' });
+    const r = await call_('POST', '/v1/reminders', { title: 'Call Javlon', localDateTime: '2026-10-16T09:00' });
     expect(r.statusCode).toBe(201);
     expect(r.json().data.next).toMatchObject({ date: '2026-10-16', time: '09:00', tz: 'Asia/Samarkand' });
     const id = r.json().data.id;
-    const mv = await call('PATCH', `/v1/reminders/${id}`, { expectedVersion: 1, localDateTime: '2026-10-17T10:30' });
+    const mv = await call_('PATCH', `/v1/reminders/${id}`, { expectedVersion: 1, localDateTime: '2026-10-17T10:30' });
     expect(mv.json().data).toMatchObject({ scheduleVersion: 2, version: 2 });
-    expect((await call('PATCH', `/v1/reminders/${id}`, { action: 'cancel', expectedVersion: 1 })).statusCode).toBe(409);
-    expect((await call('PATCH', `/v1/reminders/${id}`, { action: 'cancel', expectedVersion: 2 })).json().data.status).toBe('cancelled');
+    expect((await call_('PATCH', `/v1/reminders/${id}`, { action: 'cancel', expectedVersion: 1 })).statusCode).toBe(409);
+    expect((await call_('PATCH', `/v1/reminders/${id}`, { action: 'cancel', expectedVersion: 2 })).json().data.status).toBe('cancelled');
     expect((await t.db.query(`SELECT count(*)::int n FROM outbox WHERE type='owner.notice'`)).rows[0].n).toBe(3);
   });
   it('internal errors do not leak details', async () => {
     await t.db.query('DROP TABLE tasks CASCADE');
-    const r = await call('GET', '/v1/tasks');
+    const r = await call_('GET', '/v1/tasks');
     expect(r.statusCode).toBe(500);
     expect(JSON.stringify(r.json())).not.toMatch(/relation|tasks|pg|SELECT/i);
   });
@@ -143,7 +143,7 @@ describe('envelope, idempotency and conflicts', () => {
 
 describe('A16 — honest capability reporting while real calling is unverified', () => {
   it('reports degraded text-only mode, calling unavailable, with the reasons', async () => {
-    const r = await call('GET', '/v1/capabilities');
+    const r = await call_('GET', '/v1/capabilities');
     const c = r.json().data;
     expect(c.mode).toBe('degraded_text_only');
     expect(c.calling).toMatchObject({
@@ -155,15 +155,15 @@ describe('A16 — honest capability reporting while real calling is unverified',
       productionCallingAllowed: false,
     });
     expect(c.calling.blockedBecause.join(' ')).toMatch(/no feasibility evidence/);
-    expect((await call('GET', '/health/ready')).json().data.status).toBe('ready');
+    expect((await call_('GET', '/health/ready')).json().data.status).toBe('ready');
   });
   it('a call request cannot be dialed through the API: the durable dial job is refused with a reason and notifies the owner', async () => {
-    const contact = (await call('POST', '/v1/contacts', { telegramUserId: '555000111', displayName: 'Javlon' })).json().data;
+    const contact = (await call_('POST', '/v1/contacts', { telegramUserId: '555000111', displayName: 'Javlon' })).json().data;
     expect(
-      (await call('PATCH', `/v1/contacts/${contact.id}/permissions`, { allowCall: true, topicScopes: ['credit-workflow'], expiresAt: '2026-12-01T00:00:00Z' }))
+      (await call_('PATCH', `/v1/contacts/${contact.id}/permissions`, { allowCall: true, topicScopes: ['credit-workflow'], expiresAt: '2026-12-01T00:00:00Z' }))
         .statusCode,
     ).toBe(200);
-    const req = await call('POST', '/v1/call-requests', {
+    const req = await call_('POST', '/v1/call-requests', {
       recipientTelegramId: '555000111',
       topic: 'credit-workflow',
       purpose: 'Check whether errors are fixed',
@@ -186,11 +186,47 @@ describe('A16 — honest capability reporting while real calling is unverified',
   });
   it('kill-switch endpoint persists and is idempotent', async () => {
     const key = { 'idempotency-key': 'ks-key-123456' };
-    const r1 = await call('POST', '/v1/operations/kill-switch', { on: true, reason: 'drill' }, key);
-    const r2 = await call('POST', '/v1/operations/kill-switch', { on: true, reason: 'drill' }, key);
+    const r1 = await call_('POST', '/v1/operations/kill-switch', { on: true, reason: 'drill' }, key);
+    const r2 = await call_('POST', '/v1/operations/kill-switch', { on: true, reason: 'drill' }, key);
     expect(r1.statusCode).toBe(200);
     expect(r2.headers['idempotent-replayed']).toBe('true');
     expect((await t.db.query('SELECT calling_kill_switch, version FROM operation_settings')).rows[0]).toMatchObject({ calling_kill_switch: true });
+  });
+});
+
+describe('operator resolution of an outcome_unknown call', () => {
+  it('frees the account only on explicit operator confirmation, audited, and a retry still needs fresh authorization', async () => {
+    const c = (
+      await t.db.query<{ id: string }>(
+        `INSERT INTO contacts (owner_id, telegram_user_id, display_name, verified_at, verification_source) VALUES ($1,'555000111','J',now(),'x') RETURNING id`,
+        [o.ownerId],
+      )
+    ).rows[0]!.id;
+    const auth = (
+      await t.db.query<{ id: string }>(
+        `INSERT INTO authorizations (owner_id, action, target_contact_id, plan, plan_hash, state, expires_at, approved_at, consumed_at) VALUES ($1,'contact_call',$2,'{}',$3,'consumed', now() + interval '1 day', now(), now()) RETURNING id`,
+        [o.ownerId, c, 'a'.repeat(64)],
+      )
+    ).rows[0]!.id;
+    const req = (
+      await t.db.query<{ id: string }>(
+        `INSERT INTO call_requests (owner_id, contact_id, plan, plan_hash, authorization_id, status) VALUES ($1,$2,'{}',$3,$4,'failed') RETURNING id`,
+        [o.ownerId, c, 'a'.repeat(64), auth],
+      )
+    ).rows[0]!.id;
+    const call = (
+      await t.db.query<{ id: string }>(
+        `INSERT INTO calls (owner_id, call_request_id, account_id, attempt, authorization_id, gateway_generation, state, end_reason) VALUES ($1,$2,$3,1,$4,1,'outcome_unknown','outcome_unknown') RETURNING id`,
+        [o.ownerId, req, o.accountId, auth],
+      )
+    ).rows[0]!.id;
+    expect((await call_('POST', `/v1/calls/${call}/resolve-unknown`, { operatorConfirmsNoLiveCall: false, note: 'checked' })).statusCode).toBe(400);
+    const ok = await call_('POST', `/v1/calls/${call}/resolve-unknown`, { operatorConfirmsNoLiveCall: true, note: 'checked phone; no call in progress' });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().data.retryRequiresFreshAuthorization).toBe(true);
+    expect((await t.db.query('SELECT state FROM calls WHERE id=$1', [call])).rows[0].state).toBe('ended');
+    expect((await call_('POST', `/v1/calls/${call}/resolve-unknown`, { operatorConfirmsNoLiveCall: true, note: 'again please' })).statusCode).toBe(409);
+    expect((await t.db.query(`SELECT count(*)::int n FROM audit_events WHERE action='call.resolve_unknown'`)).rows[0].n).toBe(1);
   });
 });
 

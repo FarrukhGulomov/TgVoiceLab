@@ -26,7 +26,8 @@ describe('log redaction', () => {
   });
 
   it('scrubs token-shaped strings in free text', () => {
-    expect(redactString('call failed sk-abcdefghijklmnopqrstuv end')).not.toMatch(/sk-abc/);
+    // pragma: allowlist-secret (intentionally fake token fixture)
+    expect(redactString('call failed sk-abcdefghijklmnopqrstuv end')).not.toMatch(/sk-abc/); // pragma: allowlist-secret
     expect(redactString('Authorization: Bearer abcdef1234567890')).toMatch(/Bearer \[redacted\]/);
   });
 

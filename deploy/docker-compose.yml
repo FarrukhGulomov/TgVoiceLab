@@ -1,0 +1,67 @@
+# Single-host deployment: PostgreSQL + the assistant. No Kubernetes, no Redis (spec §4).
+# Secrets are mounted as files (mode 600 on the host) and referenced via *_REF — never placed in environment values.
+# Exception: DATABASE_URL (it embeds the DB password) lives in ../.env.production, a mode-600 file that is never committed (.gitignore covers .env.*).
+# Calling stays disabled until a production adapter + evidence exist; this file contains no call/media configuration.
+name: tgvoicelab
+services:
+  db:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tgvl
+      POSTGRES_USER: tgvl
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [internal]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tgvl -d tgvl']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    security_opt: ['no-new-privileges:true']
+
+  migrate:
+    # Run explicitly (migrations are a separately-privileged step): `docker compose run --rm migrate`
+    build: { context: .., args: { BUILD_FINGERPRINT: '${BUILD_FINGERPRINT:-unset}' } }
+    profiles: [tools]
+    command: ['node', 'dist/infrastructure/db/migrate-cli.js']
+    environment:
+      NODE_ENV: production
+    env_file: [../.env.production]
+    depends_on: { db: { condition: service_healthy } }
+    networks: [internal]
+
+  assistant:
+    build: { context: .., args: { BUILD_FINGERPRINT: '${BUILD_FINGERPRINT:-unset}' } }
+    restart: unless-stopped
+    env_file: [../.env.production]
+    environment:
+      NODE_ENV: production
+      HTTP_HOST: 0.0.0.0
+      DATA_ENCRYPTION_KEY_REF: file:/run/secrets/data_keys
+      ADMIN_TOKEN_SECRET_REF: file:/run/secrets/admin_token
+      TELEGRAM_SESSION_SECRET_REF: file:/run/secrets/telegram_session
+      CALLS_ENABLED: 'false'
+      CALL_ADAPTER: disabled
+    secrets: [data_keys, admin_token, telegram_session]
+    depends_on: { db: { condition: service_healthy } }
+    networks: [internal]
+    ports: ['127.0.0.1:8080:8080'] # loopback only; put a private reverse proxy / VPN in front for remote admin
+    read_only: true
+    tmpfs: ['/tmp']
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    stop_grace_period: 30s # spec §11.2: drain within 30 s
+
+secrets:
+  db_password: { file: ../.local/secrets/db_password }
+  data_keys: { file: ../.local/secrets/data-keys.json }
+  admin_token: { file: ../.local/secrets/admin-token }
+  telegram_session: { file: ../.local/secrets/telegram.session }
+
+networks:
+  internal: { internal: false } # outbound needed for Telegram; no inbound port is published besides loopback 8080
+
+volumes:
+  pgdata: {}
