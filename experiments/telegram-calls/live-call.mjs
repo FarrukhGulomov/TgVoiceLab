@@ -140,7 +140,13 @@ async function runOneCall(index) {
         );
         const c = confirmed.phoneCall;
         const customParameters = c.customParameters?.data || '{}';
-        mark('confirm_response', { cls: c.className, connections: c.connections?.length ?? 0, hasCustomParameters: !!c.customParameters?.data, p2pAllowed: !!c.p2pAllowed, versions: c.protocol?.libraryVersions });
+        mark('confirm_response', {
+          cls: c.className,
+          connections: c.connections?.length ?? 0,
+          hasCustomParameters: !!c.customParameters?.data,
+          p2pAllowed: !!c.p2pAllowed,
+          versions: c.protocol?.libraryVersions,
+        });
         await ntg.connectP2p(uid, parseServers(c.connections), c.protocol.libraryVersions, !!c.p2pAllowed, customParameters);
         mark('confirm_and_connect_submitted');
       }
