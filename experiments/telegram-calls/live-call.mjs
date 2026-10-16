@@ -288,7 +288,7 @@ function parseServers(conns) {
           turn: true,
           stun: false,
           tcp: !!s.tcp,
-          peerTag: s.peerTag,
+          peerTag: s.peerTag ? Array.from(s.peerTag) : undefined,
         },
   );
 }
