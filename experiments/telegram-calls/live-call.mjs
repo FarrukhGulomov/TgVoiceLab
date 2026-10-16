@@ -267,7 +267,7 @@ function parseServers(conns) {
   return conns.map((s) =>
     s.className === 'PhoneConnectionWebrtc'
       ? {
-          id: s.id,
+          id: BigInt(s.id.toString()),
           ipv4: s.ip,
           ipv6: s.ipv6,
           port: s.port,
@@ -279,7 +279,7 @@ function parseServers(conns) {
           peerTag: undefined,
         }
       : {
-          id: s.id,
+          id: BigInt(s.id.toString()),
           ipv4: s.ip,
           ipv6: s.ipv6,
           port: s.port,
