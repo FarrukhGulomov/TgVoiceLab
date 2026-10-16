@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dev": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env watch src/main.ts",
+    "dev": "pnpm run build:contracts && tsx watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node --env-file-if-exists=../../.env dist/main.js",
     "db:migrate": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/infrastructure/db/migrate-cli.ts",
     "db:seed": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/infrastructure/db/seed-cli.ts",
