@@ -12,8 +12,9 @@ import { StringSession } from 'telegram/sessions/index.js';
 import ntgcalls from 'ntgcalls';
 import { ask, blocked, pins, readSecretFileIfPresent, requireTelegramCredentials, sessionPath, writeEvidence } from './lib.mjs';
 
-const { NTgCalls, MediaSource, StreamMode, StreamDevice, ConnectionState } = ntgcalls;
+const { NTgCalls, MediaSource, StreamMode, StreamDevice, ConnectionState, LogLevel, setLogLevel } = ntgcalls;
 const env = process.env;
+if (env.LIVE_TEST_NTG_LOG === 'debug') setLogLevel(LogLevel.DEBUG); // native ntgcalls/WebRTC logs go to the terminal; may contain IP addresses, do not paste them unfiltered
 
 // ---- authorization gate: ALL of these are required (credentials alone are not test authorization) -------------------
 const missing = [];
@@ -122,6 +123,7 @@ async function runOneCall(index) {
             state: await ntg.getState(uid),
             mode: await ntg.getConnectionMode(uid),
             seconds: Number(await ntg.time(uid, StreamMode.PLAYBACK)),
+            captureSeconds: Number(await ntg.time(uid, StreamMode.CAPTURE)),
             framesReceived: stats.framesReceived,
           });
         } catch (e) {
@@ -251,8 +253,10 @@ async function runOneCall(index) {
   let heardTone = null;
   let toneQuality = null;
   if (scenario === 'answer' && connected) {
-    const a = (await ask(`Call ${index}: the tone the recipient heard was: [c]lean steady 440 Hz / [n]oisy or distorted / [x] nothing? `)).toLowerCase().trim();
-    toneQuality = a.startsWith('c') ? 'clean' : a.startsWith('n') ? 'noisy' : 'none';
+    const a = (await ask(`Call ${index}: the tone the recipient heard was — type the full word: clean (steady 440 Hz) / noisy (distorted) / none: `))
+      .toLowerCase()
+      .trim();
+    toneQuality = ['clean', 'noisy', 'none'].includes(a) ? a : 'unanswered';
     heardTone = toneQuality === 'clean';
   }
   const g0b =
