@@ -6,14 +6,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dev": "tsx --env-file-if-exists=../../.env watch src/main.ts",
+    "dev": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env watch src/main.ts",
     "start": "node --env-file-if-exists=../../.env dist/main.js",
-    "db:migrate": "tsx --env-file-if-exists=../../.env src/infrastructure/db/migrate-cli.ts",
-    "db:seed": "tsx --env-file-if-exists=../../.env src/infrastructure/db/seed-cli.ts",
-    "bootstrap:owner": "tsx --env-file-if-exists=../../.env src/cli/bootstrap-owner.ts",
+    "db:migrate": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/infrastructure/db/migrate-cli.ts",
+    "db:seed": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/infrastructure/db/seed-cli.ts",
+    "bootstrap:owner": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/cli/bootstrap-owner.ts",
     "dev:secrets": "tsx src/cli/dev-secrets.ts",
-    "db:replay-tombstones": "tsx --env-file-if-exists=../../.env src/cli/restore-replay.ts",
-    "keys:rotate": "tsx --env-file-if-exists=../../.env src/cli/rotate-keys.ts"
+    "db:replay-tombstones": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/cli/restore-replay.ts",
+    "keys:rotate": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/cli/rotate-keys.ts",
+    "build:contracts": "pnpm --filter @tgvl/contracts run build"
   },
   "dependencies": {
     "@tgvl/contracts": "workspace:*",
