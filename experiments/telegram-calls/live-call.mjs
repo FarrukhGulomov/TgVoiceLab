@@ -41,6 +41,7 @@ if (missing.length) blocked(missing);
 
 const recipientId = env.LIVE_TEST_RECIPIENT_ID;
 const SR = 48000;
+const MIC = { mediaSource: MediaSource.EXTERNAL, sampleRate: SR, channelCount: 1, input: '', keepOpen: false };
 const FRAME_MS = Number(env.LIVE_TEST_FRAME_MS ?? 20); // WebRTC audio paths often work in 10 ms units; override to compare 10 / 20 / 40
 const FRAME_SAMPLES = (SR * FRAME_MS) / 1000; // 960
 const toArr = (b) => Array.from(b);
@@ -115,6 +116,18 @@ async function runOneCall(index) {
     mark('connection_state', { state: Object.keys(ConnectionState).find((k) => ConnectionState[k] === state.state) ?? String(state.state) });
     if (state.state === ConnectionState.CONNECTED && !connected) {
       connected = true;
+      // Inbound audio only opens if PLAYBACK is attached AFTER connectP2p, on the microphone slot, then unmute+resume,
+      // while a continuous outbound stream runs (found by reproducing locally; see docs/research/telegram-private-calls.md).
+      (async () => {
+        try {
+          await ntg.setStreamSources(uid, StreamMode.PLAYBACK, { microphone: MIC });
+          await ntg.unmute(uid);
+          await ntg.resume(uid);
+          mark('playback_attached');
+        } catch (e) {
+          mark('playback_attach_error', { error: String(e.message).slice(0, 120) });
+        }
+      })();
       tonePump = startTone(ntg, uid, stats, mark);
       if (scenario === 'answer') connectedCap = setTimeout(() => done.resolve('time_limit'), maxSeconds * 1000);
       probe = setInterval(async () => {
@@ -196,9 +209,8 @@ async function runOneCall(index) {
   let hangup = 'not_started';
   try {
     await ntg.createP2pCall(uid);
-    const mic = { mediaSource: MediaSource.EXTERNAL, sampleRate: SR, channelCount: 1, input: '', keepOpen: false };
-    await ntg.setStreamSources(uid, StreamMode.CAPTURE, { microphone: mic });
-    await ntg.setStreamSources(uid, StreamMode.PLAYBACK, { speaker: mic });
+    await ntg.setStreamSources(uid, StreamMode.CAPTURE, { microphone: MIC });
+    // PLAYBACK is attached only after the P2P connection is up, on the microphone slot (see onConnectionChange).
     const gaHash = await ntg.initExchange(uid, { g: dh.g, p: toArr(dh.p), random: toArr(dh.random) }, undefined);
     const res = await client.invoke(
       new Api.phone.RequestCall({
