@@ -40,7 +40,7 @@ if (missing.length) blocked(missing);
 
 const recipientId = env.LIVE_TEST_RECIPIENT_ID;
 const SR = 48000;
-const FRAME_MS = 20;
+const FRAME_MS = Number(env.LIVE_TEST_FRAME_MS ?? 20); // WebRTC audio paths often work in 10 ms units; override to compare 10 / 20 / 40
 const FRAME_SAMPLES = (SR * FRAME_MS) / 1000; // 960
 const toArr = (b) => Array.from(b);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -79,7 +79,16 @@ async function runOneCall(index) {
   const t0 = performance.now();
   const timeline = [];
   const mark = (type, extra = {}) => timeline.push({ tMs: Math.round(performance.now() - t0), type, ...extra }); // no keys, IPs, hashes
-  const stats = { framesSent: 0, framesReceived: 0, bytesReceived: 0, rmsMax: 0, firstReceiveMs: null, receivedNonSilent: 0 };
+  const stats = {
+    framesSent: 0,
+    framesReceived: 0,
+    bytesReceived: 0,
+    rmsMax: 0,
+    firstReceiveMs: null,
+    receivedNonSilent: 0,
+    framesByKind: {},
+    firstFrameBytes: null,
+  };
   const uid = BigInt(recipientId);
   const ntg = new NTgCalls();
   let peer = null; // InputPhoneCall
@@ -109,6 +118,9 @@ async function runOneCall(index) {
       done.resolve('connection_' + state.state);
   });
   ntg.onFrames((_id, mode, device, frames) => {
+    const kind = `${Object.keys(StreamMode).find((k) => StreamMode[k] === mode) ?? mode}/${Object.keys(StreamDevice).find((k) => StreamDevice[k] === device) ?? device}`;
+    stats.framesByKind[kind] = (stats.framesByKind[kind] ?? 0) + frames.length;
+    if (stats.firstFrameBytes === null && frames.length) stats.firstFrameBytes = Buffer.from(frames[0].data).length;
     if (device !== StreamDevice.SPEAKER && mode !== StreamMode.PLAYBACK) return;
     for (const f of frames) {
       const buf = Buffer.from(f.data);
@@ -218,8 +230,12 @@ async function runOneCall(index) {
 
   // The operator confirms what only a human can: that the other side actually heard the tone / that speech was sent.
   let heardTone = null;
-  if (scenario === 'answer' && connected)
-    heardTone = (await ask(`Call ${index}: did the recipient clearly hear a steady 440 Hz tone? [y/N] `)).toLowerCase().startsWith('y');
+  let toneQuality = null;
+  if (scenario === 'answer' && connected) {
+    const a = (await ask(`Call ${index}: the tone the recipient heard was: [c]lean steady 440 Hz / [n]oisy or distorted / [x] nothing? `)).toLowerCase().trim();
+    toneQuality = a.startsWith('c') ? 'clean' : a.startsWith('n') ? 'noisy' : 'none';
+    heardTone = toneQuality === 'clean';
+  }
   const g0b =
     scenario === 'answer'
       ? timeline.some((x) => x.type === 'phone_call_update' && x.cls === 'PhoneCallAccepted') &&
@@ -237,6 +253,8 @@ async function runOneCall(index) {
     discardReason: discarded,
     stats,
     heardTone,
+    toneQuality,
+    frameMs: FRAME_MS,
     gates: { 'G0-B': g0b, 'G0-C-outbound': g0cOut, 'G0-C-inbound': g0cIn, 'G0-E': g0e },
     timeline,
   };
