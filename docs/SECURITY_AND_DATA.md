@@ -60,5 +60,5 @@ non-interactive use. Rotation: runbooks `key-rotation`, `session-compromise`.
 - No metrics export/alerting yet; only structured logs, audit rows, and `/health/ready`.
 - No row-level security (optional per spec).
 - Prompt-injection and consent-refusal behavior against real speech cannot be tested until the conversation layer exists.
-- Docker image unbuilt here; supply-chain scans (`pnpm audit`) run in CI, not locally verified in this sandbox.
+- Docker image builds in CI (`image` job) but has never been run as a container; `pnpm audit` runs in CI only.
 - LGPL-3.0 `ntgcalls`: excluded from the production image; legal review required before bundling (ADR-0001).

@@ -11,4 +11,4 @@
 **Roll back:** deploy the previous image with calls disabled and the kill switch on until health is confirmed. Schema is expand/contract: do not roll the schema back
 destructively; the previous image must tolerate newer additive columns (all migrations to date are additive). If a migration itself is bad, restore from backup.
 
-**Not yet verified:** the Docker image build in CI, and a real host canary (UDP/relay egress, session persistence) — gate G0-F.
+**Not yet verified:** running the image as a container on a real host (the CI `image` job only proves it builds), and a real host canary (UDP/relay egress, session persistence) — gate G0-F.
