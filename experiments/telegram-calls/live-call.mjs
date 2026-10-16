@@ -95,6 +95,8 @@ async function runOneCall(index) {
   let discarded = null;
   let connected = false;
   let tonePump = null;
+  let connectedCap = null;
+  let probe = null;
   const done = deferred();
 
   const inputUser = await client.getInputEntity(bigInt(recipientId));
@@ -113,10 +115,25 @@ async function runOneCall(index) {
     if (state.state === ConnectionState.CONNECTED && !connected) {
       connected = true;
       tonePump = startTone(ntg, uid, stats, mark);
+      if (scenario === 'answer') connectedCap = setTimeout(() => done.resolve('time_limit'), maxSeconds * 1000);
+      probe = setInterval(async () => {
+        try {
+          mark('probe', {
+            state: await ntg.getState(uid),
+            mode: await ntg.getConnectionMode(uid),
+            seconds: Number(await ntg.time(uid, StreamMode.PLAYBACK)),
+            framesReceived: stats.framesReceived,
+          });
+        } catch (e) {
+          mark('probe_error', { error: String(e.message).slice(0, 80) });
+        }
+      }, 5000);
     }
     if (state.state === ConnectionState.FAILED || state.state === ConnectionState.TIMEOUT || state.state === ConnectionState.CLOSED)
       done.resolve('connection_' + state.state);
   });
+  ntg.onRemoteSourceChange((_id, src) => mark('remote_source_change', { ssrc: src.ssrc, status: src.state, device: src.device }));
+  ntg.onStreamEnd((_id, type, device) => mark('stream_end', { type, device }));
   ntg.onFrames((_id, mode, device, frames) => {
     const kind = `${Object.keys(StreamMode).find((k) => StreamMode[k] === mode) ?? mode}/${Object.keys(StreamDevice).find((k) => StreamDevice[k] === device) ?? device}`;
     stats.framesByKind[kind] = (stats.framesByKind[kind] ?? 0) + frames.length;
@@ -205,6 +222,8 @@ async function runOneCall(index) {
     if (peer === null) hangup = 'exception_before_request';
   } finally {
     tonePump?.stop();
+    clearTimeout(connectedCap);
+    clearInterval(probe);
     client.removeEventHandler(handler, new Raw({ types: [Api.UpdatePhoneCall, Api.UpdatePhoneCallSignalingData] }));
     if (peer && !discarded) {
       try {
