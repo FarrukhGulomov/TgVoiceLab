@@ -21,6 +21,8 @@ const EnvSchema = z
     OPENAI_VOICE: opt(z.string()),
     DATA_ENCRYPTION_KEY_REF: opt(z.string()),
     ADMIN_TOKEN_SECRET_REF: opt(z.string()),
+    /** Escape hatch for single-login development databases. Never set in production deployments (audit F11). */
+    DB_ALLOW_PRIVILEGED_ROLE: bool.default(false),
     CALLS_ENABLED: bool.default(false),
     CALL_ADAPTER: z.enum(['disabled', 'ntgcalls', 'fake']).default('disabled'),
     MESSAGING_ADAPTER: z.enum(['disabled', 'telegram', 'fake']).default('disabled'),

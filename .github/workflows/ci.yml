@@ -39,3 +39,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build --build-arg BUILD_FINGERPRINT=$(node scripts/build-fingerprint.mjs) -t tgvoicelab:ci .
+  # Real containers on a disposable stack: separate DB roles, migrations as the migrator, least-privilege runtime, secret readability,
+  # authenticated readiness, and refusal of an over-privileged DATABASE_URL (deploy/smoke.sh needs root to chown the temp secrets).
+  deploy-smoke:
+    runs-on: ubuntu-24.04
+    needs: verify
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo -E deploy/smoke.sh

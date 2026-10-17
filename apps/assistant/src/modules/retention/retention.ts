@@ -44,7 +44,8 @@ export async function runRetention(db: Db, now: Date): Promise<RetentionResult> 
       messages: await del('messages', 'message', 'retention_expires_at IS NOT NULL AND retention_expires_at < $1', [now]),
       reports: await del('call_reports', 'call_report', 'created_at < $1', [new Date(now.getTime() - RETENTION.reportsMs)]),
       memories: await del('memories', 'memory', 'expires_at IS NOT NULL AND expires_at < $1', [now]),
-      audit: (await c.query('DELETE FROM audit_events WHERE created_at < $1', [new Date(now.getTime() - RETENTION.auditMs)])).rowCount ?? 0,
+      // Audit rows are purged by a narrow SECURITY DEFINER function (migration 0007): the runtime login has no DELETE on audit_events.
+      audit: Number((await c.query<{ n: string }>('SELECT purge_audit_events($1) AS n', [new Date(now.getTime() - RETENTION.auditMs)])).rows[0]!.n),
       idempotency: (await c.query('DELETE FROM idempotency_keys WHERE expires_at < $1', [now])).rowCount ?? 0,
       jobs:
         (await c.query(`DELETE FROM jobs WHERE status IN ('done','cancelled') AND updated_at < $1`, [new Date(now.getTime() - RETENTION.doneJobsMs)]))

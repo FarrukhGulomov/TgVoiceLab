@@ -3,6 +3,7 @@ import { DateTime } from 'luxon';
 import { loadConfig } from './bootstrap/config.js';
 import { buildContainer } from './bootstrap/container.js';
 import { drainWorker, startLane } from './bootstrap/worker.js';
+import { leastPrivilegeViolations } from './infrastructure/db/role-check.js';
 import { sealLegacyPlaintext } from './modules/retention/seal-legacy.js';
 import { createLogger } from './infrastructure/observability/logger.js';
 import { Db } from './infrastructure/db/db.js';
@@ -23,6 +24,19 @@ import type { TelegramCallAdapter } from '@tgvl/contracts';
 const cfg = loadConfig();
 const log = createLogger(cfg.LOG_LEVEL);
 const db = new Db(cfg.DATABASE_URL, log);
+
+// In production the runtime login must be least-privilege (not the superuser, not the schema owner): audit F11.
+if (cfg.NODE_ENV === 'production') {
+  const violations = await leastPrivilegeViolations(db);
+  if (violations.length && !cfg.DB_ALLOW_PRIVILEGED_ROLE) {
+    log.fatal(
+      { violations },
+      'DATABASE_URL uses an over-privileged role; use the tgvl_app login (deploy/postgres/roles.sql) or set DB_ALLOW_PRIVILEGED_ROLE=true for non-production use',
+    );
+    process.exit(1);
+  }
+  if (violations.length) log.warn({ violations }, 'running with an over-privileged database role (DB_ALLOW_PRIVILEGED_ROLE=true)');
+}
 
 // Refuse to start against an un-migrated database (migrations are an explicit, separately-privileged step).
 const applied = await db.query<{ version: string }>('SELECT version FROM schema_migrations').then(
