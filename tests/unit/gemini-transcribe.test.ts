@@ -23,6 +23,12 @@ describe('GeminiTranscription', () => {
   });
   it('HTTP errors and non-JSON answers throw (the owner is told the voice note failed)', async () => {
     await expect(mk(answer({}, false, 500)).transcribe(audio)).rejects.toThrow('HTTP 500');
+    const bad = (async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: { status: 'INVALID_ARGUMENT', message: 'model does not support generateContent' } }),
+    })) as unknown as typeof fetch;
+    await expect(mk(bad).transcribe(audio)).rejects.toThrow('HTTP 400 (INVALID_ARGUMENT: model does not support generateContent)');
     await expect(mk(answer('not json')).transcribe(audio)).rejects.toThrow('not JSON');
   });
 });

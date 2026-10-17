@@ -40,7 +40,20 @@ export class GeminiTranscription implements TranscriptionPort {
       }),
       signal: AbortSignal.timeout(this.o.timeoutMs ?? 30_000),
     });
-    if (!res.ok) throw new Error(`transcription request failed: HTTP ${res.status}`);
+    if (!res.ok) {
+      // Google's error text explains a rejected request (unknown model, unsupported input). It never echoes our audio.
+      let why = '';
+      try {
+        const e = (await res.json()) as { error?: { message?: unknown; status?: unknown } };
+        why = [e.error?.status, e.error?.message]
+          .filter((x) => typeof x === 'string')
+          .join(': ')
+          .slice(0, 300);
+      } catch {
+        /* no JSON body */
+      }
+      throw new Error(`transcription request failed: HTTP ${res.status}${why ? ` (${why})` : ''}`);
+    }
     const body = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
     const raw = body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
     let parsed: { text?: unknown; confident?: unknown; language?: unknown };
