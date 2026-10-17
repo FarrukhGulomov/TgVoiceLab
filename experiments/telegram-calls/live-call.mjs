@@ -10,6 +10,7 @@ import { Api, TelegramClient } from 'telegram';
 import { Raw } from 'telegram/events/Raw.js';
 import { StringSession } from 'telegram/sessions/index.js';
 import ntgcalls from 'ntgcalls';
+import { CallUpdateGate, PlacementTracker, PHASE, g0eVerdict, parseFrameMs, parseIntInRange, runBatch, windowProblem } from './call-guards.mjs';
 import { ask, blocked, pins, readSecretFileIfPresent, requireTelegramCredentials, sessionPath, writeEvidence } from './lib.mjs';
 
 const { NTgCalls, MediaSource, StreamMode, StreamDevice, ConnectionState, LogLevel, setLogLevel } = ntgcalls;
@@ -25,16 +26,23 @@ if (!/^[1-9]\d{0,18}$/.test(env.LIVE_TEST_RECIPIENT_ID ?? '')) missing.push('LIV
 if (env.LIVE_TEST_RECIPIENT_CONSENT !== 'yes') missing.push('LIVE_TEST_RECIPIENT_CONSENT=yes (the participant knows a test call is coming and agreed)');
 const winStart = Date.parse(env.LIVE_TEST_WINDOW_START ?? '');
 const winEnd = Date.parse(env.LIVE_TEST_WINDOW_END ?? '');
-if (!Number.isFinite(winStart) || !Number.isFinite(winEnd))
-  missing.push('LIVE_TEST_WINDOW_START and LIVE_TEST_WINDOW_END (ISO instants, e.g. 2026-10-16T10:00:00+05:00)');
-else if (winEnd <= winStart || winEnd - winStart > 2 * 3600_000) missing.push('the test window must be positive and at most 2 hours');
-else if (Date.now() < winStart || Date.now() > winEnd) missing.push(`now (${new Date().toISOString()}) is outside the authorized test window`);
-const maxSeconds = Number(env.LIVE_TEST_MAX_SECONDS ?? 30);
-if (!(maxSeconds >= 10 && maxSeconds <= 600)) missing.push('LIVE_TEST_MAX_SECONDS must be between 10 and 600');
-const repeat = Number(env.LIVE_TEST_REPEAT ?? 1);
-if (!(repeat >= 1 && repeat <= 10)) missing.push('LIVE_TEST_REPEAT must be between 1 and 10');
+const winProblem = () => windowProblem(Date.now(), winStart, winEnd);
+{
+  const w = winProblem();
+  if (w) missing.push(w);
+}
+const maxSecondsR = parseIntInRange(env.LIVE_TEST_MAX_SECONDS ?? '30', 10, 600, 'LIVE_TEST_MAX_SECONDS');
+const repeatR = parseIntInRange(env.LIVE_TEST_REPEAT ?? '1', 1, 10, 'LIVE_TEST_REPEAT');
+const frameR = parseFrameMs(env.LIVE_TEST_FRAME_MS);
+for (const r of [maxSecondsR, repeatR, frameR]) if (r.error) missing.push(r.error);
+const maxSeconds = maxSecondsR.value ?? 30;
+const repeat = repeatR.value ?? 1;
 const scenario = env.LIVE_TEST_SCENARIO ?? 'answer'; // answer | expect_decline | expect_busy
 if (!['answer', 'expect_decline', 'expect_busy'].includes(scenario)) missing.push('LIVE_TEST_SCENARIO must be answer | expect_decline | expect_busy');
+// G0-E: the mapping from "declined"/"busy" to Telegram's discard class is not assumed; the operator names the exact class to expect.
+const expectedReason = env.LIVE_TEST_EXPECTED_DISCARD_REASON ?? null;
+if (scenario !== 'answer' && !/^PhoneCallDiscardReason[A-Za-z]+$/.test(expectedReason ?? ''))
+  missing.push('LIVE_TEST_EXPECTED_DISCARD_REASON=<exact class, e.g. PhoneCallDiscardReasonBusy> is required for decline/busy scenarios');
 const sess = readSecretFileIfPresent(sessionPath());
 if (!sess) missing.push(`no Telegram session at ${sessionPath()} — run \`pnpm spike:login\` first (G0-A)`);
 if (missing.length) blocked(missing);
@@ -42,7 +50,7 @@ if (missing.length) blocked(missing);
 const recipientId = env.LIVE_TEST_RECIPIENT_ID;
 const SR = 48000;
 const MIC = { mediaSource: MediaSource.EXTERNAL, sampleRate: SR, channelCount: 1, input: '', keepOpen: false };
-const FRAME_MS = Number(env.LIVE_TEST_FRAME_MS ?? 20); // WebRTC audio paths often work in 10 ms units; override to compare 10 / 20 / 40
+const FRAME_MS = frameR.value; // integer multiple of 10 ms; default 10 (20 ms was audibly distorted in the first live run)
 const FRAME_SAMPLES = (SR * FRAME_MS) / 1000; // 960
 const toArr = (b) => Array.from(b);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -54,12 +62,12 @@ const me = await client.getMe();
 if (me.id.toString() === recipientId) blocked(['LIVE_TEST_RECIPIENT_ID is the assistant account itself']);
 console.log(`Assistant account ${me.id.toString()} → test recipient ${recipientId}; ${repeat} call(s), up to ${maxSeconds}s each, scenario=${scenario}`);
 
-const results = [];
-for (let n = 1; n <= repeat; n++) {
-  results.push(await runOneCall(n));
-  if (n < repeat) await sleep(10_000);
-}
-const summary = summarize(results);
+// The window is re-checked before EVERY placement; an uncertain or unproven call aborts the whole batch (never redial).
+const batch = await runBatch({ repeat, checkWindow: winProblem, place: runOneCall, pause: () => sleep(10_000) });
+const results = batch.results;
+if (batch.aborted) console.error(`BATCH ABORTED: ${batch.aborted}`);
+const summary = { ...summarize(results), aborted: batch.aborted, placed: results.length, requested: repeat };
+if (batch.aborted || results.length < repeat) summary.allCallsOk = false;
 const out = writeEvidence(`G0-live-${scenario}-${repeat}x${maxSeconds}s.local.json`, {
   kind: 'live',
   recordedAt: new Date().toISOString(),
@@ -68,6 +76,7 @@ const out = writeEvidence(`G0-live-${scenario}-${repeat}x${maxSeconds}s.local.js
   repeat,
   maxSeconds,
   recipientIdSha256Prefix: createHash('sha256').update(recipientId).digest('hex').slice(0, 12),
+  aborted: batch.aborted,
   results,
   summary,
 });
@@ -93,7 +102,12 @@ async function runOneCall(index) {
   };
   const uid = BigInt(recipientId);
   const ntg = new NTgCalls();
-  let peer = null; // InputPhoneCall
+  const tracker = new PlacementTracker();
+  const gate = new CallUpdateGate({ selfId: me.id.toString(), recipientId });
+  const peerOf = () => {
+    const t = gate.cleanupTarget(); // only the call we placed: updates for any other call can never become the target
+    return t ? new Api.InputPhoneCall({ id: t.id, accessHash: t.accessHash }) : null;
+  };
   let discarded = null;
   let connected = false;
   let tonePump = null;
@@ -107,7 +121,9 @@ async function runOneCall(index) {
 
   ntg.onSignalingData(async (_id, data) => {
     try {
-      await client.invoke(new Api.phone.SendSignalingData({ peer, data: Buffer.from(data) }));
+      const target = peerOf();
+      if (!target) return; // nothing bound yet: ntgcalls cannot have produced signaling for a call we did not place
+      await client.invoke(new Api.phone.SendSignalingData({ peer: target, data: Buffer.from(data) }));
     } catch (e) {
       mark('signaling_send_error', { error: e.message });
     }
@@ -165,40 +181,52 @@ async function runOneCall(index) {
     }
   });
 
+  const processPhoneCall = async (pc) => {
+    const cls = pc.className;
+    mark('phone_call_update', { cls });
+    if (cls === 'PhoneCallAccepted') {
+      const auth = await ntg.exchangeKeys(uid, toArr(pc.gB), 0n);
+      const confirmed = await client.invoke(
+        new Api.phone.ConfirmCall({
+          peer: peerOf(),
+          gA: Buffer.from(auth.gAOrB),
+          keyFingerprint: bigInt(auth.keyFingerprint.toString()),
+          protocol: protocolOf(),
+        }),
+      );
+      const c = confirmed.phoneCall;
+      const customParameters = c.customParameters?.data || '{}';
+      mark('confirm_response', {
+        cls: c.className,
+        connections: c.connections?.length ?? 0,
+        hasCustomParameters: !!c.customParameters?.data,
+        p2pAllowed: !!c.p2pAllowed,
+        versions: c.protocol?.libraryVersions,
+      });
+      await ntg.connectP2p(uid, parseServers(c.connections), c.protocol.libraryVersions, !!c.p2pAllowed, customParameters);
+      mark('confirm_and_connect_submitted');
+    }
+    if (cls === 'PhoneCallDiscarded') {
+      discarded = pc.reason?.className ?? 'unknown';
+      tracker.markEnded(); // the provider told us THIS call is over
+      mark('discarded', { reason: discarded });
+      done.resolve('discarded');
+    }
+  };
   const handler = async (update) => {
     try {
       if (update instanceof Api.UpdatePhoneCallSignalingData) {
-        await ntg.sendSignalingData(uid, toArr(update.data));
+        const verdict = gate.classifySignaling(update);
+        if (verdict === 'buffer') gate.buffer(update);
+        else if (verdict === 'accept') await ntg.sendSignalingData(uid, toArr(update.data));
+        else mark('ignored_update', { kind: 'signaling' });
         return;
       }
       if (!(update instanceof Api.UpdatePhoneCall)) return;
-      const pc = update.phoneCall;
-      const cls = pc.className;
-      mark('phone_call_update', { cls });
-      if (cls === 'PhoneCallWaiting' || cls === 'PhoneCallAccepted' || cls === 'PhoneCallRequested')
-        peer = new Api.InputPhoneCall({ id: pc.id, accessHash: pc.accessHash });
-      if (cls === 'PhoneCallAccepted') {
-        const auth = await ntg.exchangeKeys(uid, toArr(pc.gB), 0n);
-        const confirmed = await client.invoke(
-          new Api.phone.ConfirmCall({ peer, gA: Buffer.from(auth.gAOrB), keyFingerprint: bigInt(auth.keyFingerprint.toString()), protocol: protocolOf() }),
-        );
-        const c = confirmed.phoneCall;
-        const customParameters = c.customParameters?.data || '{}';
-        mark('confirm_response', {
-          cls: c.className,
-          connections: c.connections?.length ?? 0,
-          hasCustomParameters: !!c.customParameters?.data,
-          p2pAllowed: !!c.p2pAllowed,
-          versions: c.protocol?.libraryVersions,
-        });
-        await ntg.connectP2p(uid, parseServers(c.connections), c.protocol.libraryVersions, !!c.p2pAllowed, customParameters);
-        mark('confirm_and_connect_submitted');
-      }
-      if (cls === 'PhoneCallDiscarded') {
-        discarded = pc.reason?.className ?? 'unknown';
-        mark('discarded', { reason: discarded });
-        done.resolve('discarded');
-      }
+      const verdict = gate.classifyPhoneCall(update.phoneCall);
+      if (verdict === 'buffer') gate.buffer(update.phoneCall);
+      else if (verdict === 'accept') await processPhoneCall(update.phoneCall);
+      else mark('ignored_update', { cls: update.phoneCall?.className });
     } catch (e) {
       mark('handler_error', { error: String(e.message).slice(0, 200) });
       done.resolve('handler_error');
@@ -212,17 +240,32 @@ async function runOneCall(index) {
     await ntg.setStreamSources(uid, StreamMode.CAPTURE, { microphone: MIC });
     // PLAYBACK is attached only after the P2P connection is up, on the microphone slot (see onConnectionChange).
     const gaHash = await ntg.initExchange(uid, { g: dh.g, p: toArr(dh.p), random: toArr(dh.random) }, undefined);
-    const res = await client.invoke(
-      new Api.phone.RequestCall({
-        userId: inputUser,
-        randomId: Math.floor(Math.random() * 0x7fffffff),
-        gAHash: Buffer.from(gaHash),
-        protocol: protocolOf(),
-        video: false,
-      }),
-    );
-    peer = new Api.InputPhoneCall({ id: res.phoneCall.id, accessHash: res.phoneCall.accessHash });
+    const lastCheck = winProblem(); // the window may have closed during setup
+    if (lastCheck) throw Object.assign(new Error(lastCheck), { windowClosed: true });
+    // From the next line on, a timeout cannot prove that the call was not placed.
+    tracker.markSubmitted();
+    mark('request_call_submitted');
+    let res;
+    try {
+      res = await client.invoke(
+        new Api.phone.RequestCall({
+          userId: inputUser,
+          randomId: Math.floor(Math.random() * 0x7fffffff),
+          gAHash: Buffer.from(gaHash),
+          protocol: protocolOf(),
+          video: false,
+        }),
+      );
+    } catch (e) {
+      tracker.markSubmitFailed(e);
+      throw e;
+    }
+    tracker.markConfirmed();
     mark('request_call_ok');
+    for (const early of gate.bind(res.phoneCall)) {
+      if (early.className) await processPhoneCall(early);
+      else await ntg.sendSignalingData(uid, toArr(early.data));
+    }
 
     const timeoutMs = scenario === 'answer' ? 45_000 + maxSeconds * 1000 : 60_000;
     const cap = setTimeout(() => done.resolve('time_limit'), timeoutMs);
@@ -231,27 +274,31 @@ async function runOneCall(index) {
     hangup = why;
   } catch (e) {
     mark('error', { error: String(e.message).slice(0, 200), floodWait: /FLOOD/.test(String(e.message)) });
-    hangup = 'exception';
-    // An exception AFTER requestCall was sent leaves the outcome uncertain: DO NOT redial. Record and stop the whole run.
-    if (peer === null) hangup = 'exception_before_request';
+    // Whether the call was placed is decided by the tracker, not by whether a response arrived: after a submit that did not come
+    // back with a server rejection the outcome is UNKNOWN, the batch aborts, and nothing is redialed.
+    hangup = tracker.phase === PHASE.NOT_SUBMITTED ? (e.windowClosed ? 'window_closed' : 'exception_before_request') : 'exception_after_submit';
+    if (tracker.phase === PHASE.SUBMITTED_UNKNOWN) mark('placement_uncertain');
   } finally {
     tonePump?.stop();
     clearTimeout(connectedCap);
     clearInterval(probe);
     client.removeEventHandler(handler, new Raw({ types: [Api.UpdatePhoneCall, Api.UpdatePhoneCallSignalingData] }));
-    if (peer && !discarded) {
+    const target = peerOf();
+    if (target && !discarded) {
       try {
         await client.invoke(
           new Api.phone.DiscardCall({
-            peer,
+            peer: target,
             duration: Math.round((performance.now() - t0) / 1000),
             reason: new Api.PhoneCallDiscardReasonHangup(),
             connectionId: bigInt(0),
           }),
         );
         mark('discard_sent');
+        tracker.markEnded(); // the server accepted our hangup for our call
       } catch (e) {
         mark('discard_error', { error: String(e.message).slice(0, 120) });
+        tracker.markEndUnproven(); // we cannot prove the call is over: the batch must abort
       }
     }
     try {
@@ -279,10 +326,16 @@ async function runOneCall(index) {
       : null;
   const g0cOut = scenario === 'answer' ? connected && stats.framesSent > 0 && heardTone === true : null;
   const g0cIn = scenario === 'answer' ? stats.receivedNonSilent > 0 : null;
-  const g0e = scenario !== 'answer' ? { discardReason: discarded, noRedial: true, ok: discarded !== null } : null;
+  const accepted = timeline.some((x) => x.type === 'phone_call_update' && x.cls === 'PhoneCallAccepted');
+  const g0e =
+    scenario !== 'answer' ? g0eVerdict({ scenario, discardReason: discarded, expectedReason, requestCalls: tracker.requestCalls, accepted, connected }) : null;
   mark('call_end', { hangup });
   return {
     index,
+    placement: tracker.phase,
+    requestCalls: tracker.requestCalls,
+    ignoredUpdates: timeline.filter((x) => x.type === 'ignored_update').length,
+    droppedEarlyUpdates: gate.droppedEarly,
     hangup,
     connected,
     discardReason: discarded,

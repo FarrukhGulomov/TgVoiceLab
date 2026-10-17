@@ -118,3 +118,26 @@ describe('evidence assembly can never enable production by itself', () => {
     expect(deriveCapabilities(p, art.buildFingerprint).productionCallingAllowed).toBe(false);
   });
 });
+
+describe('live-call.mjs input validation (audit F05)', () => {
+  const full = { ...authorized, LIVE_TEST_SCENARIO: 'answer' };
+  it('rejects fractional repetitions / seconds and invalid frame sizes before any network access', () => {
+    for (const [k, v, re] of [
+      ['LIVE_TEST_REPEAT', '2.5', /LIVE_TEST_REPEAT must be an integer/],
+      ['LIVE_TEST_MAX_SECONDS', '30.5', /LIVE_TEST_MAX_SECONDS must be an integer/],
+      ['LIVE_TEST_FRAME_MS', '15', /multiple of 10/],
+      ['LIVE_TEST_FRAME_MS', '0', /LIVE_TEST_FRAME_MS/],
+    ] as const) {
+      const r = run('live-call.mjs', { ...full, [k]: v });
+      expect(r.status, `${k}=${v}`).toBe(2);
+      expect(r.out).toMatch(re);
+    }
+  });
+  it('decline/busy scenarios require the exact expected discard class (no assumed mapping)', () => {
+    const r = run('live-call.mjs', { ...full, LIVE_TEST_SCENARIO: 'expect_decline' });
+    expect(r.status).toBe(2);
+    expect(r.out).toMatch(/LIVE_TEST_EXPECTED_DISCARD_REASON/);
+    const ok = run('live-call.mjs', { ...full, LIVE_TEST_SCENARIO: 'expect_decline', LIVE_TEST_EXPECTED_DISCARD_REASON: 'PhoneCallDiscardReasonBusy' });
+    expect(ok.out).not.toMatch(/LIVE_TEST_EXPECTED_DISCARD_REASON/); // blocked later, only for the missing session
+  });
+});
