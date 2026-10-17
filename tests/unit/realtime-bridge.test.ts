@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import type { CallHandle, PcmFrame } from '@tgvl/contracts';
-import { RealtimeCallBridge, type RealtimeLink } from '../../apps/assistant/src/modules/calls/audio/realtime-bridge.js';
+import { RealtimeCallBridge, type RealtimeLink, type ToolCall } from '../../apps/assistant/src/modules/calls/audio/realtime-bridge.js';
 import { OpenAiRealtimeLink, sessionUpdate } from '../../apps/assistant/src/infrastructure/openai/realtime.js';
 import { GeminiLiveLink, geminiSetup } from '../../apps/assistant/src/infrastructure/gemini/live.js';
 
@@ -43,6 +43,14 @@ class FakeLink implements RealtimeLink {
   }
   onError(cb: (m: string) => void) {
     this.error = cb;
+  }
+  toolCall?: (c: ToolCall) => void;
+  results: Array<{ id: string; result: unknown; respond: boolean }> = [];
+  onToolCall(cb: (c: ToolCall) => void) {
+    this.toolCall = cb;
+  }
+  sendToolResult(c: ToolCall, result: unknown, o: { respond: boolean }) {
+    this.results.push({ id: c.id, result, respond: o.respond });
   }
   close() {
     this.closed = true;
@@ -164,7 +172,7 @@ describe('RealtimeCallBridge', () => {
     const h = fakeHandle();
     const link = new FakeLink();
     const lines: string[] = [];
-    const b = new RealtimeCallBridge(h.handle, link, (l) => lines.push(l));
+    const b = new RealtimeCallBridge(h.handle, link, { log: (l) => lines.push(l) });
     b.start('Salom');
     expect(link.responses).toEqual(['Salom']);
     link.transcript!('assistant', 'Salom!');
@@ -434,7 +442,7 @@ describe('silent-model diagnostics', () => {
     const h = fakeHandle();
     const link = new FakeLink();
     const lines: string[] = [];
-    const b = new RealtimeCallBridge(h.handle, link, (l) => lines.push(l), 30);
+    const b = new RealtimeCallBridge(h.handle, link, { log: (l) => lines.push(l), silenceMs: 30 });
     b.start('hi');
     await new Promise((r) => setTimeout(r, 60));
     expect(b.stats.errors).toEqual(['the model produced no audio 0.03 s after the greeting request']);
@@ -444,12 +452,12 @@ describe('silent-model diagnostics', () => {
   it('...but not when audio did arrive, and stop() cancels the watchdog', async () => {
     const h = fakeHandle();
     const link = new FakeLink();
-    const b = new RealtimeCallBridge(h.handle, link, () => undefined, 30);
+    const b = new RealtimeCallBridge(h.handle, link, { silenceMs: 30 });
     b.start('hi');
     link.audio!(tone(2400));
     await new Promise((r) => setTimeout(r, 60));
     expect(b.stats.errors).toEqual([]);
-    const b2 = new RealtimeCallBridge(fakeHandle().handle, new FakeLink(), () => undefined, 30);
+    const b2 = new RealtimeCallBridge(fakeHandle().handle, new FakeLink(), { silenceMs: 30 });
     b2.start('hi');
     b2.stop();
     await new Promise((r) => setTimeout(r, 60));
@@ -483,5 +491,109 @@ describe('silent-model diagnostics', () => {
     expect(lines).toContain('serverContent audioParts=1 turnComplete');
     expect(lines.join('\n')).not.toContain('AQI=');
     link.close();
+  });
+});
+
+describe('tools', () => {
+  it('runs the tool, returns its result to the model, and performs the after-playout action only after the output drained', async () => {
+    const h = fakeHandle();
+    let drainedCalls = 0;
+    let release!: () => void;
+    (h.handle as { drained?: () => Promise<void> }).drained = () => {
+      drainedCalls++;
+      return new Promise<void>((r) => (release = r));
+    };
+    const link = new FakeLink();
+    const order: string[] = [];
+    const b = new RealtimeCallBridge(h.handle, link, {
+      playoutGraceMs: 1,
+      onTool: (call) => {
+        order.push(`tool:${call.name}`);
+        return { result: { ok: true }, respond: false, afterPlayout: () => void order.push('hangup') };
+      },
+    });
+    b.start();
+    link.audio!(tone(2400)); // the farewell the model already spoke
+    link.toolCall!({ id: 'c1', name: 'end_call', args: { reason: 'bye' } });
+    await flush();
+    expect(link.results).toEqual([{ id: 'c1', result: { ok: true }, respond: false }]);
+    expect(order).toEqual(['tool:end_call']); // not hung up while audio is still playing
+    expect(drainedCalls).toBe(1);
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(order).toEqual(['tool:end_call', 'hangup']);
+    b.stop();
+    h.finish();
+  });
+
+  it('a tool that throws, or an unknown tool, tells the model it failed (never a made-up success)', async () => {
+    const h = fakeHandle();
+    const link = new FakeLink();
+    const b = new RealtimeCallBridge(h.handle, link, {
+      onTool: () => {
+        throw new Error('db down');
+      },
+    });
+    b.start();
+    link.toolCall!({ id: 'c1', name: 'x', args: {} });
+    await flush();
+    expect(link.results).toEqual([{ id: 'c1', result: { error: 'db down' }, respond: true }]);
+    b.stop();
+    const h2 = fakeHandle();
+    const link2 = new FakeLink();
+    const b2 = new RealtimeCallBridge(h2.handle, link2);
+    b2.start();
+    link2.toolCall!({ id: 'c2', name: 'nope', args: {} });
+    await flush();
+    expect(link2.results[0]).toEqual({ id: 'c2', result: { error: 'unknown tool nope' }, respond: true });
+    b2.stop();
+    h.finish();
+    h2.finish();
+  });
+
+  it('OpenAI: declares tools in session.update, parses function_call items, answers with function_call_output (+ response.create only when asked)', () => {
+    const tools = [{ name: 'end_call', description: 'd', parameters: { type: 'object', properties: {} } }];
+    const ga = sessionUpdate({ instructions: 'x', tools }) as { session: Record<string, unknown> };
+    expect(ga.session.tools).toEqual([{ type: 'function', name: 'end_call', description: 'd', parameters: { type: 'object', properties: {} } }]);
+    expect(ga.session.tool_choice).toBe('auto');
+    expect(sessionUpdate({ instructions: 'x' }) as object).not.toHaveProperty('session.tools');
+
+    const { link, sock } = open({ tools });
+    sock.emit('open');
+    const calls: unknown[] = [];
+    link.onToolCall((c) => calls.push(c));
+    sock.emit(
+      'message',
+      Buffer.from(
+        JSON.stringify({ type: 'response.output_item.done', item: { type: 'function_call', name: 'end_call', call_id: 'cid', arguments: '{"reason":"bye"}' } }),
+      ),
+    );
+    sock.emit('message', Buffer.from(JSON.stringify({ type: 'response.output_item.done', item: { type: 'message' } })));
+    expect(calls).toEqual([{ id: 'cid', name: 'end_call', args: { reason: 'bye' } }]);
+    link.sendToolResult({ id: 'cid', name: 'end_call', args: {} }, { ok: true }, { respond: false });
+    expect(sock.sent.map((x) => JSON.parse(x).type)).toEqual(['session.update', 'conversation.item.create']);
+    expect(JSON.parse(sock.sent.at(-1)!).item).toEqual({ type: 'function_call_output', call_id: 'cid', output: '{"ok":true}' });
+    link.sendToolResult({ id: 'cid2', name: 'x', args: {} }, 1, { respond: true });
+    expect(sock.sent.map((x) => JSON.parse(x).type).slice(-2)).toEqual(['conversation.item.create', 'response.create']);
+  });
+
+  it('Gemini: function declarations next to googleSearch, toolCall parsed, toolResponse shaped as the API expects', () => {
+    const tools = [{ name: 'end_call', description: 'd', parameters: { type: 'object', properties: {} } }];
+    const setup = geminiSetup({ model: 'm', instructions: 'i', googleSearch: true, tools }) as { setup: { tools: unknown } };
+    expect(setup.setup.tools).toEqual([
+      { googleSearch: {} },
+      { functionDeclarations: [{ name: 'end_call', description: 'd', parameters: { type: 'object', properties: {} } }] },
+    ]);
+    const { link, sock, msg } = openGemini({ tools });
+    sock.emit('open');
+    msg({ setupComplete: {} });
+    const calls: unknown[] = [];
+    link.onToolCall((c) => calls.push(c));
+    msg({ toolCall: { functionCalls: [{ id: 'f1', name: 'end_call', args: { reason: 'bye' } }] } });
+    expect(calls).toEqual([{ id: 'f1', name: 'end_call', args: { reason: 'bye' } }]);
+    link.sendToolResult({ id: 'f1', name: 'end_call', args: {} }, { ok: true });
+    expect(JSON.parse(sock.sent.at(-1)!)).toEqual({
+      toolResponse: { functionResponses: [{ id: 'f1', name: 'end_call', response: { output: { ok: true } } }] },
+    });
   });
 });

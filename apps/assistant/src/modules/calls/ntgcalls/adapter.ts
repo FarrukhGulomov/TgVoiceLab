@@ -381,6 +381,10 @@ class ActiveCall {
         this.#outbound.push(frame.samples);
         this.#outboundBytes += frame.samples.length;
       },
+      drained: async () => {
+        const deadline = Date.now() + 15_000; // bounded: a stuck pump must not hold the caller forever
+        while (this.#outboundBytes >= FRAME_BYTES && !this.#finished && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
+      },
       flushOutput: async () => {
         this.#outbound = [];
         this.#outboundBytes = 0;

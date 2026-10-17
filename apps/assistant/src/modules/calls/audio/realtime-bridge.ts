@@ -1,6 +1,26 @@
 import type { CallHandle } from '@tgvl/contracts';
 import { FrameAssembler, StreamingResampler } from './resampler.js';
 
+export interface ToolDeclaration {
+  name: string;
+  description: string;
+  /** JSON Schema of the arguments. */
+  parameters: Record<string, unknown>;
+}
+export interface ToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+export interface ToolOutcome {
+  /** Returned to the model as the tool's result. Only report success for what the application actually committed. */
+  result: unknown;
+  /** Let the model keep talking after the result (default true). `false` for end_call: the call is about to end. */
+  respond?: boolean;
+  /** Runs after the model's already-spoken audio has been played out to the caller (e.g. hang up). */
+  afterPlayout?: () => void | Promise<void>;
+}
+
 /** The AI voice session as the bridge sees it (OpenAI Realtime in production; a fake in tests). Audio is s16le mono; the model's input and output rates may differ (e.g. 16 kHz in / 24 kHz out). */
 export interface RealtimeLink {
   readonly inputRateHz: number;
@@ -19,11 +39,24 @@ export interface RealtimeLink {
   onSpeechStarted(cb: () => void): void;
   onTranscript(cb: (who: 'assistant' | 'caller', text: string) => void): void;
   onError(cb: (message: string) => void): void;
+  /** The model asked to run one of the declared tools. */
+  onToolCall(cb: (call: ToolCall) => void): void;
+  sendToolResult(call: ToolCall, result: unknown, opts: { respond: boolean }): void;
   close(): void;
 }
 
 const CALL_RATE = 48_000;
 const FRAME_BYTES = (CALL_RATE / 100) * 2; // 10 ms
+
+export interface BridgeOptions {
+  log?: ((line: string) => void) | undefined;
+  /** How long a requested greeting may stay unanswered before the silence is reported as an error. */
+  silenceMs?: number | undefined;
+  /** Extra time after the output buffer drained, for the last audio to reach the caller before an after-playout action. */
+  playoutGraceMs?: number | undefined;
+  /** Executes the model's tool calls. Without it every tool call is answered with an error. */
+  onTool?: ((call: ToolCall) => Promise<ToolOutcome> | ToolOutcome) | undefined;
+}
 
 export interface BridgeStats {
   callFramesIn: number;
@@ -40,6 +73,10 @@ export interface BridgeStats {
  */
 export class RealtimeCallBridge {
   readonly stats: BridgeStats = { callFramesIn: 0, modelAudioChunks: 0, callFramesOut: 0, bargeIns: 0, errors: [] };
+  readonly log: (line: string) => void;
+  readonly silenceMs: number;
+  readonly playoutGraceMs: number;
+  readonly onTool: BridgeOptions['onTool'];
   #stopped = false;
   #up: StreamingResampler;
   #down: StreamingResampler;
@@ -52,9 +89,12 @@ export class RealtimeCallBridge {
   constructor(
     private readonly handle: CallHandle,
     private readonly link: RealtimeLink,
-    private readonly log: (line: string) => void = () => undefined,
-    private readonly silenceMs = 15_000,
+    o: BridgeOptions = {},
   ) {
+    this.log = o.log ?? (() => undefined);
+    this.silenceMs = o.silenceMs ?? 15_000;
+    this.playoutGraceMs = o.playoutGraceMs ?? 400;
+    this.onTool = o.onTool;
     this.#up = new StreamingResampler(CALL_RATE, link.inputRateHz);
     this.#down = new StreamingResampler(link.outputRateHz, CALL_RATE);
   }
@@ -94,6 +134,26 @@ export class RealtimeCallBridge {
     });
     this.link.onResponseStart(() => {
       this.#playedFrames = 0;
+    });
+    this.link.onToolCall((call) => {
+      void (async () => {
+        let out: ToolOutcome;
+        try {
+          out = this.onTool ? await this.onTool(call) : { result: { error: `unknown tool ${call.name}` } };
+        } catch (e) {
+          // A tool that failed must tell the model it failed: never a success the application did not commit.
+          out = { result: { error: String((e as Error)?.message ?? e).slice(0, 200) } };
+        }
+        if (this.#stopped) return;
+        this.log(`tool ${call.name}(${JSON.stringify(call.args)})`);
+        this.link.sendToolResult(call, out.result, { respond: out.respond ?? true });
+        if (out.afterPlayout) {
+          await this.#outChain; // everything the model already said is in the call's output buffer...
+          await this.handle.drained?.().catch(() => undefined); // ...now let it actually play
+          await new Promise((r) => setTimeout(r, this.playoutGraceMs));
+          if (!this.#stopped) await out.afterPlayout();
+        }
+      })().catch((e: unknown) => this.stats.errors.push(`tool: ${String((e as Error)?.message ?? e)}`));
     });
     this.link.onTranscript((who, text) => this.log(`${who}: ${text}`));
     this.link.onError((m) => {

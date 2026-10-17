@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import type { RealtimeLink } from '../../modules/calls/audio/realtime-bridge.js';
+import type { RealtimeLink, ToolCall, ToolDeclaration } from '../../modules/calls/audio/realtime-bridge.js';
 
 /**
  * Google Gemini Live (BidiGenerateContent over WebSocket) as an AI voice session.
@@ -22,6 +22,7 @@ export interface GeminiLiveOptions {
   googleSearch?: boolean | undefined;
   /** BCP-47 language hint for the spoken output (e.g. `uz-UZ`). Not defaulted: support differs by model; a rejected value shows up as a server error. */
   languageCode?: string | undefined;
+  tools?: ToolDeclaration[] | undefined;
   /** Diagnostics: one line per server message (structure only — never audio data, never the API key). */
   debug?: ((line: string) => void) | undefined;
   /** How long to wait for `setupComplete` before reporting that the setup was rejected or ignored. */
@@ -37,7 +38,9 @@ export const GEMINI_INPUT_RATE = 16_000;
 export const GEMINI_OUTPUT_RATE = 24_000;
 const DEFAULT_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
-export function geminiSetup(o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'instructions' | 'googleSearch' | 'languageCode'>): Record<string, unknown> {
+export function geminiSetup(
+  o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'instructions' | 'googleSearch' | 'languageCode' | 'tools'>,
+): Record<string, unknown> {
   return {
     setup: {
       model: o.model.startsWith('models/') ? o.model : `models/${o.model}`,
@@ -52,7 +55,16 @@ export function geminiSetup(o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'inst
             }
           : {}),
       },
-      ...(o.googleSearch ? { tools: [{ googleSearch: {} }] } : {}),
+      ...(o.googleSearch || o.tools?.length
+        ? {
+            tools: [
+              ...(o.googleSearch ? [{ googleSearch: {} }] : []),
+              ...(o.tools?.length
+                ? [{ functionDeclarations: o.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })) }]
+                : []),
+            ],
+          }
+        : {}),
       systemInstruction: { parts: [{ text: o.instructions }] },
       inputAudioTranscription: {},
       outputAudioTranscription: {},
@@ -77,6 +89,7 @@ export function describe(m: ServerMessage): string {
 
 interface ServerMessage {
   setupComplete?: unknown;
+  toolCall?: { functionCalls?: Array<{ id?: string; name?: string; args?: Record<string, unknown> }> };
   serverContent?: {
     modelTurn?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> };
     interrupted?: boolean;
@@ -102,6 +115,7 @@ export class GeminiLiveLink implements RealtimeLink {
   #transcript: Array<(who: 'assistant' | 'caller', text: string) => void> = [];
   #errors: Array<(m: string) => void> = [];
   #speaking = false;
+  #toolCalls: Array<(c: ToolCall) => void> = [];
   readonly #textMode: 'realtime' | 'client_content';
   readonly #debug: ((line: string) => void) | undefined;
   #setupTimer: NodeJS.Timeout | undefined;
@@ -165,6 +179,8 @@ export class GeminiLiveLink implements RealtimeLink {
       this.#emitError(`${m.error.code ?? 'error'}: ${m.error.message ?? raw.slice(0, 200)}`);
       return;
     }
+    for (const fc of m.toolCall?.functionCalls ?? [])
+      if (fc.name) for (const cb of this.#toolCalls) cb({ id: fc.id ?? fc.name, name: fc.name, args: fc.args ?? {} });
     const sc = m.serverContent;
     if (!sc) return;
     if (sc.inputTranscription?.text) this.#heard += sc.inputTranscription.text;
@@ -202,6 +218,13 @@ export class GeminiLiveLink implements RealtimeLink {
     if (!instructions) return;
     if (this.#textMode === 'client_content') this.#send({ clientContent: { turns: [{ role: 'user', parts: [{ text: instructions }] }], turnComplete: true } });
     else this.#send({ realtimeInput: { text: instructions } });
+  }
+  onToolCall(cb: (c: ToolCall) => void): void {
+    this.#toolCalls.push(cb);
+  }
+  /** Gemini continues generating after a tool response by itself; `respond: false` cannot suppress that (the caller hangs up instead). */
+  sendToolResult(call: ToolCall, result: unknown): void {
+    this.#send({ toolResponse: { functionResponses: [{ id: call.id, name: call.name, response: { output: result } }] } });
   }
   /** The server already stopped generating and dropped unplayed audio when it reported `interrupted`: nothing to do client-side. */
   interrupt(): void {}

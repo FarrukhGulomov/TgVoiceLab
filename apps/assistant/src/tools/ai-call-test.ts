@@ -17,7 +17,7 @@ import { Api, TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import type { ApprovedCallPlan, CallEvent } from '@tgvl/contracts';
 import { NtgcallsCallAdapter } from '../modules/calls/ntgcalls/adapter.js';
-import { RealtimeCallBridge } from '../modules/calls/audio/realtime-bridge.js';
+import { RealtimeCallBridge, type ToolDeclaration } from '../modules/calls/audio/realtime-bridge.js';
 import { GramjsCallTransport } from '../infrastructure/telegram/gramjs-call-transport.js';
 import { createNtgcallsMedia, ntgcallsProtocol } from '../infrastructure/telegram/ntgcalls-media.js';
 import { OpenAiRealtimeLink } from '../infrastructure/openai/realtime.js';
@@ -60,11 +60,20 @@ const INSTRUCTIONS = [
   "Sen egasining shaxsiy sun'iy intellekt yordamchisisan. Bu sinov qo'ng'irog'i.",
   "SUHBAT TILI: O'ZBEK. Foydalanuvchi o'zbek tilida gapiradi, hatto eshitilishi boshqa tilga (turkcha, ruscha, nemischa) o'xshab ketsa ham. Har doim o'zbek tilida javob ber. Faqat foydalanuvchi aniq 'inglizcha gapir' yoki 'ruscha gapir' desagina o'sha tilga o't va so'ng yana o'zbekchaga qayt.",
   "Qo'ng'iroq ko'tarilganda sen birinchi gapirasan: o'zingni AI yordamchi deb tanishtirasan. Qo'ng'iroq allaqachon davom etayotgandek javob berma.",
+  "Suhbat tugaganda (odam 'xayr', 'sog' bo'ling' desa yoki boshqa savoli yo'qligini aytsa) avval qisqa xayrlash, so'ng end_call vositasini chaqir.",
   "Qisqa gapir: bir-ikki jumla. Odam gapira boshlasa, to'xta va tingla.",
   "Umumiy bilim savollariga (davlat poytaxti, tarix, fan, tarjima, oddiy maslahat) o'z bilimingdan to'g'ridan-to'g'ri qisqa javob ber; bunday savollarni rad etma. Aniq bilmasang, shuni ayt.",
   "Faqat quyidagilarni BILMAYSAN va qila olmaysan: hozirgi vaqtni (uni taxmin qilma), egasining vazifa/eslatma/kontaktlarini, eslatma o'rnatish yoki qo'ng'iroq qilishni. Bularni so'rashsa, buni ochiq ayt va hech narsani eslab qolishga yoki bajarishga va'da berma ('eslatib qo'yaman' dema).",
 ].join(' ');
 // `response.create` instructions are a directive to the model, not text to read out: a bare greeting was answered as if it were a question.
+const TOOLS: ToolDeclaration[] = [
+  {
+    name: 'end_call',
+    description:
+      "Qo'ng'iroqni tugatadi. Suhbat yakunlanganda (odam xayrlashdi yoki boshqa savoli yo'q) AVVAL xayrlashuv gapini ayt, KEYIN shu vositani chaqir.",
+    parameters: { type: 'object', properties: { reason: { type: 'string', description: 'Qisqa sabab' } }, required: [] },
+  },
+];
 const GREETING =
   "Qo'ng'iroqqa hozir javob berildi. Faqat shu gapni ayt, keyin jim bo'l va tingla: «Salom! Men sizning shaxsiy AI yordamchingizman. Bu sinov qo'ng'irog'i.» Boshqa narsa qo'shma.";
 
@@ -120,6 +129,7 @@ const link =
         instructions: INSTRUCTIONS,
         textMode: env.GEMINI_TEXT_MODE === 'client_content' ? 'client_content' : 'realtime',
         googleSearch: env.GEMINI_GOOGLE_SEARCH === 'on',
+        tools: TOOLS,
         debug: env.GEMINI_DEBUG === 'on' ? (line) => console.log(`${t()} gemini: ${line}`) : undefined,
         languageCode: env.GEMINI_LANGUAGE_CODE || undefined,
       })
@@ -129,12 +139,20 @@ const link =
         voice: env.OPENAI_VOICE,
         instructions: INSTRUCTIONS,
         dialect,
+        tools: TOOLS,
         transcriptionModel: env.OPENAI_TRANSCRIPTION_MODEL,
       });
-const bridge = new RealtimeCallBridge(handle, link, (line) => console.log(`${t()} ${line}`));
+const bridge = new RealtimeCallBridge(handle, link, {
+  log: (line) => console.log(`${t()} ${line}`),
+  onTool: (call) => {
+    if (call.name !== 'end_call') return { result: { error: `unknown tool ${call.name}` } };
+    // Only the application ends the call, and only after the farewell has been played to the caller.
+    return { result: { ok: true }, respond: false, afterPlayout: () => hangup('completed') };
+  },
+});
 let ended: CallEvent | null = null;
 let hangupTimer: NodeJS.Timeout | undefined;
-const hangup = async (why: 'duration_limit' | 'cancelled') => {
+const hangup = async (why: 'duration_limit' | 'cancelled' | 'completed') => {
   console.log(`${t()} hanging up (${why})`);
   await handle
     .end(why)

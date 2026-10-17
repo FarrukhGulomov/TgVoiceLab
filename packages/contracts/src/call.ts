@@ -93,6 +93,8 @@ export interface CallHandle {
   events: AsyncIterable<CallEvent>;
   sendAudio(frame: PcmFrame): Promise<void>;
   flushOutput(): Promise<void>;
+  /** Resolves once everything queued with `sendAudio` has been played out (bounded; resolves early if the call ends). Optional: adapters without pacing may omit it. */
+  drained?(): Promise<void>;
   end(reason: CallEndReason): Promise<void>;
 }
 

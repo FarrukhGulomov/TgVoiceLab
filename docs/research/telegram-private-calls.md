@@ -188,6 +188,8 @@ Recorded from the operator's runs on 2026-10-16. Raw evidence files stay local (
 
 | F-19 | Second Gemini call, after adding `GEMINI_GOOGLE_SEARCH=on` and `GEMINI_LANGUAGE_CODE=uz-UZ`: connected, then **no model audio at all** (0 chunks) and **no error** for 30 s; the operator hung up. A model that never speaks produced no event, so the tool stayed silent. Added: a `setupComplete` watchdog (8 s), a "no model audio 15 s after the greeting" watchdog in the bridge, and `GEMINI_DEBUG=on` (structure-only message log). Cause not yet established; the likely suspects are the two new options (bisect by removing them). | operator-run call; open |
 
+| F-20 | Gemini re-run without `GEMINI_GOOGLE_SEARCH` / `GEMINI_LANGUAGE_CODE` (debug on): `setupComplete` at 1.5 s, then a natural Uzbek conversation (transcripts correct, general-knowledge answer "Toshkent", Uzbek speech no longer drifted to other languages after the prompt fix). The silent run of F-19 is therefore caused by one of the two removed options (not bisected). The call did not end on "goodbye": models cannot hang up, only the application can. Added an `end_call` tool (both providers): the model says goodbye, calls the tool, the application lets the already-queued audio play out (`CallHandle.drained()`), then hangs up. | operator-run call; `end_call` re-run needed |
+
 Open: `LIVE_TEST_REPEAT=10` (G0-D), busy/no-answer/privacy-restricted/connectivity-loss (G0-E), and a target-host canary (G0-F). The workaround depends on undocumented behaviour of a third-party native library; the adapter must pin the exact version and keep a regression test.
 
 ## 9b. Operator-run AI voice test (`pnpm live:ai-call`)

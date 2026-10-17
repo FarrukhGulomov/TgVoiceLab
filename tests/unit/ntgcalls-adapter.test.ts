@@ -199,6 +199,30 @@ describe('NtgcallsCallAdapter', () => {
     expect([...s.media.sent.at(-1)!].every((b) => b === 0)).toBe(true); // back to silence
   });
 
+  it('drained() resolves only once everything queued has been played out', async () => {
+    const s = setup();
+    const handle = await connectedCall(s);
+    const speech = new Uint8Array(FRAME * 3).fill(7);
+    await handle.sendAudio({
+      callId: handle.callId,
+      sequence: 0,
+      monotonicTimestampUs: 0,
+      sampleRateHz: 48000,
+      channels: 1,
+      encoding: 's16le',
+      samples: speech,
+    });
+    let done = false;
+    void handle.drained!().then(() => (done = true));
+    await new Promise((r) => setTimeout(r, 60));
+    expect(done).toBe(false); // nothing has been played yet
+    s.tick.fn!();
+    s.tick.fn!();
+    s.tick.fn!();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(done).toBe(true);
+  });
+
   it('rejects audio that is not 48 kHz mono s16le in 10 ms multiples', async () => {
     const s = setup();
     const handle = await connectedCall(s);

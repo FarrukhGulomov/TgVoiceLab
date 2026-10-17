@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import type { RealtimeLink } from '../../modules/calls/audio/realtime-bridge.js';
+import type { RealtimeLink, ToolCall, ToolDeclaration } from '../../modules/calls/audio/realtime-bridge.js';
 
 /**
  * OpenAI Realtime over WebSocket.
@@ -17,6 +17,7 @@ export interface RealtimeOptions {
   model: string;
   voice?: string | undefined;
   instructions: string;
+  tools?: ToolDeclaration[] | undefined;
   /** Optional input-transcription model (printed as `caller:` lines). Never defaulted: the name must come from configuration. */
   transcriptionModel?: string | undefined;
   dialect?: RealtimeDialect | undefined;
@@ -26,7 +27,14 @@ export interface RealtimeOptions {
   socketFactory?: ((url: string, headers: Record<string, string>) => WebSocket) | undefined;
 }
 
-export function sessionUpdate(o: Pick<RealtimeOptions, 'voice' | 'instructions' | 'dialect' | 'sampleRateHz' | 'transcriptionModel'>): Record<string, unknown> {
+function toolsField(tools: ToolDeclaration[] | undefined): Record<string, unknown> {
+  if (!tools?.length) return {};
+  return { tools: tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters })), tool_choice: 'auto' };
+}
+
+export function sessionUpdate(
+  o: Pick<RealtimeOptions, 'voice' | 'instructions' | 'dialect' | 'sampleRateHz' | 'transcriptionModel' | 'tools'>,
+): Record<string, unknown> {
   const rate = o.sampleRateHz ?? 24_000;
   if ((o.dialect ?? 'ga') === 'beta')
     return {
@@ -39,6 +47,7 @@ export function sessionUpdate(o: Pick<RealtimeOptions, 'voice' | 'instructions' 
         output_audio_format: 'pcm16',
         ...(o.transcriptionModel ? { input_audio_transcription: { model: o.transcriptionModel } } : {}),
         turn_detection: { type: 'server_vad' },
+        ...toolsField(o.tools),
       },
     };
   return {
@@ -47,6 +56,7 @@ export function sessionUpdate(o: Pick<RealtimeOptions, 'voice' | 'instructions' 
       type: 'realtime',
       instructions: o.instructions,
       output_modalities: ['audio'],
+      ...toolsField(o.tools),
       audio: {
         input: {
           format: { type: 'audio/pcm', rate },
@@ -70,6 +80,7 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   #transcript: Array<(who: 'assistant' | 'caller', text: string) => void> = [];
   #errors: Array<(m: string) => void> = [];
   #responseStart: Array<() => void> = [];
+  #toolCalls: Array<(c: ToolCall) => void> = [];
   #activeResponse = false;
   #lastItemId: string | null = null;
 
@@ -103,7 +114,14 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   }
 
   #onMessage(raw: string): void {
-    let e: { type?: string; delta?: string; transcript?: string; item_id?: string; error?: { message?: string; code?: string } };
+    let e: {
+      type?: string;
+      delta?: string;
+      transcript?: string;
+      item_id?: string;
+      item?: { type?: string; name?: string; call_id?: string; arguments?: string };
+      error?: { message?: string; code?: string };
+    };
     try {
       e = JSON.parse(raw) as typeof e;
     } catch {
@@ -121,6 +139,17 @@ export class OpenAiRealtimeLink implements RealtimeLink {
       case 'response.audio.delta': // beta
         if (e.item_id) this.#lastItemId = e.item_id;
         if (e.delta) for (const cb of this.#audio) cb(new Uint8Array(Buffer.from(e.delta, 'base64')));
+        break;
+      case 'response.output_item.done':
+        if (e.item?.type === 'function_call' && e.item.name && e.item.call_id) {
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(e.item.arguments || '{}') as Record<string, unknown>;
+          } catch {
+            this.#emitError(`tool ${e.item.name}: arguments were not valid JSON`);
+          }
+          for (const cb of this.#toolCalls) cb({ id: e.item.call_id, name: e.item.name, args });
+        }
         break;
       case 'input_audio_buffer.speech_started':
         for (const cb of this.#speech) cb();
@@ -156,6 +185,13 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   }
   onResponseStart(cb: () => void): void {
     this.#responseStart.push(cb);
+  }
+  onToolCall(cb: (c: ToolCall) => void): void {
+    this.#toolCalls.push(cb);
+  }
+  sendToolResult(call: ToolCall, result: unknown, opts: { respond: boolean }): void {
+    this.#send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: call.id, output: JSON.stringify(result) } });
+    if (opts.respond) this.#send({ type: 'response.create' });
   }
   onAudio(cb: (pcm: Uint8Array) => void): void {
     this.#audio.push(cb);
