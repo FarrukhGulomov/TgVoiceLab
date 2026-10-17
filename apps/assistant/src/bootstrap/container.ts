@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Db } from '../infrastructure/db/db.js';
 import type { DataCrypto } from '../infrastructure/crypto/data-crypto.js';
 import type { Clock } from '../application/clock.js';
@@ -17,7 +18,7 @@ import { ReminderService } from '../modules/scheduling/reminders.service.js';
 import { reminderFireHandler } from '../modules/scheduling/reminder-jobs.js';
 import { makeOutboxHandlers } from '../modules/messaging/outbox-handlers.js';
 import { runRetention } from '../modules/retention/retention.js';
-import { completeJob, LostLeaseError, runJobsOnce, type JobHandler } from '../modules/jobs/jobs.js';
+import { completeJob, enqueueJob, LostLeaseError, runJobsOnce, type JobHandler } from '../modules/jobs/jobs.js';
 import { scheduleNextRetention } from '../modules/retention/schedule.js';
 import { dispatchOutboxOnce, type OutboxHandler } from '../modules/outbox/outbox.js';
 
@@ -98,7 +99,51 @@ export function buildContainer(d: ContainerDeps) {
     ...(d.voiceMaxConcurrentDownloads ? { voiceMaxConcurrentDownloads: d.voiceMaxConcurrentDownloads } : {}),
   });
   const jobHandlers: Record<string, JobHandler> = {
-    'reminder.fire': reminderFireHandler({ clock: d.clock }),
+    'reminder.fire': reminderFireHandler({
+      clock: d.clock,
+      requestReminderCall: async (c, a) => {
+        if (!d.callsEnabled) return false;
+        const o = (
+          await c.query<{ telegram_user_id: string; locale: 'uz' | 'en' | 'ru'; call_opt_out: boolean }>(
+            'SELECT telegram_user_id, locale, call_opt_out FROM owners WHERE id=$1',
+            [a.ownerId],
+          )
+        ).rows[0];
+        if (!o || o.call_opt_out) return false;
+        const rem = (await c.query<{ title_enc: string }>('SELECT title_enc FROM reminders WHERE id=$1 AND owner_id=$2', [a.reminderId, a.ownerId])).rows[0];
+        if (!rem) return false;
+        const title = d.crypto.dec(a.ownerId, 'reminders.title', rem.title_enc);
+        const now = d.clock.now();
+        // The owner asked for this call when they set the reminder ("remind me by calling"): that is the explicit command.
+        const r = await authorizations.createCallRequest(
+          a.ownerId,
+          {
+            callRequestId: randomUUID(),
+            ownerId: a.ownerId,
+            recipientTelegramId: o.telegram_user_id,
+            topic: 'reminder',
+            purpose: `Eslatma: ${title}`.slice(0, 500),
+            questions: [],
+            allowedContext: [title.slice(0, 500)],
+            forbiddenCommitments: [],
+            language: o.locale,
+            maxDurationSeconds: 120,
+            expiresAt: new Date(now.getTime() + 10 * 60_000).toISOString(),
+          },
+          { ownerExplicitCommand: true },
+          c,
+        );
+        await enqueueJob(c, {
+          ownerId: a.ownerId,
+          kind: 'call.dial',
+          dueAt: now,
+          dedupeKey: `dial:${r.callRequestId}`,
+          payload: { callRequestId: r.callRequestId },
+          maxAttempts: 1,
+        });
+        return true;
+      },
+    }),
     // Dialing is at-most-once by construction: the orchestrator consumes the single-use authorization before the side effect,
     // so a redelivered job is refused rather than redialed. The job is settled after the orchestrator returns, whatever the outcome.
     'retention.sweep': async (job, db) => {

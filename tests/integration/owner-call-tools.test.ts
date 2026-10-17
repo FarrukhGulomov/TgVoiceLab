@@ -31,6 +31,7 @@ async function setup() {
   const tools = new OwnerCallTools({
     db: app.db,
     tasks: app.tasks,
+    reminders: app.reminders,
     clock,
     ownerId: o.ownerId,
     timezone: 'Asia/Samarkand',
@@ -92,6 +93,70 @@ describe('owner call tools (authenticated owner call)', () => {
     ])
       expect(((await s.run('move_task', args)).result as { ok: boolean }).ok).toBe(false);
     expect((await s.status(s.today.id)).due_at.toISOString()).toBe('2026-10-18T13:00:00.000Z'); // still the earlier valid move
+    await s.app.close();
+  });
+
+  it('create_task adds a task with an exact due date; due-today tasks can be referred to by number straight away', async () => {
+    const s = await setup();
+    const r = (await s.run('create_task', { title: 'Dori olish', date: '2026-10-16', time: '19:00' })).result;
+    expect(r).toEqual({ ok: true, title: 'Dori olish', due: '2026-10-16 19:00 (Asia/Samarkand)' });
+    expect(s.tools.describeList().map((x) => x.title)).toContain('Dori olish');
+    expect((await s.run('complete_task', { number: 3 })).result).toMatchObject({ ok: true, title: 'Dori olish' });
+    expect((await s.run('create_task', { title: 'Muddatsiz' })).result).toEqual({ ok: true, title: 'Muddatsiz', due: null });
+    const n = (await t.db.query('SELECT count(*)::int n FROM tasks')).rows[0].n;
+    for (const args of [{ title: '' }, { title: 'x', date: '2026-10-01' }, { title: 'x', date: 'ertaga' }, { title: 'x'.repeat(201) }])
+      expect(((await s.run('create_task', args)).result as { ok: boolean }).ok).toBe(false);
+    expect((await t.db.query('SELECT count(*)::int n FROM tasks')).rows[0].n).toBe(n);
+    await s.app.close();
+  });
+
+  it("create_reminder commits a reminder; by_call is stored as the owner's intent but the model is told the truth about delivery", async () => {
+    const s = await setup();
+    const msg = (await s.run('create_reminder', { text: 'Dori ichish', date: '2026-10-16', time: '14:30' })).result;
+    expect(msg).toEqual({ ok: true, text: 'Dori ichish', when: '2026-10-16 14:30 (Asia/Samarkand)', delivery: 'message' });
+    const call = (await s.run('create_reminder', { text: 'Uchrashuv', date: '2026-10-16', time: '16:00', by_call: true })).result as {
+      delivery: string;
+      note: string;
+    };
+    expect(call.delivery).toBe('message_until_calls_enabled');
+    expect(call.note).toMatch(/hozircha/);
+    const rows = (await t.db.query(`SELECT mode, kind FROM reminders ORDER BY created_at`)).rows;
+    expect(rows).toEqual([
+      { mode: 'message', kind: 'reminder' },
+      { mode: 'call', kind: 'reminder' },
+    ]);
+    const live = new OwnerCallTools({
+      db: s.app.db,
+      tasks: s.app.tasks,
+      reminders: s.app.reminders,
+      clock: new FakeClock(new Date(NOW)),
+      ownerId: o.ownerId,
+      timezone: 'Asia/Samarkand',
+      callRemindersLive: true,
+      onEndCall: () => undefined,
+    });
+    expect(
+      (
+        (await live.execute({ id: 'x', name: 'create_reminder', args: { text: 'A', date: '2026-10-17', time: '09:00', by_call: true } })).result as {
+          delivery: string;
+        }
+      ).delivery,
+    ).toBe('call');
+    await s.app.tick();
+    expect(s.app.messaging.sent.some((m) => m.text.includes('Dori ichish'))).toBe(true); // the confirmation also reaches Telegram
+    await s.app.close();
+  });
+
+  it('create_reminder refuses a missing/past time and creates nothing', async () => {
+    const s = await setup();
+    for (const args of [
+      { text: 'x', date: '2026-10-16', time: '08:00' }, // 08:00 has already passed (it is 09:00)
+      { text: 'x', date: '2026-10-15', time: '18:00' },
+      { text: 'x' },
+      { text: '', date: '2026-10-17', time: '09:00' },
+    ])
+      expect(((await s.run('create_reminder', args)).result as { ok: boolean }).ok).toBe(false);
+    expect((await t.db.query('SELECT count(*)::int n FROM reminders')).rows[0].n).toBe(0);
     await s.app.close();
   });
 

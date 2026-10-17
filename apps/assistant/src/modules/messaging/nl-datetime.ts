@@ -41,6 +41,61 @@ const WD = Object.keys(WEEKDAYS).join('|');
 const NUM_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
 const NW = Object.keys(NUM_WORDS).join('|');
 
+const MONTHS: Record<string, number> = {
+  january: 1,
+  february: 2,
+  march: 3,
+  april: 4,
+  may: 5,
+  june: 6,
+  july: 7,
+  august: 8,
+  september: 9,
+  october: 10,
+  november: 11,
+  december: 12,
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  sept: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
+  yanvar: 1,
+  fevral: 2,
+  mart: 3,
+  aprel: 4,
+  iyun: 6,
+  iyul: 7,
+  avgust: 8,
+  sentyabr: 9,
+  sentabr: 9,
+  oktyabr: 10,
+  oktabr: 10,
+  noyabr: 11,
+  dekabr: 12,
+};
+const MONTH_RE = Object.keys(MONTHS)
+  .sort((a, b) => b.length - a.length)
+  .join('|');
+
+/** Day + month (+ optional year) to an ISO date; without a year, the next such date on or after today. Null when the date does not exist. */
+function monthDate(now: DateTime, day: number, month: number, year?: number): string | null {
+  const make = (y: number) => DateTime.fromObject({ year: y, month, day }, { zone: now.zone });
+  const first = make(year ?? now.year);
+  if (!first.isValid) return null;
+  if (year === undefined && first < now.startOf('day')) {
+    const next = make(now.year + 1);
+    return next.isValid ? next.toFormat('yyyy-LL-dd') : null;
+  }
+  return first.toFormat('yyyy-LL-dd');
+}
+
 export const normalizeApostrophes = (s: string): string => s.replace(/[‘’ʻʼ`´]/g, "'");
 const squash = (s: string) =>
   s
@@ -101,6 +156,30 @@ export function extractWhen(input: string, ctx: ExtractCtx): ParsedWhen {
   if ((r = take(text, /\b(\d{4})-(\d{2})-(\d{2})\b/)).m) {
     out.date = `${r.m![1]}-${r.m![2]}-${r.m![3]}`;
     if (!DateTime.fromISO(out.date).isValid) out.invalid = true;
+    text = r.text;
+    dateFound = true;
+  } else if ((r = take(text, /\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b/)).m) {
+    // day.month.year or day/month/year (never month-first: the owner is in Uzbekistan). Handled before the time-of-day rules,
+    // which would otherwise read "15.10" as 15:10.
+    const iso = `${r.m![3]}-${r.m![2]!.padStart(2, '0')}-${r.m![1]!.padStart(2, '0')}`;
+    out.date = iso;
+    if (!DateTime.fromISO(iso).isValid) out.invalid = true;
+    text = r.text;
+    dateFound = true;
+  } else if ((r = take(text, new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?[-\\s]+(${MONTH_RE})\\b(?:\\s+(\\d{4}))?`, 'i'))).m) {
+    const d = monthDate(now, +r.m![1]!, MONTHS[r.m![2]!.toLowerCase()]!, r.m![3] ? +r.m![3] : undefined);
+    if (d) out.date = d;
+    else out.invalid = true;
+    text = r.text;
+    dateFound = true;
+  } else if ((r = take(text, new RegExp(`\\b(${MONTH_RE})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s+(\\d{4}))?`, 'i'))).m) {
+    const d = monthDate(now, +r.m![2]!, MONTHS[r.m![1]!.toLowerCase()]!, r.m![3] ? +r.m![3] : undefined);
+    if (d) out.date = d;
+    else out.invalid = true;
+    text = r.text;
+    dateFound = true;
+  } else if ((r = take(text, /\b(?:yesterday|kecha)\b/i)).m) {
+    out.date = now.minus({ days: 1 }).toFormat('yyyy-LL-dd');
     text = r.text;
     dateFound = true;
   } else if ((r = take(text, /\b(?:day\s+after\s+tomorrow|indinga)\b/i)).m) {

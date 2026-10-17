@@ -56,6 +56,21 @@ describe('config validation', () => {
     }
   });
 
+  it('calling with the real adapter also requires an AI voice provider and its model (never defaulted)', () => {
+    const calling = {
+      ...base,
+      CALLS_ENABLED: 'true',
+      CALL_ADAPTER: 'ntgcalls',
+      CALL_FEASIBILITY_EVIDENCE_PATH: '/tmp/e.json',
+      DAILY_AI_BUDGET_USD: '5',
+      OWNER_TELEGRAM_USER_ID: '1',
+    };
+    expect(() => loadConfig(calling)).toThrow(/AI_VOICE_PROVIDER/);
+    expect(() => loadConfig({ ...calling, AI_VOICE_PROVIDER: 'gemini', GEMINI_API_KEY: 'k' })).toThrow(/GEMINI_LIVE_MODEL/);
+    expect(() => loadConfig({ ...calling, AI_VOICE_PROVIDER: 'openai', OPENAI_API_KEY: 'k' })).toThrow(/OPENAI_REALTIME_MODEL/);
+    expect(loadConfig({ ...calling, AI_VOICE_PROVIDER: 'gemini', GEMINI_API_KEY: 'k', GEMINI_LIVE_MODEL: 'm' }).AI_VOICE_PROVIDER).toBe('gemini');
+  });
+
   it('requires secrets and ids in production', () => {
     expect(() => loadConfig({ ...base, NODE_ENV: 'production' })).toThrow(/DATA_ENCRYPTION_KEY_REF/);
   });

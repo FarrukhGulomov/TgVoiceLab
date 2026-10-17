@@ -77,6 +77,9 @@ export class RealtimeCallBridge {
   readonly silenceMs: number;
   readonly playoutGraceMs: number;
   readonly onTool: BridgeOptions['onTool'];
+  /** Resolves when the call's incoming audio ends, i.e. the call is over (hung up by either side, or ended by the orchestrator). */
+  readonly finished: Promise<void>;
+  #finish!: () => void;
   #stopped = false;
   #pendingAction = false;
   #actionToken = 0; // bumped by caller speech: a pending after-playout action (hang up) is cancelled when the caller is still talking
@@ -97,6 +100,7 @@ export class RealtimeCallBridge {
     this.silenceMs = o.silenceMs ?? 15_000;
     this.playoutGraceMs = o.playoutGraceMs ?? 400;
     this.onTool = o.onTool;
+    this.finished = new Promise<void>((r) => (this.#finish = r));
     this.#up = new StreamingResampler(CALL_RATE, link.inputRateHz);
     this.#down = new StreamingResampler(link.outputRateHz, CALL_RATE);
   }
@@ -178,7 +182,9 @@ export class RealtimeCallBridge {
         this.stats.callFramesIn++;
         this.link.sendAudio(this.#up.process(f.samples));
       }
-    })().catch((e: unknown) => this.stats.errors.push(`incoming audio: ${String((e as Error)?.message ?? e)}`));
+    })()
+      .catch((e: unknown) => this.stats.errors.push(`incoming audio: ${String((e as Error)?.message ?? e)}`))
+      .finally(() => this.#finish());
 
     if (greeting) {
       this.link.respond(greeting);

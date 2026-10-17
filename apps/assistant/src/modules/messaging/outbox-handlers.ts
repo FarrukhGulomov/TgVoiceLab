@@ -153,6 +153,7 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
             normal: 'reminder_fire',
             late: 'reminder_fire_late',
             degraded_call: 'reminder_degraded_call',
+            call_requested: 'reminder_call_requested',
             call_missed: 'reminder_call_missed',
             missed_summary: 'reminder_missed_summary',
           } as Record<string, MessageKey>
@@ -168,8 +169,20 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
         row.aggregateType === 'call'
           ? 'SELECT c.display_name FROM calls k JOIN call_requests r ON r.id=k.call_request_id JOIN contacts c ON c.id=r.contact_id WHERE k.id=$1 AND k.owner_id=$2'
           : 'SELECT c.display_name FROM call_requests r JOIN contacts c ON c.id=r.contact_id WHERE r.id=$1 AND r.owner_id=$2';
-      const name = (await db.query<{ display_name: string }>(q, [row.aggregateId, row.ownerId])).rows[0]?.display_name ?? '?';
+      const contactRow = (await db.query<{ display_name: string }>(q, [row.aggregateId, row.ownerId])).rows[0];
       const reason = REASONS[p.reason ?? ''] ?? p.reason ?? '';
+      if (!contactRow) {
+        // A call to the OWNER (e.g. a call reminder): a completed call needs no notice; any other outcome is reported once, and the
+        // reminder text itself was already sent as a message when the call was queued.
+        if (p.variant === 'ended' && p.reason === 'completed') return;
+        await messaging.sendMessage({
+          toTelegramUserId: owner.telegram_user_id,
+          text: t(owner.locale, 'owner_call_failed', { reason: reason || 'unknown outcome' }),
+          idempotencyKey: row.eventId,
+        });
+        return;
+      }
+      const name = contactRow.display_name;
       const key: MessageKey = p.variant === 'rejected' ? 'call_rejected' : p.variant === 'outcome_unknown' ? 'call_outcome_unknown' : 'call_ended';
       await messaging.sendMessage({ toTelegramUserId: owner.telegram_user_id, text: t(owner.locale, key, { name, reason }), idempotencyKey: row.eventId });
     },

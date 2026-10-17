@@ -22,6 +22,15 @@ const EnvSchema = z
     GEMINI_API_KEY: opt(z.string()),
     GEMINI_LIVE_MODEL: opt(z.string()),
     GEMINI_VOICE: opt(z.string()),
+    /** Which AI voice provider talks on calls. Models are never defaulted. */
+    AI_VOICE_PROVIDER: z.enum(['openai', 'gemini']).optional(),
+    OPENAI_REALTIME_DIALECT: z.enum(['ga', 'beta']).default('ga'),
+    OPENAI_TRANSCRIPTION_MODEL: opt(z.string()),
+    GEMINI_TEXT_MODE: z.enum(['realtime', 'client_content']).default('realtime'),
+    GEMINI_GOOGLE_SEARCH: bool.default(false),
+    GEMINI_LANGUAGE_CODE: opt(z.string()),
+    /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset settles 0 (documented gap). */
+    AI_VOICE_COST_USD_PER_MINUTE: opt(z.coerce.number().positive().max(100)),
     DATA_ENCRYPTION_KEY_REF: opt(z.string()),
     ADMIN_TOKEN_SECRET_REF: opt(z.string()),
     /** Escape hatch for single-login development databases. Never set in production deployments (audit F11). */
@@ -56,6 +65,14 @@ const EnvSchema = z
       if (!e.CALL_FEASIBILITY_EVIDENCE_PATH) bad('CALL_FEASIBILITY_EVIDENCE_PATH', 'calling requires a feasibility evidence artifact');
       if (!e.DAILY_AI_BUDGET_USD) bad('DAILY_AI_BUDGET_USD', 'calling requires a daily budget');
       if (!e.OWNER_TELEGRAM_USER_ID) bad('OWNER_TELEGRAM_USER_ID', 'calling requires a bootstrapped owner id');
+      // A call with nobody to talk would just hang up: the conversation layer must be configured too.
+      if (e.CALL_ADAPTER === 'ntgcalls') {
+        if (!e.AI_VOICE_PROVIDER) bad('AI_VOICE_PROVIDER', 'calling with CALL_ADAPTER=ntgcalls requires an AI voice provider (openai or gemini)');
+        else if (e.AI_VOICE_PROVIDER === 'openai' && (!e.OPENAI_API_KEY || !e.OPENAI_REALTIME_MODEL))
+          bad('OPENAI_REALTIME_MODEL', 'AI_VOICE_PROVIDER=openai requires OPENAI_API_KEY and OPENAI_REALTIME_MODEL (no model is hardcoded)');
+        else if (e.AI_VOICE_PROVIDER === 'gemini' && (!e.GEMINI_API_KEY || !e.GEMINI_LIVE_MODEL))
+          bad('GEMINI_LIVE_MODEL', 'AI_VOICE_PROVIDER=gemini requires GEMINI_API_KEY and GEMINI_LIVE_MODEL (no model is hardcoded)');
+      }
     }
     if (e.MESSAGING_ADAPTER === 'telegram') {
       for (const k of ['TELEGRAM_API_ID', 'TELEGRAM_API_HASH', 'TELEGRAM_SESSION_SECRET_REF'] as const)

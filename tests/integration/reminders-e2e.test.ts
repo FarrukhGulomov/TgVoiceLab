@@ -149,7 +149,7 @@ describe('missed-reminder policy, quiet hours, degraded calls, recurrence', () =
 
   it('a call-mode reminder degrades to a clearly labeled message (calls unavailable) — never a silent drop', async () => {
     const clock = new FakeClock(new Date(START));
-    const app = boot(t.url, clock);
+    const app = boot(t.url, clock, new FakeMessaging(), 'w-test', { callsEnabled: false }); // calling off: the case this test is about
     await app.reminders.create(o.ownerId, { title: 'Standup call', localDateTime: '2026-10-15T13:00', mode: 'call' });
     clock.set('2026-10-15T08:00:10Z');
     await app.tick();

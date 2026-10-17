@@ -1,3 +1,4 @@
+import type pg from 'pg';
 import type { Db } from '../../infrastructure/db/db.js';
 import type { Clock } from '../../application/clock.js';
 import { completeJob, LostLeaseError, type ClaimedJob, type JobHandler } from '../jobs/jobs.js';
@@ -6,7 +7,8 @@ import { writeAudit } from '../audit/audit.js';
 import { nextOccurrence, type Recurrence } from './recurrence.js';
 import { inQuietHours, type QuietHours } from './quiet-hours.js';
 
-export type FireOutcome = 'fired' | 'fired_late' | 'call_downgraded_to_message' | 'missed_summarized' | 'briefing_skipped' | 'stale_rejected';
+export type FireOutcome =
+  'fired' | 'fired_late' | 'call_requested' | 'call_downgraded_to_message' | 'missed_summarized' | 'briefing_skipped' | 'stale_rejected';
 
 export const MESSAGE_GRACE_MS = 24 * 3600_000; // spec §7: deliver overdue message reminders within 24h, once
 export const CALL_GRACE_MS = 5 * 60_000; // spec §7: call reminders missed by >5 min become message notices
@@ -15,6 +17,12 @@ export const BRIEFING_GRACE_MS = 3 * 3600_000;
 
 export interface FireDeps {
   clock: Clock;
+  /**
+   * Call-mode reminders: queue a call to the owner for this occurrence, inside the firing transaction. Returns false when no call can
+   * even be attempted (calling off, owner opted out); the reminder then degrades to a message exactly as before. Whether the call is
+   * allowed to dial is decided later by the dial policy, never here.
+   */
+  requestReminderCall?: ((c: pg.PoolClient, a: { ownerId: string; reminderId: string; scheduledAt: Date }) => Promise<boolean>) | undefined;
 }
 
 interface ReminderRow {
@@ -87,10 +95,18 @@ export async function fireReminderOccurrence(db: Db, job: ClaimedJob, deps: Fire
     } else {
       await c.query(`UPDATE reminder_occurrences SET state='fired', fired_at=$2 WHERE id=$1`, [occurrenceId, now]);
       if (r.mode === 'call') {
-        outcome = 'call_downgraded_to_message';
-        // No calling path exists until Phase 0 gates pass (spec §3.4), so a call-mode reminder always degrades to a
-        // clearly labeled message. A verified dial path (Phase 3) would branch here, before this downgrade.
-        variant = lateMs > CALL_GRACE_MS ? 'call_missed' : 'degraded_call';
+        if (
+          lateMs <= CALL_GRACE_MS &&
+          deps.requestReminderCall &&
+          (await deps.requestReminderCall(c, { ownerId: job.ownerId, reminderId, scheduledAt: o.scheduled_at }))
+        ) {
+          // The text goes out right away as well: if the call is refused, unanswered or fails, the owner still has the reminder.
+          outcome = 'call_requested';
+          variant = 'call_requested';
+        } else {
+          outcome = 'call_downgraded_to_message';
+          variant = lateMs > CALL_GRACE_MS ? 'call_missed' : 'degraded_call';
+        }
       } else if (lateMs > CALL_GRACE_MS) {
         outcome = 'fired_late';
         variant = 'late';

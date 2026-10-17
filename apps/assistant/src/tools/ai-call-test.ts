@@ -29,6 +29,7 @@ import { Db } from '../infrastructure/db/db.js';
 import { DataCrypto } from '../infrastructure/crypto/data-crypto.js';
 import { Envelope, parseKeyRing } from '../infrastructure/crypto/envelope.js';
 import { TaskService } from '../modules/tasks/tasks.service.js';
+import { ReminderService } from '../modules/scheduling/reminders.service.js';
 import { systemClock } from '../application/clock.js';
 import { OWNER_CALL_TOOL_DECLARATIONS, OwnerCallTools, buildOwnerCallInstructions } from '../modules/calls/conversation/owner-call-tools.js';
 
@@ -113,6 +114,7 @@ if (briefingMode) {
   ownerTools = new OwnerCallTools({
     db,
     tasks: new TaskService(crypto),
+    reminders: new ReminderService(db, crypto, systemClock),
     clock: systemClock,
     ownerId: owner.id,
     timezone: owner.timezone,
