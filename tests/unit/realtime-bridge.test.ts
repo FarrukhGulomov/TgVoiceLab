@@ -11,7 +11,8 @@ class FakeLink implements RealtimeLink {
   sampleRateHz = 24000;
   sent: Uint8Array[] = [];
   responses: Array<string | undefined> = [];
-  cancels = 0;
+  interrupts: number[] = [];
+  responseStart?: () => void;
   closed = false;
   audio?: (p: Uint8Array) => void;
   speech?: () => void;
@@ -23,8 +24,11 @@ class FakeLink implements RealtimeLink {
   respond(i?: string) {
     this.responses.push(i);
   }
-  cancelResponse() {
-    this.cancels++;
+  interrupt(playedMs: number) {
+    this.interrupts.push(playedMs);
+  }
+  onResponseStart(cb: () => void) {
+    this.responseStart = cb;
   }
   onAudio(cb: (p: Uint8Array) => void) {
     this.audio = cb;
@@ -116,7 +120,7 @@ describe('RealtimeCallBridge', () => {
     h.finish();
   });
 
-  it('barge-in: drops queued model audio, flushes the call output, cancels the response; later audio flows again', async () => {
+  it('barge-in: drops queued model audio, flushes the call output, interrupts the response; later audio flows again', async () => {
     const h = fakeHandle();
     const link = new FakeLink();
     const b = new RealtimeCallBridge(h.handle, link);
@@ -125,13 +129,31 @@ describe('RealtimeCallBridge', () => {
     link.speech!(); // the caller starts talking before the queued audio was sent
     await flush();
     expect(h.flushed()).toBe(1);
-    expect(link.cancels).toBe(1);
+    expect(link.interrupts).toEqual([0]); // nothing of the queued audio had been played yet
     expect(b.stats.bargeIns).toBe(1);
     const sentBefore = h.sent.length;
     expect(sentBefore).toBe(0); // everything queued before the barge-in was dropped
     link.audio!(tone(2400));
     await flush();
     expect(h.sent.length).toBeGreaterThan(0);
+    b.stop();
+    h.finish();
+  });
+
+  it('reports how much of the response was actually played when the caller barges in', async () => {
+    const h = fakeHandle();
+    const link = new FakeLink();
+    const b = new RealtimeCallBridge(h.handle, link);
+    b.start();
+    link.responseStart!();
+    link.audio!(tone(4800)); // 100 ms of 24 kHz audio -> 10 frames of 10 ms
+    await flush();
+    expect(h.sent.length).toBeGreaterThanOrEqual(8);
+    const played = h.sent.length * 10;
+    link.speech!();
+    expect(link.interrupts).toEqual([played]);
+    link.speech!(); // a second barge-in with nothing played since
+    expect(link.interrupts).toEqual([played, 0]);
     b.stop();
     h.finish();
   });
@@ -228,6 +250,40 @@ describe('OpenAiRealtimeLink', () => {
       [3, 4],
     ]);
     expect(events).toEqual(['speech', 'assistant:Salom', 'caller:Assalomu alaykum', "err:invalid_value: Unknown parameter: 'session.foo'"]);
+  });
+
+  it('interrupt cancels only a response that is in flight and truncates the item to what was played', () => {
+    const { link, sock } = open();
+    sock.emit('open');
+    const msg = (o: object) => sock.emit('message', Buffer.from(JSON.stringify(o)));
+    const types = () => sock.sent.map((x) => JSON.parse(x).type as string);
+    link.interrupt(300); // nothing in flight, nothing said: nothing to send
+    expect(types()).toEqual(['session.update']);
+    msg({ type: 'response.created' });
+    msg({ type: 'response.output_audio.delta', delta: 'AQI=', item_id: 'item_1' });
+    link.interrupt(1234);
+    expect(types().slice(1)).toEqual(['response.cancel', 'conversation.item.truncate']);
+    expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ type: 'conversation.item.truncate', item_id: 'item_1', content_index: 0, audio_end_ms: 1234 });
+    msg({ type: 'response.done' });
+    link.interrupt(10); // already truncated and finished
+    expect(sock.sent).toHaveLength(3);
+  });
+
+  it('a lost cancel race is not reported as an error, but other server errors still are', () => {
+    const { link, sock } = open();
+    const errs: string[] = [];
+    link.onError((m) => errs.push(m));
+    const msg = (o: object) => sock.emit('message', Buffer.from(JSON.stringify(o)));
+    msg({ type: 'error', error: { code: 'response_cancel_not_active', message: 'Cancellation failed: no active response found' } });
+    msg({ type: 'error', error: { code: 'invalid_value', message: 'bad' } });
+    expect(errs).toEqual(['invalid_value: bad']);
+  });
+
+  it('the input-transcription model is only sent when configured (never defaulted)', () => {
+    const none = sessionUpdate({ instructions: 'x' }) as { session: { audio: { input: Record<string, unknown> } } };
+    expect(none.session.audio.input).not.toHaveProperty('transcription');
+    const some = sessionUpdate({ instructions: 'x', transcriptionModel: 'tm' }) as { session: { audio: { input: Record<string, unknown> } } };
+    expect(some.session.audio.input.transcription).toEqual({ model: 'tm' });
   });
 
   it('a closing socket after close() is not reported as an error', () => {

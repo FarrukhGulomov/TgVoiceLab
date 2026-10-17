@@ -8,7 +8,7 @@
  *   LIVE_TEST_OPT_IN=yes  LIVE_TEST_RECIPIENT_ID=<numeric id>  LIVE_TEST_RECIPIENT_CONSENT=yes
  *   LIVE_TEST_WINDOW_START / LIVE_TEST_WINDOW_END  (ISO instants, at most 2 h apart)
  *   LIVE_TEST_MAX_SECONDS (default 120, max 600)
- *   OPENAI_API_KEY  OPENAI_REALTIME_MODEL  [OPENAI_VOICE]  [OPENAI_REALTIME_DIALECT=ga|beta]
+ *   OPENAI_API_KEY  OPENAI_REALTIME_MODEL  [OPENAI_VOICE]  [OPENAI_REALTIME_DIALECT=ga|beta]  [OPENAI_TRANSCRIPTION_MODEL]
  */
 import { randomUUID } from 'node:crypto';
 import { Api, TelegramClient } from 'telegram';
@@ -54,11 +54,13 @@ if (problems.length) {
 const INSTRUCTIONS = [
   "Sen egasining shaxsiy sun'iy intellekt yordamchisisan. Bu sinov qo'ng'irog'i.",
   "Suhbatni o'zbek tilida olib bor, odam boshqa tilda gapirsa shu tilga o't.",
-  "Birinchi gapingda o'zingni AI yordamchi deb tanishtir.",
+  "Qo'ng'iroq ko'tarilganda sen birinchi gapirasan: o'zingni AI yordamchi deb tanishtirasan. Qo'ng'iroq allaqachon davom etayotgandek javob berma.",
   "Qisqa gapir: bir-ikki jumla. Odam gapira boshlasa, to'xta va tingla.",
   "Hech qanday vazifa, eslatma yoki qo'ng'iroq qilishga va'da berma: bu faqat ovoz sinovi.",
 ].join(' ');
-const GREETING = "Salom! Men sizning shaxsiy AI yordamchingizman. Bu sinov qo'ng'irog'i. Meni eshityapsizmi?";
+// `response.create` instructions are a directive to the model, not text to read out: a bare greeting was answered as if it were a question.
+const GREETING =
+  "Qo'ng'iroqqa hozir javob berildi. Faqat shu gapni ayt, keyin jim bo'l va tingla: «Salom! Men sizning shaxsiy AI yordamchingizman. Bu sinov qo'ng'irog'i.» Boshqa narsa qo'shma.";
 
 const client = new TelegramClient(new StringSession(resolveSecret(sessionRef)), apiId, apiHash, { connectionRetries: 3 });
 await client.connect();
@@ -101,7 +103,14 @@ const ac = new AbortController();
 const handle = await adapter.dial(plan, ac.signal);
 console.log(`${t()} dialing... answer the call on your phone`);
 
-const link = new OpenAiRealtimeLink({ apiKey, model, voice: env.OPENAI_VOICE, instructions: INSTRUCTIONS, dialect });
+const link = new OpenAiRealtimeLink({
+  apiKey,
+  model,
+  voice: env.OPENAI_VOICE,
+  instructions: INSTRUCTIONS,
+  dialect,
+  transcriptionModel: env.OPENAI_TRANSCRIPTION_MODEL,
+});
 const bridge = new RealtimeCallBridge(handle, link, (line) => console.log(`${t()} ${line}`));
 let ended: CallEvent | null = null;
 let hangupTimer: NodeJS.Timeout | undefined;

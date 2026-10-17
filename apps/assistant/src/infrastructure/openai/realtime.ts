@@ -17,6 +17,8 @@ export interface RealtimeOptions {
   model: string;
   voice?: string | undefined;
   instructions: string;
+  /** Optional input-transcription model (printed as `caller:` lines). Never defaulted: the name must come from configuration. */
+  transcriptionModel?: string | undefined;
   dialect?: RealtimeDialect | undefined;
   sampleRateHz?: number | undefined;
   baseUrl?: string | undefined;
@@ -24,7 +26,7 @@ export interface RealtimeOptions {
   socketFactory?: ((url: string, headers: Record<string, string>) => WebSocket) | undefined;
 }
 
-export function sessionUpdate(o: Pick<RealtimeOptions, 'voice' | 'instructions' | 'dialect' | 'sampleRateHz'>): Record<string, unknown> {
+export function sessionUpdate(o: Pick<RealtimeOptions, 'voice' | 'instructions' | 'dialect' | 'sampleRateHz' | 'transcriptionModel'>): Record<string, unknown> {
   const rate = o.sampleRateHz ?? 24_000;
   if ((o.dialect ?? 'ga') === 'beta')
     return {
@@ -35,7 +37,7 @@ export function sessionUpdate(o: Pick<RealtimeOptions, 'voice' | 'instructions' 
         ...(o.voice ? { voice: o.voice } : {}),
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
-        input_audio_transcription: { model: 'whisper-1' },
+        ...(o.transcriptionModel ? { input_audio_transcription: { model: o.transcriptionModel } } : {}),
         turn_detection: { type: 'server_vad' },
       },
     };
@@ -46,7 +48,11 @@ export function sessionUpdate(o: Pick<RealtimeOptions, 'voice' | 'instructions' 
       instructions: o.instructions,
       output_modalities: ['audio'],
       audio: {
-        input: { format: { type: 'audio/pcm', rate }, turn_detection: { type: 'server_vad' } },
+        input: {
+          format: { type: 'audio/pcm', rate },
+          turn_detection: { type: 'server_vad' },
+          ...(o.transcriptionModel ? { transcription: { model: o.transcriptionModel } } : {}),
+        },
         output: { format: { type: 'audio/pcm', rate }, ...(o.voice ? { voice: o.voice } : {}) },
       },
     },
@@ -62,6 +68,9 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   #speech: Array<() => void> = [];
   #transcript: Array<(who: 'assistant' | 'caller', text: string) => void> = [];
   #errors: Array<(m: string) => void> = [];
+  #responseStart: Array<() => void> = [];
+  #activeResponse = false;
+  #lastItemId: string | null = null;
 
   constructor(o: RealtimeOptions) {
     this.sampleRateHz = o.sampleRateHz ?? 24_000;
@@ -93,15 +102,23 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   }
 
   #onMessage(raw: string): void {
-    let e: { type?: string; delta?: string; transcript?: string; error?: { message?: string; code?: string } };
+    let e: { type?: string; delta?: string; transcript?: string; item_id?: string; error?: { message?: string; code?: string } };
     try {
       e = JSON.parse(raw) as typeof e;
     } catch {
       return;
     }
     switch (e.type) {
+      case 'response.created':
+        this.#activeResponse = true;
+        for (const cb of this.#responseStart) cb();
+        break;
+      case 'response.done':
+        this.#activeResponse = false;
+        break;
       case 'response.output_audio.delta': // ga
       case 'response.audio.delta': // beta
+        if (e.item_id) this.#lastItemId = e.item_id;
         if (e.delta) for (const cb of this.#audio) cb(new Uint8Array(Buffer.from(e.delta, 'base64')));
         break;
       case 'input_audio_buffer.speech_started':
@@ -115,6 +132,8 @@ export class OpenAiRealtimeLink implements RealtimeLink {
         if (e.transcript) for (const cb of this.#transcript) cb('caller', e.transcript);
         break;
       case 'error':
+        // Cancelling when nothing is in flight is a race we lose harmlessly (the response just finished), not a fault.
+        if (e.error?.code === 'response_cancel_not_active') break;
         this.#emitError(`${e.error?.code ?? 'error'}: ${e.error?.message ?? raw.slice(0, 200)}`);
         break;
       default:
@@ -128,8 +147,14 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   respond(instructions?: string): void {
     this.#send({ type: 'response.create', ...(instructions ? { response: { instructions } } : {}) });
   }
-  cancelResponse(): void {
-    this.#send({ type: 'response.cancel' });
+  interrupt(playedMs: number): void {
+    if (this.#activeResponse) this.#send({ type: 'response.cancel' });
+    if (this.#lastItemId)
+      this.#send({ type: 'conversation.item.truncate', item_id: this.#lastItemId, content_index: 0, audio_end_ms: Math.max(0, Math.round(playedMs)) });
+    this.#lastItemId = null;
+  }
+  onResponseStart(cb: () => void): void {
+    this.#responseStart.push(cb);
   }
   onAudio(cb: (pcm: Uint8Array) => void): void {
     this.#audio.push(cb);

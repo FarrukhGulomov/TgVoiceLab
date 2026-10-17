@@ -7,7 +7,13 @@ export interface RealtimeLink {
   sendAudio(pcm: Uint8Array): void;
   /** Ask the model to speak now (e.g. the greeting). */
   respond(instructions?: string): void;
-  cancelResponse(): void;
+  /**
+   * The caller barged in: stop the in-flight response (if any) and tell the model how much of it was actually played, so the part the
+   * caller never heard does not stay in the conversation as if it had been said.
+   */
+  interrupt(playedMs: number): void;
+  /** A new model response started (the bridge restarts its played-audio clock). */
+  onResponseStart(cb: () => void): void;
   onAudio(cb: (pcm: Uint8Array) => void): void;
   onSpeechStarted(cb: () => void): void;
   onTranscript(cb: (who: 'assistant' | 'caller', text: string) => void): void;
@@ -39,6 +45,7 @@ export class RealtimeCallBridge {
   #assembler = new FrameAssembler(FRAME_BYTES);
   #outChain: Promise<void> = Promise.resolve();
   #epoch = 0; // bumped on barge-in: audio queued before it is never sent
+  #playedFrames = 0; // 10 ms frames of the current response that were actually handed to the call
 
   constructor(
     private readonly handle: CallHandle,
@@ -68,6 +75,7 @@ export class RealtimeCallBridge {
             samples,
           });
           this.stats.callFramesOut++;
+          this.#playedFrames++;
         });
       }
     });
@@ -78,7 +86,11 @@ export class RealtimeCallBridge {
       this.#assembler.clear();
       this.#down = new StreamingResampler(this.link.sampleRateHz, CALL_RATE);
       void this.handle.flushOutput().catch(() => undefined);
-      this.link.cancelResponse();
+      this.link.interrupt(this.#playedFrames * 10);
+      this.#playedFrames = 0;
+    });
+    this.link.onResponseStart(() => {
+      this.#playedFrames = 0;
     });
     this.link.onTranscript((who, text) => this.log(`${who}: ${text}`));
     this.link.onError((m) => {
