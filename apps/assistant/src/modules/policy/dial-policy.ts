@@ -13,6 +13,8 @@ export interface DialPolicyInput {
   policyVersion: number;
   owner: { id: string; disabled: boolean; timezone: string; quietHours: QuietHours; callOptOut: boolean; verified: boolean };
   plan: ApprovedCallPlan;
+  /** Lifecycle status of the call request being dialed; only `queued` is dialable (cancellation must stick, audit F12). */
+  requestStatus: string;
   authorization: { id: string; ownerId: string; state: string; expiresAt: Date; planHash: string } | null;
   contact: { id: string; telegramUserId: string; verifiedAt: Date | null; timezone: string | null } | null;
   permission: {
@@ -50,6 +52,7 @@ export type DialDenial =
   | 'authorization_expired'
   | 'plan_hash_mismatch'
   | 'plan_expired'
+  | 'request_not_dialable'
   | 'recipient_missing'
   | 'recipient_unverified'
   | 'recipient_mismatch'
@@ -97,6 +100,7 @@ export function evaluateDialPolicy(i: DialPolicyInput): PolicyDecision {
   const recomputed = computePlanHash(planBodyOf(i.plan));
   if (recomputed !== i.plan.planHash || recomputed !== a.planHash) return deny('plan_hash_mismatch');
   if (new Date(i.plan.expiresAt).getTime() <= t) return deny('plan_expired');
+  if (i.requestStatus !== 'queued') return deny('request_not_dialable');
 
   if (i.kind === 'owner_call') {
     if (i.owner.callOptOut) return deny('owner_opted_out');

@@ -70,8 +70,8 @@ export class CallOrchestrator {
     callRequestId: string,
     o: { budgetReserved: boolean; excludeCallId?: string },
   ): Promise<DialPolicyInput | null> {
-    const req = await q.query<{ plan: unknown; authorization_id: string; contact_id: string }>(
-      'SELECT plan, authorization_id, contact_id FROM call_requests WHERE id=$1 AND owner_id=$2',
+    const req = await q.query<{ plan: unknown; authorization_id: string; contact_id: string; status: string }>(
+      'SELECT plan, authorization_id, contact_id, status FROM call_requests WHERE id=$1 AND owner_id=$2',
       [callRequestId, ownerId],
     );
     if (!req.rows[0]) return null;
@@ -125,6 +125,7 @@ export class CallOrchestrator {
       policyVersion: o0.policy_version,
       owner: { id: o0.id, disabled: o0.disabled, timezone: o0.timezone, quietHours: o0.quiet_hours, callOptOut: o0.call_opt_out, verified: true },
       plan,
+      requestStatus: req.rows[0].status,
       authorization: a ? { id: a.id, ownerId: a.owner_id, state: a.state, expiresAt: a.expires_at, planHash: a.plan_hash } : null,
       contact: c ? { id: c.id, telegramUserId: c.telegram_user_id, verifiedAt: c.verified_at, timezone: c.timezone } : null,
       permission: p
@@ -156,9 +157,12 @@ export class CallOrchestrator {
   private async reject(ownerId: string, callRequestId: string, reason: string): Promise<DialOutcome> {
     const now = this.d.clock.now();
     await this.d.db.tx(async (c) => {
+      // A dial attempt before the owner approved must not kill the request: it stays pending and approval makes it dialable.
       await c.query(
-        `UPDATE call_requests SET status='rejected' WHERE id=$1 AND owner_id=$2 AND status IN ('requested','pending_authorization','queued','preflight')`,
-        [callRequestId, ownerId],
+        `UPDATE call_requests SET status='rejected'
+         WHERE id=$1 AND owner_id=$2 AND status IN ('requested','pending_authorization','queued','preflight')
+           AND NOT (status='pending_authorization' AND $3 = 'authorization_not_approved')`,
+        [callRequestId, ownerId, reason],
       );
       await writeAudit(c, {
         ownerId,

@@ -95,7 +95,12 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
     <B>(
       action: string,
       schema: z.ZodType<B>,
-      handler: (a: { ownerId: string; body: B; c: import('pg').PoolClient; req: FastifyRequest }) => Promise<{ status: number; data: unknown }>,
+      handler: (a: {
+        ownerId: string;
+        body: B;
+        c: import('pg').PoolClient;
+        req: FastifyRequest;
+      }) => Promise<{ status: number; data: unknown; afterCommit?: () => Promise<void> }>,
     ) =>
     async (req: FastifyRequest, rep: FastifyReply) => {
       const key = req.headers['idempotency-key'];
@@ -106,7 +111,7 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
       const merged = { body, params: req.params };
       const out = await runIdempotent<{ data: unknown }>(app.db, { ownerId, action, key, requestBody: merged, now: app.clock.now() }, async (c) => {
         const r = await handler({ ownerId, body, c, req });
-        return { status: r.status, body: { data: r.data } };
+        return { status: r.status, body: { data: r.data }, ...(r.afterCommit ? { afterCommit: r.afterCommit } : {}) };
       });
       if (out.kind === 'conflict') return fail(req, rep, 409, 'idempotency_conflict', 'this Idempotency-Key was already used with a different request');
       rep.header('Idempotent-Replayed', out.kind === 'replayed' ? 'true' : 'false');
@@ -208,7 +213,12 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
       const { id } = idParam.parse(req.params);
       if (body.revoke) {
         const v = await app.contacts.revoke(c, ownerId, id, app.clock.now());
-        return { status: 200, data: { ...v, ...(await app.operations.onPermissionRevoked(ownerId, id)) } };
+        const cancelledRequests = await app.operations.cancelDialIntents(c, ownerId, id);
+        return {
+          status: 200,
+          data: { ...v, cancelledRequests },
+          afterCommit: async () => void (await app.operations.terminateLive(ownerId, id, 'consent_withdrawn')),
+        };
       }
       return {
         status: 200,
@@ -236,15 +246,17 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
   });
   srv.post(
     '/v1/call-requests',
-    mutate('callrequests.create', CallReqBody, async ({ ownerId, body, req }) => {
+    mutate('callrequests.create', CallReqBody, async ({ ownerId, body, c, req }) => {
       const { ownerExplicitCommand, sourceMessageId, ...rest } = body;
+      // Request, authorization, dial job and the idempotency record all share ONE transaction (audit F03).
       const r = await app.authorizations.createCallRequest(
         ownerId,
         { ...rest, ownerId, callRequestId: randomUUID() },
         { ownerExplicitCommand, ...(sourceMessageId ? { sourceMessageId } : {}) },
+        c,
       );
       if (r.state === 'approved')
-        await enqueueJob(app.db, {
+        await enqueueJob(c, {
           ownerId,
           kind: 'call.dial',
           dueAt: app.clock.now(),
@@ -268,12 +280,12 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
   );
   srv.post<{ Params: { id: string } }>(
     '/v1/authorizations/:id/approve',
-    mutate('authorizations.approve', z.object({ planHash: z.string().regex(/^[a-f0-9]{64}$/) }), async ({ ownerId, body, req }) => {
+    mutate('authorizations.approve', z.object({ planHash: z.string().regex(/^[a-f0-9]{64}$/) }), async ({ ownerId, body, c, req }) => {
       const { id } = idParam.parse(req.params);
-      await app.authorizations.approve(ownerId, id, body.planHash);
-      const cr = await app.db.query<{ id: string }>('SELECT id FROM call_requests WHERE authorization_id=$1 AND owner_id=$2', [id, ownerId]);
+      await app.authorizations.approve(ownerId, id, body.planHash, c);
+      const cr = await c.query<{ id: string }>('SELECT id FROM call_requests WHERE authorization_id=$1 AND owner_id=$2', [id, ownerId]);
       if (cr.rows[0])
-        await enqueueJob(app.db, {
+        await enqueueJob(c, {
           ownerId,
           kind: 'call.dial',
           dueAt: app.clock.now(),
@@ -289,12 +301,12 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
     mutate('calls.cancel', z.object({}).passthrough(), async ({ ownerId, req }) => {
       const { id } = idParam.parse(req.params);
       const live = app.registry.list(ownerId).find((c) => c.callId === id);
-      if (live) await live.end('cancelled');
-      else {
+      if (!live) {
         const exists = await app.db.query('SELECT 1 FROM calls WHERE id=$1 AND owner_id=$2', [id, ownerId]);
         if (!exists.rowCount) throw new DomainError('not_found', 'call not found');
       }
-      return { status: 202, data: { stopRequested: true, wasLive: !!live } };
+      // The provider hangup is awaited only after the idempotency transaction committed.
+      return { status: 202, data: { stopRequested: true, wasLive: !!live }, afterCommit: async () => void (await live?.end('cancelled')) };
     }),
   );
   // An outcome_unknown call occupies the account (it might be live). Only an operator who has CHECKED the real phone/account may clear it.
@@ -346,9 +358,12 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
   // ---- operations -------------------------------------------------------------------------------------------------
   srv.post(
     '/v1/operations/kill-switch',
-    mutate('ops.killswitch', z.object({ on: z.boolean(), reason: z.string().min(1).max(200) }), async ({ ownerId, body }) => ({
+    mutate('ops.killswitch', z.object({ on: z.boolean(), reason: z.string().min(1).max(200) }), async ({ ownerId, body, c }) => ({
       status: 200,
-      data: await app.operations.setKillSwitch(ownerId, body.on, body.reason),
+      data: { on: body.on, ...(await app.operations.applyKillSwitch(c, ownerId, body.on, body.reason)), liveStopRequested: body.on },
+      afterCommit: async () => {
+        if (body.on) await app.operations.terminateLive(ownerId, undefined, 'cancelled');
+      },
     })),
   );
 

@@ -9,6 +9,16 @@ export interface Queryable {
 pg.types.setTypeParser(1700, (v) => v); // numeric stays string; no float surprises
 pg.types.setTypeParser(20, (v) => v); // int8 stays string (Telegram ids, fencing tokens)
 
+/** A pool-level handle (has `tx`) or a client already inside a transaction. */
+export function isDb(q: Queryable): q is Db {
+  return typeof (q as Db).tx === 'function';
+}
+
+/** Run `fn` inside a transaction: reuse the caller's transaction client, or open one when given the pool-level `Db`. */
+export function inTx<T>(q: Queryable, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
+  return isDb(q) ? q.tx(fn) : fn(q as pg.PoolClient);
+}
+
 export class Db {
   readonly pool: pg.Pool;
   constructor(

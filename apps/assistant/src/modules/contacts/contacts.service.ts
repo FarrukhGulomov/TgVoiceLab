@@ -1,5 +1,5 @@
 import { TelegramUserIdSchema } from '@tgvl/contracts';
-import type { Queryable } from '../../infrastructure/db/db.js';
+import { inTx, type Queryable } from '../../infrastructure/db/db.js';
 import { NotFoundError, ValidationError } from '../../application/errors.js';
 import { writeAudit } from '../audit/audit.js';
 
@@ -42,10 +42,16 @@ export class ContactService {
   }
 
   /** Grants are versioned and immutable: a change inserts version N+1 (history is the audit trail). */
-  async grant(q: Queryable, ownerId: string, contactId: string, g: PermissionGrant, now: Date): Promise<{ version: number }> {
+  async grant(db: Queryable, ownerId: string, contactId: string, g: PermissionGrant, now: Date): Promise<{ version: number }> {
     if (g.expiresAt.getTime() <= now.getTime()) throw new ValidationError('permission must expire in the future');
     if (!g.topicScopes.length) throw new ValidationError('at least one topic scope is required');
-    const c = await q.query('SELECT 1 FROM contacts WHERE id=$1 AND owner_id=$2', [contactId, ownerId]);
+    // Grant and revoke take the SAME row lock (contacts row) before allocating a version, so concurrent changes serialize: the
+    // later committer always gets the next version and the latest committed version decides (audit F20).
+    return inTx(db, (q) => this.grantLocked(q, ownerId, contactId, g, now));
+  }
+
+  private async grantLocked(q: Queryable, ownerId: string, contactId: string, g: PermissionGrant, now: Date): Promise<{ version: number }> {
+    const c = await q.query('SELECT 1 FROM contacts WHERE id=$1 AND owner_id=$2 FOR UPDATE', [contactId, ownerId]);
     if (!c.rowCount) throw new NotFoundError('contact');
     const v = await q.query<{ v: number }>('SELECT coalesce(max(version),0)+1 AS v FROM contact_permissions WHERE contact_id=$1', [contactId]);
     const version = v.rows[0]!.v;
@@ -79,7 +85,13 @@ export class ContactService {
   }
 
   /** Revocation is a new version with revoked_at set (the latest version always decides). */
-  async revoke(q: Queryable, ownerId: string, contactId: string, now: Date): Promise<{ version: number }> {
+  async revoke(db: Queryable, ownerId: string, contactId: string, now: Date): Promise<{ version: number }> {
+    return inTx(db, (q) => this.revokeLocked(q, ownerId, contactId, now));
+  }
+
+  private async revokeLocked(q: Queryable, ownerId: string, contactId: string, now: Date): Promise<{ version: number }> {
+    const locked = await q.query('SELECT 1 FROM contacts WHERE id=$1 AND owner_id=$2 FOR UPDATE', [contactId, ownerId]);
+    if (!locked.rowCount) throw new NotFoundError('contact');
     const cur = await q.query<{
       version: number;
       allow_message: boolean;

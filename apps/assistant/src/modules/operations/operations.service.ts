@@ -1,4 +1,4 @@
-import type { Db, Queryable } from '../../infrastructure/db/db.js';
+import { inTx, type Db, type Queryable } from '../../infrastructure/db/db.js';
 import type { Clock } from '../../application/clock.js';
 import { writeAudit } from '../audit/audit.js';
 
@@ -35,38 +35,65 @@ export class OperationsService {
    */
   async setKillSwitch(ownerId: string, on: boolean, reason: string): Promise<{ on: boolean; terminated: number; elapsedMs: number }> {
     const t0 = performance.now();
-    await this.db.tx(async (c) => {
+    await this.applyKillSwitch(this.db, ownerId, on, reason);
+    const terminated = on ? await this.terminateLive(ownerId, undefined, 'cancelled') : 0;
+    return { on, terminated, elapsedMs: performance.now() - t0 };
+  }
+
+  /** DB part of the kill switch; callable inside a caller's transaction (HTTP idempotency). Live media is ended separately, after commit. */
+  async applyKillSwitch(q: Queryable, ownerId: string, on: boolean, reason: string): Promise<{ cancelledRequests: number }> {
+    return inTx(q, async (c) => {
       await c.query(
         `INSERT INTO operation_settings (owner_id, calling_kill_switch, reason, changed_at) VALUES ($1,$2,$3,$4)
          ON CONFLICT (owner_id) DO UPDATE SET calling_kill_switch=$2, reason=$3, version=operation_settings.version+1, changed_at=$4`,
         [ownerId, on, reason.slice(0, 200), this.clock.now()],
       );
-      if (on)
-        await c.query(`UPDATE call_requests SET status='cancelled' WHERE owner_id=$1 AND status IN ('requested','pending_authorization','queued')`, [ownerId]);
+      const cancelledRequests = on ? await this.cancelDialIntents(c, ownerId) : 0;
       await writeAudit(c, { ownerId, actorType: 'owner', action: on ? 'killswitch.on' : 'killswitch.off', allowed: true, reasonCode: 'ok' });
+      return { cancelledRequests };
     });
+  }
+
+  /**
+   * Durably invalidate dispatch intents (audit F12): the request becomes `cancelled`, its authorization `revoked` (so it can never
+   * be reused, even after the kill switch is lifted or permissions are re-granted) and any not-yet-claimed `call.dial` job is cancelled.
+   * A job already leased is neutralised by the dial path itself, which refuses a request that is not `queued`.
+   */
+  async cancelDialIntents(q: Queryable, ownerId: string, contactId?: string): Promise<number> {
+    const r = await q.query<{ id: string; authorization_id: string | null }>(
+      `UPDATE call_requests SET status='cancelled'
+       WHERE owner_id=$1 AND ($2::uuid IS NULL OR contact_id=$2) AND status IN ('requested','pending_authorization','queued')
+       RETURNING id, authorization_id`,
+      [ownerId, contactId ?? null],
+    );
+    const authIds = r.rows.map((x) => x.authorization_id).filter((x): x is string => !!x);
+    if (authIds.length)
+      await q.query(`UPDATE authorizations SET state='revoked' WHERE owner_id=$1 AND id = ANY($2::uuid[]) AND state IN ('pending','approved')`, [
+        ownerId,
+        authIds,
+      ]);
+    if (r.rows.length)
+      await q.query(`UPDATE jobs SET status='cancelled' WHERE kind='call.dial' AND status='pending' AND dedupe_key = ANY($1::text[])`, [
+        r.rows.map((x) => `dial:${x.id}`),
+      ]);
+    return r.rows.length;
+  }
+
+  /** End live media (in-process). Runs AFTER the database change committed, never inside a transaction. */
+  async terminateLive(ownerId: string, contactId: string | undefined, reason: 'cancelled' | 'consent_withdrawn'): Promise<number> {
     let terminated = 0;
-    if (on)
-      for (const call of this.registry.list(ownerId)) {
-        await call.end('cancelled');
+    for (const call of this.registry.list(ownerId))
+      if (!contactId || call.contactId === contactId) {
+        await call.end(reason);
         terminated++;
       }
-    return { on, terminated, elapsedMs: performance.now() - t0 };
+    return terminated;
   }
 
   /** Revocation cancels queued work for the contact and interrupts any live call with them. */
-  async onPermissionRevoked(ownerId: string, contactId: string): Promise<{ terminated: number }> {
-    await this.db.query(
-      `UPDATE call_requests SET status='cancelled' WHERE owner_id=$1 AND contact_id=$2 AND status IN ('requested','pending_authorization','queued')`,
-      [ownerId, contactId],
-    );
-    let terminated = 0;
-    for (const call of this.registry.list(ownerId))
-      if (call.contactId === contactId) {
-        await call.end('consent_withdrawn');
-        terminated++;
-      }
-    return { terminated };
+  async onPermissionRevoked(ownerId: string, contactId: string, q: Queryable = this.db): Promise<{ terminated: number }> {
+    await inTx(q, (c) => this.cancelDialIntents(c, ownerId, contactId));
+    return { terminated: await this.terminateLive(ownerId, contactId, 'consent_withdrawn') };
   }
 
   async isKillSwitchOn(q: Queryable, ownerId: string): Promise<boolean> {

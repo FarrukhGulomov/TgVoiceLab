@@ -25,10 +25,11 @@ export function canonicalJson(v: unknown): string {
 export async function runIdempotent<T>(
   db: Db,
   args: { ownerId: string; action: string; key: string; requestBody: unknown; ttlMs?: number; now: Date },
-  handler: (c: pg.PoolClient) => Promise<{ status: number; body: T }>,
+  handler: (c: pg.PoolClient) => Promise<{ status: number; body: T; afterCommit?: () => Promise<void> }>,
 ): Promise<IdempotentOutcome<T>> {
   const reqHash = hashRequest(args.requestBody);
-  return db.tx(async (c) => {
+  let after: (() => Promise<void>) | undefined;
+  const out = await db.tx(async (c) => {
     const ins = await c.query(
       `INSERT INTO idempotency_keys (owner_id, action, key, request_hash, expires_at)
        VALUES ($1,$2,$3,$4,$5) ON CONFLICT (owner_id, action, key) DO NOTHING RETURNING id`,
@@ -51,6 +52,11 @@ export async function runIdempotent<T>(
       out.status,
       JSON.stringify(out.body),
     ]);
+    after = out.afterCommit;
     return { kind: 'executed', status: out.status, body: out.body } as const;
   });
+  // External effects (ending a live call) run only AFTER the transaction committed, never while holding it. If the process dies
+  // in this window the effect is not repeated on retry (the key replays); a live call dies with the process anyway.
+  if (out.kind === 'executed' && after) await after();
+  return out;
 }

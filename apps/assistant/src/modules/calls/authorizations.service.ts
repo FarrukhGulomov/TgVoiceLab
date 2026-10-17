@@ -1,5 +1,5 @@
 import { ApprovedCallPlanSchema, CallPlanBodySchema, type ApprovedCallPlan, type CallPlanBody } from '@tgvl/contracts';
-import type { Db } from '../../infrastructure/db/db.js';
+import { inTx, type Db, type Queryable } from '../../infrastructure/db/db.js';
 import type { Clock } from '../../application/clock.js';
 import { NotFoundError, ValidationError, DomainError } from '../../application/errors.js';
 import { writeAudit } from '../audit/audit.js';
@@ -20,6 +20,7 @@ export class AuthorizationService {
     ownerId: string,
     bodyIn: CallPlanBody,
     opts: { ownerExplicitCommand?: boolean; sourceMessageId?: string } = {},
+    q: Queryable = this.db,
   ): Promise<{ callRequestId: string; authorizationId: string; planHash: string; plan: ApprovedCallPlan; state: 'pending' | 'approved' }> {
     const body = CallPlanBodySchema.parse(bodyIn);
     if (body.ownerId !== ownerId) throw new DomainError('forbidden', 'plan belongs to another owner');
@@ -27,7 +28,7 @@ export class AuthorizationService {
     if (new Date(body.expiresAt).getTime() <= now.getTime()) throw new ValidationError('plan already expired');
     const planHash = computePlanHash(body);
 
-    return this.db.tx(async (c) => {
+    return inTx(q, async (c) => {
       const contact = await c.query<{ id: string; telegram_user_id: string; verified_at: Date | null }>(
         'SELECT id, telegram_user_id, verified_at FROM contacts WHERE owner_id=$1 AND telegram_user_id=$2',
         [ownerId, body.recipientTelegramId],
@@ -87,9 +88,9 @@ export class AuthorizationService {
   }
 
   /** Approve exactly the plan the owner saw: the presented hash must equal the stored hash. */
-  async approve(ownerId: string, authorizationId: string, presentedPlanHash: string): Promise<void> {
+  async approve(ownerId: string, authorizationId: string, presentedPlanHash: string, q: Queryable = this.db): Promise<void> {
     const now = this.clock.now();
-    await this.db.tx(async (c) => {
+    await inTx(q, async (c) => {
       const a = await c.query<{ plan_hash: string; state: string; expires_at: Date }>(
         'SELECT plan_hash, state, expires_at FROM authorizations WHERE id=$1 AND owner_id=$2 FOR UPDATE',
         [authorizationId, ownerId],
