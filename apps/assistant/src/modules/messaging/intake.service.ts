@@ -387,7 +387,12 @@ export class IntakeService {
         // The scheduling confirmation (with exact local date/time/zone) is emitted via the outbox by the service itself.
         await reminders.create(
           p.ownerId,
-          { title: intent.title, localDateTime: when.localDateTime, ...(intent.recurrence ? { recurrence: intent.recurrence } : {}) },
+          {
+            title: intent.title,
+            localDateTime: when.localDateTime,
+            ...(intent.recurrence ? { recurrence: intent.recurrence } : {}),
+            ...(intent.byCall ? { mode: 'call' as const } : {}),
+          },
           c,
         );
         return null;

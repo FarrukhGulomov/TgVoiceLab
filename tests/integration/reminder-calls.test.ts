@@ -118,4 +118,36 @@ describe('call-mode reminders', () => {
     expect(all.join('\n')).not.toContain('?');
     await s.app.close();
   });
+
+  it('"remind me by call ..." in chat stores a call-mode reminder and the confirmation says what will happen', async () => {
+    const s = await setup();
+    await s.app.intake.handle({
+      accountId: o.accountId,
+      updateKey: 'msg:bycall-1',
+      providerMessageId: '1',
+      senderTelegramId: o.telegramUserId,
+      chat: { type: 'private', id: o.telegramUserId },
+      receivedAt: s.clock.now(),
+      text: 'remind me by call today at 12:00 to take the medicine',
+    });
+    await s.app.tick();
+    expect((await t.db.query(`SELECT mode FROM reminders`)).rows).toEqual([{ mode: 'call' }]);
+    const confirm = s.texts().find((x) => x.startsWith('Reminder set'));
+    expect(confirm).toContain('take the medicine');
+    expect(confirm).toContain('I will call you at that time');
+    expect(confirm).not.toMatch(/by call/); // the wish is not part of the title
+    // a plain reminder says nothing about calls
+    await s.app.intake.handle({
+      accountId: o.accountId,
+      updateKey: 'msg:bycall-2',
+      providerMessageId: '2',
+      senderTelegramId: o.telegramUserId,
+      chat: { type: 'private', id: o.telegramUserId },
+      receivedAt: s.clock.now(),
+      text: 'remind me today at 12:30 to drink water',
+    });
+    await s.app.tick();
+    expect(s.texts().find((x) => x.includes('drink water') && x.startsWith('Reminder set'))).not.toContain('call you');
+    await s.app.close();
+  });
 });

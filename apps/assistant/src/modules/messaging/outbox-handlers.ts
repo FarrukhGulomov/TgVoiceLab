@@ -16,6 +16,7 @@ interface OwnerRow {
 }
 interface ReminderRow {
   title_enc: string;
+  mode: 'message' | 'call';
   timezone: string;
   recurrence: Recurrence | null;
   next_occurrence_at: Date | null;
@@ -79,7 +80,7 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
   const loadReminder = async (ownerId: string, id: string): Promise<ReminderRow & { title: string }> => {
     const r = (
       await db.query<ReminderRow>(
-        `SELECT title_enc, kind, timezone, recurrence, next_occurrence_at, to_char(local_wall_clock,'YYYY-MM-DD"T"HH24:MI') AS local FROM reminders WHERE id=$1 AND owner_id=$2`,
+        `SELECT title_enc, mode, kind, timezone, recurrence, next_occurrence_at, to_char(local_wall_clock,'YYYY-MM-DD"T"HH24:MI') AS local FROM reminders WHERE id=$1 AND owner_id=$2`,
         [id, ownerId],
       )
     ).rows[0]!;
@@ -122,6 +123,7 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
           tz: p.timezone ?? rem.timezone,
           recurrence: recurrenceText(owner.locale, rem.recurrence),
           dst: p.dstGap ? t(owner.locale, 'dst_gap', { time }) : '',
+          call: rem.mode === 'call' ? t(owner.locale, 'reminder_call_note') : '',
         });
       }
       await messaging.sendMessage({ toTelegramUserId: owner.telegram_user_id, text, idempotencyKey: row.eventId });

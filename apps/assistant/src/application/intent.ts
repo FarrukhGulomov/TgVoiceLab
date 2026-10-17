@@ -26,6 +26,8 @@ export interface ReminderDraft {
   title: string;
   date: string; // YYYY-MM-DD, already resolved
   recurrence?: RecurrenceIntent;
+  /** The owner asked to be reminded BY CALL. */
+  byCall?: boolean;
   missing: 'time' | 'ambiguous_time';
   /** For `ambiguous_time`: the hour the owner wrote (1-12), to be resolved to morning or evening. */
   ambiguousHour?: number;
@@ -37,7 +39,7 @@ export type Intent =
   | { kind: 'list_tasks' }
   | { kind: 'complete_task'; ref: TaskRef }
   | { kind: 'reschedule_task'; ref: TaskRef; due: LocalDateTime }
-  | { kind: 'create_reminder'; title: string; at: LocalDateTime; recurrence?: RecurrenceIntent }
+  | { kind: 'create_reminder'; title: string; at: LocalDateTime; recurrence?: RecurrenceIntent; byCall?: boolean }
   | { kind: 'reschedule_reminder'; ref: TaskRef; at: LocalDateTime }
   | { kind: 'cancel_reminder'; ref: TaskRef }
   | { kind: 'list_reminders' }

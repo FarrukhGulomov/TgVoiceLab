@@ -93,6 +93,10 @@ const clean = (s: string) =>
  * Deterministic interpreter for en/uz. Anything it cannot place confidently becomes `clarify` or `unknown` — it never
  * guesses an action. Russian is not covered by the rules adapter (returns unknown); use an LLM adapter for broader input.
  */
+const BY_CALL_SRC = "qo'ng'iroq\\s+(?:qilib|bilan|orqali)|telefon\\s+qilib|\\b(?:call|phone|ring)\\s+me\\b|\\bby\\s+(?:call|phone)\\b";
+const BY_CALL = new RegExp(BY_CALL_SRC);
+const BY_CALL_G = new RegExp(BY_CALL_SRC, 'gi');
+
 export class RulesInterpreter implements TextInterpreterPort {
   /**
    * Finish a pending reminder with the owner's next message. Only a short, time-shaped reply counts ("17:00", "5 pm", "evening");
@@ -112,7 +116,13 @@ export class RulesInterpreter implements TextInterpreterPort {
       if (!w.invalid && w.ambiguousHour === undefined && w.time) time = w.time;
     }
     if (!time) return null;
-    return { kind: 'create_reminder', title: draft.title, at: { date: draft.date, time }, ...(draft.recurrence ? { recurrence: draft.recurrence } : {}) };
+    return {
+      kind: 'create_reminder',
+      title: draft.title,
+      at: { date: draft.date, time },
+      ...(draft.recurrence ? { recurrence: draft.recurrence } : {}),
+      ...(draft.byCall ? { byCall: true } : {}),
+    };
   }
 
   async interpret(raw: string, ctx: InterpretContext): Promise<Intent> {
@@ -185,7 +195,9 @@ export class RulesInterpreter implements TextInterpreterPort {
 
     // create reminder
     if (/\bremind\b|\breminder\b|\beslat/.test(low)) {
-      const w = extractWhen(text, ctx);
+      // "remind me BY CALL" / "qo'ng'iroq qilib eslat": the owner's explicit wish to be rung. The phrase is not part of the title.
+      const byCall = BY_CALL.test(low);
+      const w = extractWhen(byCall ? text.replace(BY_CALL_G, ' ') : text, ctx);
       let title = w.rest;
       title = title
         .replace(/\b(?:please\s+)?remind\s+me\b/i, ' ')
@@ -194,7 +206,13 @@ export class RulesInterpreter implements TextInterpreterPort {
         .replace(/\beslat\w*(?:ib\s+qo'y)?\w*/i, ' ');
       title = clean(title);
       const base = title
-        ? { kind: 'create_reminder' as const, title, date: w.date ?? today(ctx), ...(w.recurrence ? { recurrence: w.recurrence } : {}) }
+        ? {
+            kind: 'create_reminder' as const,
+            title,
+            date: w.date ?? today(ctx),
+            ...(w.recurrence ? { recurrence: w.recurrence } : {}),
+            ...(byCall ? { byCall: true } : {}),
+          }
         : undefined;
       const amb = clarifyWhen(w, ctx, base);
       if (amb) return amb;
@@ -204,9 +222,22 @@ export class RulesInterpreter implements TextInterpreterPort {
         return {
           kind: 'clarify',
           question: t(ctx.locale, 'ask_time', { date: w.date }),
-          draft: { kind: 'create_reminder', title, date: w.date, missing: 'time', ...(w.recurrence ? { recurrence: w.recurrence } : {}) },
+          draft: {
+            kind: 'create_reminder',
+            title,
+            date: w.date,
+            missing: 'time',
+            ...(w.recurrence ? { recurrence: w.recurrence } : {}),
+            ...(byCall ? { byCall: true } : {}),
+          },
         };
-      return { kind: 'create_reminder', title, at: { date: w.date, time: w.time }, ...(w.recurrence ? { recurrence: w.recurrence } : {}) };
+      return {
+        kind: 'create_reminder',
+        title,
+        at: { date: w.date, time: w.time },
+        ...(w.recurrence ? { recurrence: w.recurrence } : {}),
+        ...(byCall ? { byCall: true } : {}),
+      };
     }
 
     // create task

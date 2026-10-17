@@ -34,3 +34,31 @@ describe('daily briefing intents', () => {
     expect((await run('add task prepare briefing tomorrow')).kind).toBe('create_task');
   });
 });
+
+describe('reminders by call (chat)', () => {
+  it.each([
+    ["ertaga 9:00 da dori ichishni qo'ng'iroq qilib eslat", 'dori ichishni'],
+    ["qo'ng'iroq bilan eslat: bugun 18:00 da uchrashuv", 'uchrashuv'],
+    ['remind me by call tomorrow at 9:00 to take the medicine', 'take the medicine'],
+    ['call me tomorrow at 09:00 as a reminder to pay rent. remind me', 'pay rent'],
+  ])('%s -> byCall, and the phrase is not in the title', async (text, titlePart) => {
+    const r = await run(text, text.includes("qo'ng") ? 'uz' : 'en');
+    expect(r).toMatchObject({ kind: 'create_reminder', byCall: true });
+    const title = (r as { title: string }).title.toLowerCase();
+    expect(title).toContain(titlePart.split(' ')[0]!);
+    expect(title).not.toMatch(/qo'ng'iroq|by call|call me|qilib/);
+  });
+  it('a plain reminder is not a call reminder', async () => {
+    const r = await run('remind me tomorrow at 9:00 to take the medicine');
+    expect(r).toMatchObject({ kind: 'create_reminder' });
+    expect(r).not.toHaveProperty('byCall');
+  });
+  it('a missing time keeps the by-call wish in the pending draft', async () => {
+    const r = await run("ertaga dori ichishni qo'ng'iroq qilib eslat", 'uz');
+    expect(r).toMatchObject({ kind: 'clarify', draft: { kind: 'create_reminder', byCall: true, missing: 'time' } });
+  });
+  it('"don\'t call me" is still the opt-out, never a call reminder', async () => {
+    expect(await run("don't call me")).toEqual({ kind: 'stop_calling' });
+    expect(await run("qo'ng'iroq qilma")).toEqual({ kind: 'stop_calling' });
+  });
+});
