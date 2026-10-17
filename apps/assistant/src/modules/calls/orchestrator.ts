@@ -109,10 +109,17 @@ export class CallOrchestrator {
         'SELECT id, owner_id, state, expires_at, plan_hash FROM authorizations WHERE id=$1',
         [req.rows[0].authorization_id],
       ),
-      q.query<{ id: string; telegram_user_id: string; verified_at: Date | null; timezone: string | null }>(
-        'SELECT id, telegram_user_id, verified_at, timezone FROM contacts WHERE id=$1 AND owner_id=$2',
-        [req.rows[0].contact_id, ownerId],
-      ),
+      q.query<{
+        id: string;
+        telegram_user_id: string;
+        verified_at: Date | null;
+        timezone: string | null;
+        ai_consent_attested_at: Date | null;
+        ai_consent_revoked_at: Date | null;
+      }>('SELECT id, telegram_user_id, verified_at, timezone, ai_consent_attested_at, ai_consent_revoked_at FROM contacts WHERE id=$1 AND owner_id=$2', [
+        req.rows[0].contact_id,
+        ownerId,
+      ]),
       q.query<{
         version: number;
         allow_call: boolean;
@@ -149,7 +156,16 @@ export class CallOrchestrator {
       requestStatus: req.rows[0].status,
       callingEnabled: this.d.callsEnabled,
       authorization: a ? { id: a.id, ownerId: a.owner_id, state: a.state, expiresAt: a.expires_at, planHash: a.plan_hash } : null,
-      contact: c ? { id: c.id, telegramUserId: c.telegram_user_id, verifiedAt: c.verified_at, timezone: c.timezone } : null,
+      contact: c
+        ? {
+            id: c.id,
+            telegramUserId: c.telegram_user_id,
+            verifiedAt: c.verified_at,
+            timezone: c.timezone,
+            aiConsentAttestedAt: c.ai_consent_attested_at,
+            aiConsentRevokedAt: c.ai_consent_revoked_at,
+          }
+        : null,
       permission: p
         ? {
             version: p.version,

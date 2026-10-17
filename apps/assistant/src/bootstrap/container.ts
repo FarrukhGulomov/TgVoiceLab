@@ -10,6 +10,7 @@ import { ActiveCallRegistry, OperationsService } from '../modules/operations/ope
 import { CallOrchestrator, recoverOrphanedCalls, type CallSessionRunner } from '../modules/calls/orchestrator.js';
 import { DisabledCallAdapter } from '../modules/calls/adapters.js';
 import type { DerivedCapabilities } from '../modules/calls/capability-evidence.js';
+import { ContactCallService } from '../modules/calls/contact-calls.service.js';
 import { IntakeService } from '../modules/messaging/intake.service.js';
 import { RulesInterpreter } from '../modules/messaging/rules-interpreter.js';
 import { DisabledInterpreter } from '../modules/messaging/disabled-interpreter.js';
@@ -96,6 +97,8 @@ export function buildContainer(d: ContainerDeps) {
     interpreter: d.interpreter ?? (d.textAiDisabled ? new DisabledInterpreter() : new RulesInterpreter()),
     transcription: d.transcription,
     ownerCalls: operations,
+    contacts,
+    ...(d.callsEnabled ? { contactCalls: new ContactCallService(authorizations, d.clock) } : {}),
     ...(d.voiceDownloadTimeoutMs ? { voiceDownloadTimeoutMs: d.voiceDownloadTimeoutMs } : {}),
     ...(d.voiceMaxConcurrentDownloads ? { voiceMaxConcurrentDownloads: d.voiceMaxConcurrentDownloads } : {}),
   });

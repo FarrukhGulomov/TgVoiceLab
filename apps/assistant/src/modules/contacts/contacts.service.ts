@@ -138,4 +138,104 @@ export class ContactService {
     });
     return { version };
   }
+
+  /**
+   * Add (or re-activate) a contact the OWNER vouches for: numeric id confirmed by the owner, the owner's attestation that the contact
+   * was told about AI calls in advance (recorded as the OWNER's statement), and a default permission for general business calls
+   * (9:00-20:00, 90 days). One transaction; an existing contact is updated, not duplicated.
+   */
+  async addVouched(db: Queryable, ownerId: string, i: { telegramUserId: string; displayName: string }, now: Date): Promise<{ id: string; created: boolean }> {
+    if (!i.displayName.trim() || i.displayName.trim().length > 80) throw new ValidationError('contact name must be 1-80 characters');
+    return inTx(db, async (q) => {
+      const existed = await q.query('SELECT 1 FROM contacts WHERE owner_id=$1 AND telegram_user_id=$2', [ownerId, i.telegramUserId]);
+      const { id } = await this.create(
+        q,
+        ownerId,
+        { telegramUserId: i.telegramUserId, displayName: i.displayName, verificationSource: 'owner_confirmed_numeric_id' },
+        now,
+      );
+      await q.query('UPDATE contacts SET ai_consent_attested_at=$3, ai_consent_revoked_at=NULL WHERE id=$1 AND owner_id=$2', [id, ownerId, now]);
+      await writeAudit(q, {
+        ownerId,
+        actorType: 'owner',
+        action: 'contact.ai_consent_attested',
+        resourceType: 'contact',
+        resourceId: id,
+        allowed: true,
+        reasonCode: 'ok',
+      });
+      await this.grantLocked(
+        q,
+        ownerId,
+        id,
+        { allowCall: true, topicScopes: ['general'], allowedHours: { start: '09:00', end: '20:00' }, expiresAt: new Date(now.getTime() + 90 * 24 * 3600_000) },
+        now,
+      );
+      return { id, created: !existed.rowCount };
+    });
+  }
+
+  /** The owner withdraws the contact: the attestation is revoked and calling permission ends. Queued calls are cancelled by the caller. */
+  async removeVouched(db: Queryable, ownerId: string, contactId: string, now: Date): Promise<void> {
+    await inTx(db, async (q) => {
+      const r = await q.query('UPDATE contacts SET ai_consent_revoked_at=$3 WHERE id=$1 AND owner_id=$2 RETURNING id', [contactId, ownerId, now]);
+      if (!r.rowCount) throw new NotFoundError('contact');
+      await writeAudit(q, {
+        ownerId,
+        actorType: 'owner',
+        action: 'contact.ai_consent_revoked',
+        resourceType: 'contact',
+        resourceId: contactId,
+        allowed: true,
+        reasonCode: 'ok',
+      });
+      const hasPermission = await q.query('SELECT 1 FROM contact_permissions WHERE contact_id=$1 AND owner_id=$2 LIMIT 1', [contactId, ownerId]);
+      if (hasPermission.rowCount) await this.revokeLocked(q, ownerId, contactId, now);
+    });
+  }
+
+  async list(q: Queryable, ownerId: string): Promise<Array<{ id: string; displayName: string; telegramUserId: string; active: boolean }>> {
+    const r = await q.query<{ id: string; display_name: string; telegram_user_id: string; active: boolean }>(
+      `SELECT c.id, c.display_name, c.telegram_user_id,
+              (c.verified_at IS NOT NULL AND c.ai_consent_attested_at IS NOT NULL
+                AND (c.ai_consent_revoked_at IS NULL OR c.ai_consent_revoked_at < c.ai_consent_attested_at)) AS active
+       FROM contacts c WHERE c.owner_id=$1 ORDER BY lower(c.display_name)`,
+      [ownerId],
+    );
+    return r.rows.map((x) => ({ id: x.id, displayName: x.display_name, telegramUserId: x.telegram_user_id, active: x.active }));
+  }
+
+  /**
+   * Resolve a spoken or typed name to ONE contact, or say why not. Never guesses: ambiguous or unknown names return no contact.
+   * Case, apostrophes and Uzbek case suffixes written after the name ("Javlonga") are tolerated by trying the name with and without them.
+   */
+  async resolveByName(
+    q: Queryable,
+    ownerId: string,
+    spoken: string,
+  ): Promise<{ kind: 'one'; contact: { id: string; displayName: string; telegramUserId: string } } | { kind: 'none' } | { kind: 'many'; names: string[] }> {
+    const norm = (x: string) =>
+      x
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f'‘’ʻʼ`´]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const all = (await this.list(q, ownerId)).filter((c) => c.active);
+    const forms = new Set<string>();
+    const base = norm(spoken);
+    forms.add(base);
+    for (const suffix of ['ga', 'ka', 'qa', 'ni', 'dan', 'ning', 'bilan'])
+      if (base.endsWith(suffix) && base.length > suffix.length + 1) forms.add(base.slice(0, -suffix.length));
+    const pick = (test: (name: string, form: string) => boolean) => {
+      const hits = all.filter((c) => [...forms].some((f) => test(norm(c.displayName), f)));
+      return hits;
+    };
+    for (const test of [(n: string, f: string) => n === f, (n: string, f: string) => n.startsWith(f), (n: string, f: string) => n.includes(f)]) {
+      const hits = pick(test);
+      if (hits.length === 1) return { kind: 'one', contact: hits[0]! };
+      if (hits.length > 1) return { kind: 'many', names: hits.map((h) => h.displayName) };
+    }
+    return { kind: 'none' };
+  }
 }

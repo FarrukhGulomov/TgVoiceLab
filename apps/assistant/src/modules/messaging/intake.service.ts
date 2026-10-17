@@ -11,6 +11,8 @@ import { emitOutbox } from '../outbox/outbox.js';
 import { writeAudit } from '../audit/audit.js';
 import type { TaskService, Task } from '../tasks/tasks.service.js';
 import type { ReminderService } from '../scheduling/reminders.service.js';
+import type { ContactService } from '../contacts/contacts.service.js';
+import { CONTACT_CALL_MAX_SECONDS, type ContactCallService } from '../calls/contact-calls.service.js';
 import { describeInstant, resolveWallClock } from '../scheduling/wallclock.js';
 import { t, type Locale, type MessageKey } from './i18n.js';
 import { Limiter, withTimeout } from '../../application/async.js';
@@ -73,7 +75,12 @@ export class IntakeService {
       ownerCalls?: {
         cancelAllCallIntents(q: pg.PoolClient, ownerId: string): Promise<number>;
         terminateAllLiveCalls(ownerId: string): Promise<number>;
+        cancelContactCallIntents(q: pg.PoolClient, ownerId: string, contactId: string): Promise<number>;
+        terminateLiveContactCalls(ownerId: string, contactId: string): Promise<number>;
       };
+      contacts?: ContactService;
+      /** Present only when calling is enabled in this deployment; without it a call to a contact is refused with an honest message. */
+      contactCalls?: ContactCallService;
     },
   ) {
     this.downloads = new Limiter(d.voiceMaxConcurrentDownloads ?? 2);
@@ -342,6 +349,60 @@ export class IntakeService {
           metadata: { scope: 'all_calls', cancelledRequests: cancelled },
         });
         return t(loc, 'calls_stopped');
+      }
+      case 'add_contact': {
+        if (intent.telegramUserId === p.telegramUserId) return t(loc, 'contact_self');
+        const contacts = this.d.contacts;
+        if (!contacts) return t(loc, 'unknown');
+        await contacts.addVouched(c, p.ownerId, { telegramUserId: intent.telegramUserId, displayName: intent.name }, this.d.clock.now());
+        return t(loc, 'contact_added', { name: intent.name.trim(), id: intent.telegramUserId });
+      }
+      case 'remove_contact': {
+        const contacts = this.d.contacts;
+        if (!contacts) return t(loc, 'unknown');
+        const r = await contacts.resolveByName(c, p.ownerId, intent.name);
+        if (r.kind === 'none') return t(loc, 'contact_unknown', { name: intent.name });
+        if (r.kind === 'many') return t(loc, 'contact_ambiguous', { name: intent.name, names: r.names.join(', ') });
+        await contacts.removeVouched(c, p.ownerId, r.contact.id, this.d.clock.now());
+        const ops = this.d.ownerCalls;
+        if (ops) {
+          await ops.cancelContactCallIntents(c, p.ownerId, r.contact.id);
+          afterCommit.push(() => ops.terminateLiveContactCalls(p.ownerId, r.contact.id));
+        }
+        return t(loc, 'contact_removed', { name: r.contact.displayName });
+      }
+      case 'list_contacts': {
+        const contacts = this.d.contacts;
+        if (!contacts) return t(loc, 'unknown');
+        const list = await contacts.list(c, p.ownerId);
+        if (!list.length) return t(loc, 'contacts_empty');
+        return [t(loc, 'contacts_header'), ...list.map((x, i) => `${i + 1}. ${x.displayName} (id ${x.telegramUserId})${x.active ? '' : ' — off'}`)].join('\n');
+      }
+      case 'set_owner_name': {
+        const name = intent.name.trim().slice(0, 80);
+        await c.query('UPDATE owners SET display_name=$2 WHERE id=$1', [p.ownerId, name]);
+        return t(loc, 'owner_name_set', { name });
+      }
+      case 'call_contact': {
+        const contacts = this.d.contacts;
+        if (!contacts) return t(loc, 'unknown');
+        const r = await contacts.resolveByName(c, p.ownerId, intent.contact);
+        if (r.kind === 'none') return t(loc, 'contact_unknown', { name: intent.contact });
+        if (r.kind === 'many') return t(loc, 'contact_ambiguous', { name: intent.contact, names: r.names.join(', ') });
+        if (!this.d.contactCalls) return t(loc, 'contact_call_unavailable', { name: r.contact.displayName });
+        const due = intent.at ? this.local(intent.at, p.timezone) : null;
+        const res = await this.d.contactCalls.request(c, p.ownerId, { contactId: r.contact.id, message: intent.message, dueAt: due?.utc, language: loc });
+        if (!res.ok)
+          return res.reason === 'empty_message'
+            ? t(loc, 'ask_call_message', { name: r.contact.displayName })
+            : t(loc, 'contact_call_no_permission', { name: r.contact.displayName });
+        const when = describeInstant(res.dueAt, p.timezone);
+        return t(loc, 'contact_call_queued', {
+          name: r.contact.displayName,
+          ...when,
+          minutes: CONTACT_CALL_MAX_SECONDS / 60,
+          message: intent.message.trim().slice(0, 200),
+        });
       }
       case 'set_briefing': {
         // The scheduling confirmation (with the exact local time and zone) is emitted via the outbox by the service itself.

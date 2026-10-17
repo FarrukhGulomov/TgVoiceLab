@@ -134,6 +134,39 @@ export class RulesInterpreter implements TextInterpreterPort {
     if (/\b(?:stop\s+calling(?:\s+me)?|(?:do\s*n'?t|do\s+not)\s+call\s+me|qo'ng'iroq\s+qilma(?:ng)?|qong'iroq\s+qilma(?:ng)?)\b/.test(low))
       return { kind: 'stop_calling' };
 
+    // ---- contacts and calls to contacts (the owner's explicit commands) ---------------------------------------------------
+    {
+      const add = /^(?:(?:add|new)\s+contact|kontakt\s+qo'sh(?:ing)?)\s*:?\s+(.+?)\s+(\d{5,19})\s*$/i.exec(text);
+      if (add) return { kind: 'add_contact', name: clean(add[1]!), telegramUserId: add[2]! };
+      const del = /^(?:(?:remove|delete)\s+contact|kontakt(?:ni)?\s+(?:o'chir|olib\s+tashla)\w*)\s*:?\s+(.+)$/i.exec(text);
+      if (del) {
+        if (notAnExplicitCommand(text, low)) return { kind: 'clarify', question: t(ctx.locale, 'not_a_command') };
+        return { kind: 'remove_contact', name: clean(del[1]!) };
+      }
+      if (/^(?:contacts?|kontaktlar(?:im)?|\/contacts)\??$/i.test(low)) return { kind: 'list_contacts' };
+      const nm = /^(?:my\s+name\s+is|mening\s+ismim|ismim)\s*:?\s+(.{1,80})$/i.exec(text);
+      if (nm) return { kind: 'set_owner_name', name: clean(nm[1]!) };
+      // "Javlonga ertaga 10:00 da qo'ng'iroq qilib hisobot tayyorligini ayt"  /  "call Javlon tomorrow at 10:00 and tell him the report is ready".
+      // Date/time words are taken out FIRST, so "ertaga" is never mistaken for a name. Only the imperative/converb forms (qil, qilib, qiling,
+      // call) count: "qilaman", "qilishni eslat", "remind me to call" are statements or reminders and never ring anyone.
+      const w0 = extractWhen(text, ctx);
+      const body = w0.rest;
+      const uz = /^(\S+?)(?:ga|ka|qa)\s+(.*?)qo'ng'iroq\s+qil(?:ib|ing)?(?![\p{L}'])[:,]?\s*(.*)$/iu.exec(body);
+      const en = /^(?:please\s+)?call\s+(?!me\b)(\S+)(?:\s+(.*))?$/i.exec(body);
+      const NOT_NAMES = /^(?:men|me|sen|sizga?|menga|senga|unga|bizga|ularga|ertaga|bugun|indinga|kecha|hozir|kimga|nimaga|bunga|shunga)$/i;
+      const who = uz ? body.split(/\s+/)[0]! : en ? en[1]! : '';
+      if ((uz || en) && !NOT_NAMES.test(who)) {
+        if (w0.invalid) return { kind: 'clarify', question: t(ctx.locale, 'unknown') };
+        const amb = clarifyWhen(w0, ctx);
+        if (amb) return amb;
+        const said = uz ? `${uz[2] ?? ''} ${uz[3] ?? ''}` : (en![2] ?? '');
+        const message = clean(said.replace(/^\s*(?:and\s+)?(?:tell|ask|remind|say\s+to)\s+(?:him|her|them)\s*(?:that|to)?\s*/i, '').replace(/^\s*and\s+/i, ''));
+        if (!message) return { kind: 'clarify', question: t(ctx.locale, 'ask_call_message', { name: who }) };
+        if (w0.date && !w0.time) return { kind: 'clarify', question: t(ctx.locale, 'ask_time', { date: w0.date }) };
+        return { kind: 'call_contact', contact: who, message, ...(w0.date && w0.time ? { at: { date: w0.date, time: w0.time } } : {}) };
+      }
+    }
+
     // daily briefing: "daily briefing at 8", "brief me every day at 08:30", "har kuni soat 8 da brifing", "brifingni o'chir"
     // A reminder/task that merely MENTIONS a briefing ("remind me to prepare the briefing at 9") is not a briefing command.
     if (/\b(?:briefing|brief\s+me|brifing\w*)\b/.test(low) && !/\b(?:remind\w*|reminder|task|todo|vazifa\w*|eslat\w*)\b/.test(low)) {

@@ -108,6 +108,16 @@ export class OperationsService {
     return this.cancelDialIntents(q, ownerId);
   }
 
+  /** Cancel the queued calls to ONE contact (revoked authorizations, cancelled dial jobs). Callable inside the caller's transaction. */
+  async cancelContactCallIntents(q: Queryable, ownerId: string, contactId: string): Promise<number> {
+    return this.cancelDialIntents(q, ownerId, contactId);
+  }
+
+  /** ...and end that contact's live calls, after commit. */
+  terminateLiveContactCalls(ownerId: string, contactId: string): Promise<number> {
+    return this.terminateLive(ownerId, contactId, 'cancelled');
+  }
+
   /** ...and the live part, which runs after commit. */
   terminateAllLiveCalls(ownerId: string): Promise<number> {
     return this.terminateLive(ownerId, undefined, 'cancelled');

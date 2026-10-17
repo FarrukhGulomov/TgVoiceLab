@@ -18,7 +18,15 @@ export interface DialPolicyInput {
   /** CALLS_ENABLED as configured. Calling needs this AND the evidence gates; neither substitutes for the other. */
   callingEnabled: boolean;
   authorization: { id: string; ownerId: string; state: string; expiresAt: Date; planHash: string } | null;
-  contact: { id: string; telegramUserId: string; verifiedAt: Date | null; timezone: string | null } | null;
+  contact: {
+    id: string;
+    telegramUserId: string;
+    verifiedAt: Date | null;
+    timezone: string | null;
+    /** The OWNER's attestation that this contact was told about AI calls in advance (not the contact's own consent). */
+    aiConsentAttestedAt: Date | null;
+    aiConsentRevokedAt: Date | null;
+  } | null;
   permission: {
     version: number;
     allowCall: boolean;
@@ -114,9 +122,12 @@ export function evaluateDialPolicy(i: DialPolicyInput): PolicyDecision {
   if (i.kind === 'owner_call') {
     if (inQuietHours(i.now, i.owner.timezone, i.owner.quietHours)) return deny('quiet_hours');
   } else {
-    if (!i.capability.thirdPartyConsentMechanismProven) return deny('consent_mechanism_unproven');
     const c = i.contact;
     if (!c) return deny('recipient_missing');
+    // Participant consent to AI processing is established either by a live-verified local recognizer, or by the owner's recorded,
+    // un-revoked attestation that the contact was informed in advance (owner decision 2026-10-17).
+    const ownerAttested = !!c.aiConsentAttestedAt && (!c.aiConsentRevokedAt || c.aiConsentRevokedAt.getTime() < c.aiConsentAttestedAt.getTime());
+    if (!i.capability.thirdPartyConsentMechanismProven && !ownerAttested) return deny('consent_mechanism_unproven');
     if (!c.verifiedAt) return deny('recipient_unverified');
     if (c.telegramUserId !== i.plan.recipientTelegramId) return deny('recipient_mismatch'); // numeric id is identity
     const p = i.permission;

@@ -44,7 +44,14 @@ function baseline(over: Partial<DialPolicyInput> = {}, planOver: Partial<Approve
     requestStatus: 'queued',
     callingEnabled: true,
     authorization: { id: U(3), ownerId: U(2), state: 'approved', expiresAt: new Date(plan.expiresAt), planHash: plan.planHash },
-    contact: { id: U(9), telegramUserId: '555000111', verifiedAt: new Date('2026-10-01T00:00:00Z'), timezone: 'Asia/Samarkand' },
+    contact: {
+      id: U(9),
+      telegramUserId: '555000111',
+      verifiedAt: new Date('2026-10-01T00:00:00Z'),
+      timezone: 'Asia/Samarkand',
+      aiConsentAttestedAt: null,
+      aiConsentRevokedAt: null,
+    },
     permission: {
       version: 4,
       allowCall: true,
@@ -184,5 +191,33 @@ describe('dial policy: owner-only calling gate', () => {
   it('a CONTACT call is still denied with only the owner gate: it needs all six gates', () => {
     const b = baseline();
     expect(evaluateDialPolicy({ ...b, capability: ownerOnly(b) }).reasonCode).toBe('calling_not_verified');
+  });
+});
+
+describe('dial policy: participant consent basis for contact calls', () => {
+  const noRecognizer = (b: DialPolicyInput) => ({ ...b.capability, thirdPartyConsentMechanismProven: false });
+  const attested = (b: DialPolicyInput, over: Partial<NonNullable<DialPolicyInput['contact']>> = {}) => ({
+    ...b.contact!,
+    aiConsentAttestedAt: new Date('2026-10-10T00:00:00Z'),
+    ...over,
+  });
+  it("without a local recognizer a contact call needs the owner's attestation", () => {
+    const b = baseline();
+    expect(evaluateDialPolicy({ ...b, capability: noRecognizer(b) }).reasonCode).toBe('consent_mechanism_unproven');
+    expect(evaluateDialPolicy({ ...b, capability: noRecognizer(b), contact: attested(b) })).toMatchObject({ allowed: true, reasonCode: 'ok' });
+  });
+  it('a revoked attestation does not count; a later re-attestation does', () => {
+    const b = baseline();
+    const revoked = attested(b, { aiConsentRevokedAt: new Date('2026-10-12T00:00:00Z') });
+    expect(evaluateDialPolicy({ ...b, capability: noRecognizer(b), contact: revoked }).reasonCode).toBe('consent_mechanism_unproven');
+    const again = attested(b, { aiConsentAttestedAt: new Date('2026-10-14T00:00:00Z'), aiConsentRevokedAt: new Date('2026-10-12T00:00:00Z') });
+    expect(evaluateDialPolicy({ ...b, capability: noRecognizer(b), contact: again }).allowed).toBe(true);
+  });
+  it('the attestation never replaces the other contact checks (permission, verification, gates)', () => {
+    const b = baseline();
+    const base = { ...b, capability: noRecognizer(b), contact: attested(b) };
+    expect(evaluateDialPolicy({ ...base, permission: { ...b.permission!, allowCall: false } }).reasonCode).toBe('permission_denies_call');
+    expect(evaluateDialPolicy({ ...base, contact: attested(b, { verifiedAt: null }) }).reasonCode).toBe('recipient_unverified');
+    expect(evaluateDialPolicy({ ...base, capability: { ...noRecognizer(b), productionCallingAllowed: false } }).reasonCode).toBe('calling_not_verified');
   });
 });

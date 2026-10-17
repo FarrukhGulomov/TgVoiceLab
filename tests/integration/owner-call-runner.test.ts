@@ -155,7 +155,7 @@ describe('OwnerCallRunner', () => {
     expect(instructions).toContain("MA'LUMOT");
     expect(link.greeting).toContain('eslatmani ayt');
     link.toolCb!({ id: 'r', name: 'create_reminder', args: { text: 'Uchrashuv', date: '2026-10-16', time: '16:00', by_call: true } });
-    await tick();
+    for (let i = 0; i < 50 && link.results.length === 0; i++) await tick();
     expect(link.results[0]!.result).toMatchObject({ ok: true, delivery: 'message_until_calls_enabled' });
     h.hangUp();
     expect((await run).endReason).toBe('completed');

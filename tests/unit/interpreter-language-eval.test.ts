@@ -110,10 +110,18 @@ describe('language evaluation — Uzbek', () => {
 });
 
 describe('safety properties of the interpreter', () => {
-  it('never produces a call/dial intent (there is no such intent kind) and never executes contact-related text', async () => {
-    for (const u of ['call Javlon now', "Javlonga qo'ng'iroq qil", 'phone everyone in my contacts', 'dial 998901234567']) {
-      expect(['unknown', 'clarify']).toContain((await run(u)).kind);
+  it('rings a contact only for an explicit command naming ONE contact; statements, reminders and mass requests never become a call', async () => {
+    for (const u of [
+      'phone everyone in my contacts',
+      'dial 998901234567',
+      "ertaga Javlonga qo'ng'iroq qilaman",
+      "ertaga kechqurun soat 8 da Javlonga qo'ng'iroq qilishni eslat",
+      'remind me to call Javlon tomorrow at 10:00',
+    ]) {
+      expect((await run(u)).kind).not.toBe('call_contact');
     }
+    expect(['call_contact', 'clarify']).toContain((await run('call Javlon now')).kind);
+    expect(['call_contact', 'clarify']).toContain((await run("Javlonga qo'ng'iroq qil")).kind);
   });
   it('clarification questions are localized', async () => {
     const uz = await run('ertaga soat 5 da bolani olib kelishni eslat', 'uz');
