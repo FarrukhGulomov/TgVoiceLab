@@ -184,6 +184,17 @@ async function oneCall(batch?: { id: string; index: number; size: number }): Pro
     if (ev.type === 'connected') {
       connectedAt = Date.now();
       out.connected = true;
+      if (scenario === 'connectivity_loss') {
+        // The cue comes from the tool, not from the operator's stopwatch: airplane mode before `connected` tests nothing.
+        console.log(`${t()} >>> CONNECTED. Keep talking for ~10 s; the tool will tell you when to switch the test phone to AIRPLANE MODE.`);
+        setTimeout(
+          () =>
+            console.log(
+              `${t()} >>> NOW: switch the test phone to AIRPLANE MODE and leave it. Waiting up to 150 s for the adapter to report the end by itself.`,
+            ),
+          10_000,
+        );
+      }
       if (scenario === 'short_batch') holdTimer = setTimeout(() => void handle.end('completed').catch(() => undefined), holdSeconds * 1000);
     }
     if (ev.type === 'ended' || ev.type === 'error') {
