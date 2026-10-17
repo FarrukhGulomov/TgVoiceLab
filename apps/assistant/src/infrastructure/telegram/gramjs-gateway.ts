@@ -14,6 +14,8 @@ import type { Logger } from '../observability/logger.js';
 import type { MessagingPort, OutboundMessage } from '../../application/ports.js';
 import type { IncomingMessage, IntakeService } from '../../modules/messaging/intake.service.js';
 import { convertMessage } from './convert.js';
+import { RecoveryRunner, type HistoryMessage, type WatermarkStore } from './recovery.js';
+import { startLane, type Lane } from '../../bootstrap/worker.js';
 import { classifyTelegramSendError } from '../../modules/messaging/delivery-errors.js';
 
 export interface GramjsOptions {
@@ -24,13 +26,21 @@ export interface GramjsOptions {
   log: Logger;
 }
 
-const RECOVERY_WINDOW_MS = 24 * 3600_000; // never replay older instructions after an outage
+const RECOVERY_WINDOW_MS = 24 * 3600_000; // never act on instructions older than this after an outage
 
 export class GramjsMessaging implements MessagingPort {
   private readonly client: TelegramClient;
   private started = false;
   constructor(private readonly o: GramjsOptions) {
     this.client = new TelegramClient(new StringSession(o.sessionSecret), o.apiId, o.apiHash, { connectionRetries: 5, useWSS: false });
+  }
+
+  private recovery: RecoveryRunner<HistoryMessage & { msg: Api.Message }> | null = null;
+  private recoveryLane: Lane | null = null;
+
+  /** Live recovery status for /health/ready: `incomplete` means some owner instruction may not have been processed yet. */
+  status() {
+    return this.recovery ? { recovery: this.recovery.status() } : { recovery: { recovery: 'unknown' } };
   }
 
   /** G0-A: connect, require an authorized session, and verify the logged-in numeric id is the configured assistant account. */
@@ -40,6 +50,7 @@ export class GramjsMessaging implements MessagingPort {
     expectedAssistantId: string;
     ownerTelegramId: string;
     markActive: () => Promise<void>;
+    watermarks: WatermarkStore;
   }): Promise<void> {
     await this.client.connect();
     if (!(await this.client.isUserAuthorized())) throw new Error('Telegram session is not authorized; run `pnpm setup:account` locally');
@@ -50,33 +61,53 @@ export class GramjsMessaging implements MessagingPort {
     }
     await a.markActive();
 
+    // Gap recovery (audit F15): GramJS does not persist update state in a StringSession, so the owner chat is re-scanned from a
+    // DURABLE watermark, page by page, at start and then periodically. Intake's dedupe makes replays safe; the age window keeps stale
+    // instructions from being acted on; failures are retried by the next pass and reported as `incomplete` in readiness.
+    let peer: Awaited<ReturnType<TelegramClient['getInputEntity']>> | null = null;
+    this.recovery = new RecoveryRunner({
+      accountId: a.accountId,
+      chatId: a.ownerTelegramId,
+      store: a.watermarks,
+      windowMs: RECOVERY_WINDOW_MS,
+      clock: () => new Date(),
+      source: {
+        fetchPage: async (offsetId, limit) => {
+          if (!peer) {
+            await this.client.getDialogs({ limit: 20 }); // populates the entity cache so the owner peer resolves
+            peer = await this.client.getInputEntity(bigInt(a.ownerTelegramId));
+          }
+          const msgs = await this.client.getMessages(peer, { limit, offsetId });
+          return [...msgs].map((msg) => ({ id: msg.id, out: !!msg.out, dateMs: msg.date * 1000, msg }));
+        },
+      },
+      handle: async (h) => {
+        const m = this.convert(h.msg, a.accountId, true);
+        if (m) await a.intake.handle(m);
+      },
+    });
+
     this.client.addEventHandler(
       async (ev: NewMessageEvent) => {
         try {
           const m = this.toIncoming(ev, a.accountId);
           if (m) await a.intake.handle(m);
         } catch (e) {
-          this.o.log.error({ err: (e as Error).message }, 'inbound handling failed (will be retried on redelivery / restart recovery)');
+          // Not lost: the periodic recovery pass re-reads the chat from the watermark and retries it.
+          this.o.log.error({ err: (e as Error).message }, 'inbound handling failed (the next recovery pass will retry it)');
         }
       },
       new NewMessage({ incoming: true }),
     );
 
-    // Gap recovery: GramJS does not persist update state in a StringSession, so after a restart re-scan the owner chat.
-    // Durable dedupe (inbound_updates) makes replay safe; the age window prevents acting on stale instructions.
-    await this.recoverRecent(a).catch((e: Error) => this.o.log.warn({ err: e.message }, 'recent-message recovery failed'));
+    await this.recovery.runOnce().catch((e: Error) => this.o.log.warn({ err: e.message }, 'startup recovery failed (will retry)'));
+    this.recoveryLane = startLane({
+      name: 'telegram-recovery',
+      intervalMs: 30_000,
+      run: () => this.recovery!.runOnce(),
+      onError: (e) => this.o.log.warn({ err: e.message }, 'recovery pass failed (will retry)'),
+    });
     this.started = true;
-  }
-
-  private async recoverRecent(a: { intake: IntakeService; accountId: string; ownerTelegramId: string }) {
-    await this.client.getDialogs({ limit: 20 }); // populates the entity cache so the owner peer resolves
-    const peer = await this.client.getInputEntity(bigInt(a.ownerTelegramId));
-    const msgs = await this.client.getMessages(peer, { limit: 50 });
-    for (const msg of [...msgs].reverse()) {
-      if (msg.out || Date.now() - msg.date * 1000 > RECOVERY_WINDOW_MS) continue;
-      const m = this.convert(msg, a.accountId, true);
-      if (m) await a.intake.handle(m);
-    }
   }
 
   private toIncoming(ev: NewMessageEvent, accountId: string): IncomingMessage | null {
@@ -103,6 +134,7 @@ export class GramjsMessaging implements MessagingPort {
   }
 
   async stop(): Promise<void> {
+    await this.recoveryLane?.stop();
     await this.client.disconnect();
   }
 }

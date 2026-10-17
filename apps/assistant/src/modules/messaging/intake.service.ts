@@ -3,7 +3,7 @@ import type pg from 'pg';
 import type { Db } from '../../infrastructure/db/db.js';
 import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
 import type { Clock } from '../../application/clock.js';
-import type { Intent, LocalDateTime, TaskRef } from '../../application/intent.js';
+import type { ClarificationDraft, Intent, LocalDateTime, TaskRef } from '../../application/intent.js';
 import type { TextInterpreterPort, TranscriptionPort } from '../../application/ports.js';
 import { DomainError } from '../../application/errors.js';
 import { authenticateOwnerMessage, type Principal } from '../identity/identity.js';
@@ -126,9 +126,22 @@ export class IntakeService {
       if (rejection && !outcome) outcome = 'voice_rejected';
     }
 
-    const intent: Intent | null = rejection
-      ? null
-      : await this.d.interpreter.interpret(text, { receivedAt: m.receivedAt, timezone: p.timezone, locale: p.locale });
+    const ictx = { receivedAt: m.receivedAt, timezone: p.timezone, locale: p.locale };
+    let intent: Intent | null = rejection ? null : await this.d.interpreter.interpret(text, ictx);
+    // A pending clarification (audit F16) is consulted ONLY when the message is not itself a concrete command, so "done 2" or
+    // "add task ..." can never be mistaken for the answer. An expired or absent draft changes nothing.
+    let draft: ClarificationDraft | null = null;
+    let completed = false;
+    if (intent && (intent.kind === 'unknown' || intent.kind === 'clarify')) {
+      draft = await this.loadDraft(p.ownerId);
+      if (draft && this.d.interpreter.completeDraft) {
+        const done = await this.d.interpreter.completeDraft(text, draft, ictx);
+        if (done) {
+          intent = done;
+          completed = true;
+        }
+      }
+    }
 
     const afterCommit: Array<() => Promise<unknown>> = [];
     const result = await db.tx(async (c) => {
@@ -150,6 +163,11 @@ export class IntakeService {
       } else {
         kind = intent!.kind;
         replyText = await this.execute(c, p, intent!, afterCommit);
+        // Draft lifecycle inside the same transaction as the effect: completed or replaced by an explicit command -> gone;
+        // a new question -> becomes the (single) draft; an unrelated message leaves a still-valid draft alone.
+        if (completed || (intent!.kind !== 'unknown' && intent!.kind !== 'clarify'))
+          await c.query('DELETE FROM conversation_drafts WHERE owner_id=$1', [p.ownerId]);
+        else if (intent!.kind === 'clarify' && intent!.draft) await this.saveDraft(c, p.ownerId, intent!.draft);
       }
       if (replyText !== null) await this.reply(c, p, replyText);
       return { status: 'handled', intent: kind } as const;
@@ -157,6 +175,37 @@ export class IntakeService {
     // External effects (ending a live call) happen only after the transaction committed.
     if (result.status === 'handled') for (const f of afterCommit) await f().catch(() => undefined);
     return result;
+  }
+
+  /** TTL for a pending clarification: long enough to answer, short enough that a stale reply cannot create anything. */
+  static readonly DRAFT_TTL_MS = 10 * 60_000;
+
+  private async loadDraft(ownerId: string): Promise<ClarificationDraft | null> {
+    const r = await this.d.db.query<{ draft_enc: string }>('SELECT draft_enc FROM conversation_drafts WHERE owner_id=$1 AND expires_at > $2', [
+      ownerId,
+      this.d.clock.now(),
+    ]);
+    if (!r.rows[0]) return null;
+    try {
+      return JSON.parse(this.d.crypto.dec(ownerId, 'conversation_drafts.draft', r.rows[0].draft_enc)) as ClarificationDraft;
+    } catch {
+      return null; // an unreadable draft is treated as absent: never act on it
+    }
+  }
+
+  private async saveDraft(c: pg.PoolClient, ownerId: string, draft: ClarificationDraft): Promise<void> {
+    const now = this.d.clock.now();
+    await c.query(
+      `INSERT INTO conversation_drafts (owner_id, kind, draft_enc, created_at, expires_at) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (owner_id) DO UPDATE SET kind=EXCLUDED.kind, draft_enc=EXCLUDED.draft_enc, created_at=EXCLUDED.created_at, expires_at=EXCLUDED.expires_at`,
+      [
+        ownerId,
+        draft.kind,
+        this.d.crypto.enc(ownerId, 'conversation_drafts.draft', JSON.stringify(draft)),
+        now,
+        new Date(now.getTime() + IntakeService.DRAFT_TTL_MS),
+      ],
+    );
   }
 
   private async storeMessage(c: pg.PoolClient, p: Principal, m: IncomingMessage, text: string, confidence: number | null) {

@@ -22,6 +22,8 @@ export interface ServerDeps {
     callAdapter: string;
     /** CALLS_ENABLED as configured: calling is only available when this is true AND the evidence gates pass. */
     callsEnabled?: boolean;
+    /** Optional live status of the messaging adapter (e.g. restart-recovery completeness); surfaced in /health/ready. */
+    messagingStatus?: () => unknown;
     evidencePath: string | null;
     buildFingerprint: string;
     transcription: boolean;
@@ -440,7 +442,14 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
     const pending = dbOk
       ? (await app.db.query<{ n: number }>(`SELECT count(*)::int n FROM jobs WHERE status='pending' AND due_at < now() - interval '5 minutes'`)).rows[0]!.n
       : null;
-    const body = { status: dbOk ? 'ready' : 'unavailable', database: dbOk, overdueJobs: pending, capabilities: await capabilities(null) };
+    const messaging = d.runtime.messagingStatus?.();
+    const body = {
+      status: dbOk ? 'ready' : 'unavailable',
+      database: dbOk,
+      overdueJobs: pending,
+      ...(messaging !== undefined ? { messaging } : {}),
+      capabilities: await capabilities(null),
+    };
     return rep.status(dbOk ? 200 : 503).send({ requestId: req.id, data: body });
   });
 

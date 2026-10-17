@@ -248,3 +248,195 @@ describe('F18 — configuration describes what actually runs', () => {
     });
   });
 });
+
+describe('F16 — a clarifying question keeps its state for the next reply', () => {
+  const PHRASE = 'KVARTS-9921';
+  const say = (text: string, id: string) =>
+    app.intake.handle({
+      accountId: o.accountId,
+      updateKey: `msg:cl-${id}`,
+      providerMessageId: id,
+      senderTelegramId: o.telegramUserId,
+      chat: { type: 'private', id: o.telegramUserId },
+      receivedAt: new Date(clock.now()),
+      text,
+    });
+  const reminders = async () =>
+    (await t.db.query(`SELECT local_wall_clock::text AS w FROM reminders WHERE status='active' ORDER BY created_at`)).rows.map((r) => r.w as string);
+  it('"remind me tomorrow to X" -> asks the time -> "17:00" creates exactly ONE correct reminder; the draft is then gone', async () => {
+    expect(await say(`remind me tomorrow to review ${PHRASE}`, '1')).toEqual({ status: 'handled', intent: 'clarify' });
+    expect(await reminders()).toEqual([]);
+    expect(await say('17:00', '2')).toEqual({ status: 'handled', intent: 'create_reminder' });
+    expect(await reminders()).toEqual(['2026-10-16 17:00:00']);
+    await app.tick();
+    expect(app.messaging.sent.at(-1)?.text).toMatch(/2026-10-16 at 17:00/);
+    expect(await say('17:00', '3')).toEqual({ status: 'handled', intent: 'unknown' }); // consumed: a stray time is not a second reminder
+    expect(await reminders()).toHaveLength(1);
+  });
+  it('Uzbek: "Ertaga uchrashuvni eslat" -> asks -> "17:00"', async () => {
+    expect(await say('Ertaga uchrashuvni eslat', '1')).toEqual({ status: 'handled', intent: 'clarify' });
+    expect(await say('17:00', '2')).toEqual({ status: 'handled', intent: 'create_reminder' });
+    expect(await reminders()).toEqual(['2026-10-16 17:00:00']);
+  });
+  it('an ambiguous hour is resolved by "evening"; "5 pm" also works', async () => {
+    await say('remind me tomorrow at 5 to pick up the parcel', '1');
+    expect(await say('evening', '2')).toEqual({ status: 'handled', intent: 'create_reminder' });
+    expect(await reminders()).toEqual(['2026-10-16 17:00:00']);
+    await say('remind me tomorrow to call Javlon', '3');
+    expect(await say('5 pm', '4')).toEqual({ status: 'handled', intent: 'create_reminder' });
+    expect(await reminders()).toHaveLength(2);
+  });
+  it('an expired draft and an unrelated reply cause no mutation', async () => {
+    await say('remind me tomorrow to call Javlon', '1');
+    expect(await say("what's the weather like", '2')).toEqual({ status: 'handled', intent: 'unknown' }); // unrelated: nothing happens, draft still waits
+    clock.advanceMs(11 * 60_000);
+    expect(await say('17:00', '3')).toEqual({ status: 'handled', intent: 'unknown' }); // expired
+    expect(await reminders()).toEqual([]);
+  });
+  it('a new explicit command replaces the draft, and an old stray time never revives it', async () => {
+    await say('remind me tomorrow to call Javlon', '1');
+    await say('add task buy tickets', '2');
+    expect(await say('17:00', '3')).toEqual({ status: 'handled', intent: 'unknown' });
+    expect(await reminders()).toEqual([]);
+  });
+  it('keeps one draft per owner (a newer question replaces the older) and stores it sealed', async () => {
+    await say(`remind me tomorrow to first ${PHRASE}`, '1');
+    await say('remind me tomorrow to second thing', '2');
+    expect((await t.db.query('SELECT count(*)::int n FROM conversation_drafts')).rows[0].n).toBe(1);
+    const raw = (await t.db.query<{ r: string }>('SELECT x::text AS r FROM conversation_drafts x')).rows[0]!.r;
+    expect(raw).not.toContain('second thing');
+    expect(raw).not.toContain(PHRASE);
+    await say('09:30', '3');
+    expect(await reminders()).toEqual(['2026-10-16 09:30:00']);
+    await app.tick();
+    expect(app.messaging.sent.map((m) => m.text).join('\n')).toContain('second thing');
+  });
+});
+
+describe('F15 — restart recovery pages back to a durable watermark and retries without a manual restart', () => {
+  const DAY = 86_400_000;
+  type Msg = { id: number; out: boolean; dateMs: number; text: string };
+  const history = (n: number, now: number, opts: { oldIds?: number[] } = {}): Msg[] => {
+    // ids 1..2n: odd = incoming owner command, even = our own outbound reply interleaved in the history
+    const msgs: Msg[] = [];
+    for (let id = 1; id <= 2 * n; id++)
+      msgs.push({ id, out: id % 2 === 0, dateMs: opts.oldIds?.includes(id) ? now - 3 * DAY : now - (2 * n - id) * 1000, text: `add task recovered-${id}` });
+    return msgs;
+  };
+  const source = (msgs: Msg[]) => {
+    const calls: number[] = [];
+    return {
+      calls,
+      fetchPage: async (offsetId: number, limit: number) => {
+        calls.push(offsetId);
+        return msgs
+          .filter((m) => offsetId === 0 || m.id < offsetId)
+          .sort((a, b) => b.id - a.id)
+          .slice(0, limit);
+      },
+    };
+  };
+  const mk = async (failAtId?: number) => {
+    const { RecoveryRunner, DbWatermarkStore } = await import('../../apps/assistant/src/infrastructure/telegram/recovery.js');
+    let failOnce = failAtId;
+    const handled: number[] = [];
+    const runner = (src: ReturnType<typeof source>, extra: object = {}) =>
+      new RecoveryRunner({
+        accountId: o.accountId,
+        chatId: o.telegramUserId,
+        source: src,
+        store: new DbWatermarkStore(app.db, () => clock.now()),
+        clock: () => clock.now(),
+        windowMs: DAY,
+        pageSize: 100,
+        handle: async (m: Msg) => {
+          if (failOnce === m.id) {
+            failOnce = undefined;
+            throw new Error('transient intake failure');
+          }
+          handled.push(m.id);
+          await app.intake.handle({
+            accountId: o.accountId,
+            updateKey: `msg:${o.telegramUserId}:${m.id}`,
+            providerMessageId: String(m.id),
+            senderTelegramId: o.telegramUserId,
+            chat: { type: 'private', id: o.telegramUserId },
+            receivedAt: new Date(m.dateMs),
+            text: m.text,
+          });
+        },
+        ...extra,
+      });
+    return { runner, handled };
+  };
+  const taskCount = async () => (await t.db.query('SELECT count(*)::int n FROM tasks')).rows[0].n as number;
+
+  it('recovers 120 owner messages from 240 history entries (outbound interleaved) across several pages, each exactly once', async () => {
+    const now = clock.now().getTime();
+    const src = source(history(120, now));
+    const { runner } = await mk();
+    const r = await runner(src).runOnce();
+    expect(r).toMatchObject({ complete: true });
+    expect(await taskCount()).toBe(120);
+    expect(src.calls.length).toBeGreaterThanOrEqual(3); // 240 entries / 100 per page
+    // A second pass finds the watermark and does no new work.
+    const src2 = source(history(120, now));
+    const r2 = await runner(src2).runOnce();
+    expect(r2).toMatchObject({ complete: true });
+    expect(await taskCount()).toBe(120);
+    expect(src2.calls).toEqual([0]); // one page: the first message is already behind the watermark
+  });
+  it('never executes instructions older than the age window, but still recovers newer ones', async () => {
+    const now = clock.now().getTime();
+    const src = source(history(10, now, { oldIds: [1, 3, 5] }));
+    const { runner } = await mk();
+    await runner(src).runOnce();
+    expect(await taskCount()).toBe(7);
+  });
+  it('a transient failure marks recovery incomplete, keeps the watermark, and the NEXT pass resumes without a restart or duplicates', async () => {
+    const now = clock.now().getTime();
+    const msgs = history(60, now);
+    const { runner } = await mk(57); // odd ids are incoming: 57 fails once
+    const rr = runner(source(msgs));
+    const first = await rr.runOnce();
+    expect(first.complete).toBe(false);
+    expect(rr.status().recovery).toBe('incomplete');
+    expect((await t.db.query('SELECT last_message_id::int AS w FROM recovery_watermarks')).rows[0].w).toBe(56); // everything below 57 is done
+    const tasksAfterFailure = await taskCount();
+    expect(tasksAfterFailure).toBeLessThan(30);
+    const second = await rr.runOnce();
+    expect(second.complete).toBe(true);
+    expect(rr.status().recovery).toBe('complete');
+    expect(await taskCount()).toBe(60);
+    expect((await t.db.query('SELECT last_message_id::int AS w FROM recovery_watermarks')).rows[0].w).toBe(120);
+  });
+  it('reports degraded (not silently complete) when the page cap is hit before reaching the watermark', async () => {
+    const now = clock.now().getTime();
+    const { runner } = await mk();
+    const rr = runner(source(history(300, now)), { maxPages: 2 });
+    const r = await rr.runOnce();
+    expect(r.complete).toBe(false);
+    expect(r.reason).toBe('page_cap');
+    expect(rr.status().recovery).toBe('incomplete');
+  });
+  it('the readiness endpoint exposes the recovery status when the messaging adapter provides one', async () => {
+    const srv3 = await buildServer({
+      app,
+      log: createLogger('silent'),
+      adminTokens: [TOKEN],
+      runtime: {
+        messagingAdapter: 'telegram',
+        interpreterAdapter: 'rules',
+        callAdapter: 'disabled',
+        callsEnabled: false,
+        evidencePath: null,
+        buildFingerprint: 'x'.repeat(64),
+        transcription: false,
+        messagingStatus: () => ({ recovery: 'incomplete', lastError: 'transient intake failure' }),
+      },
+    });
+    const body = (await srv3.inject({ method: 'GET', url: '/health/ready', headers: { authorization: `Bearer ${TOKEN}` } })).json().data;
+    expect(body.messaging).toEqual({ recovery: 'incomplete', lastError: 'transient intake failure' });
+    await srv3.close();
+  });
+});

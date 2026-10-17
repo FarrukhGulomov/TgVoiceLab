@@ -10,6 +10,7 @@ const TARGETS = [
   { table: 'memories', col: 'value_enc', label: 'memories.value' },
   { table: 'call_reports', col: 'narrative_enc', label: 'call_reports.narrative', id: 'call_id' },
   { table: 'call_requests', col: 'plan_enc', label: 'call_requests.plan' },
+  { table: 'conversation_drafts', col: 'draft_enc', label: 'conversation_drafts.draft', id: 'owner_id' },
 ] as const;
 
 /** Ciphertext locations that are not a plain text column. */

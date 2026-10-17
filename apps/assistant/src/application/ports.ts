@@ -1,5 +1,5 @@
 /** Typed ports. Real adapters live in infrastructure/; fakes live in testing/ and are never selectable silently in production. */
-import type { Intent, InterpretContext } from './intent.js';
+import type { ClarificationDraft, Intent, InterpretContext } from './intent.js';
 
 export interface OutboundMessage {
   toTelegramUserId: string;
@@ -14,6 +14,8 @@ export interface MessagingPort {
 
 export interface TextInterpreterPort {
   interpret(text: string, ctx: InterpretContext): Promise<Intent>;
+  /** Try to finish a pending clarification with the owner's next message. `null` = this message does not answer it. */
+  completeDraft?(text: string, draft: ClarificationDraft, ctx: InterpretContext): Promise<Intent | null>;
 }
 
 export interface Transcript {

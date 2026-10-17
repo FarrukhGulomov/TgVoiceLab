@@ -1,4 +1,5 @@
-import type { Intent, InterpretContext, TaskRef } from '../../application/intent.js';
+import { DateTime } from 'luxon';
+import type { ClarificationDraft, Intent, InterpretContext, ReminderDraft, TaskRef } from '../../application/intent.js';
 import type { TextInterpreterPort } from '../../application/ports.js';
 import { t } from './i18n.js';
 import { extractWhen, normalizeApostrophes, type ParsedWhen } from './nl-datetime.js';
@@ -50,12 +51,22 @@ function findRef(s: string, noun: 'task' | 'reminder' | 'any'): TaskRef | null {
 const toDue = (w: ParsedWhen, taskDefaultTime = false) =>
   w.date ? { date: w.date, time: w.time ?? (taskDefaultTime ? DEFAULT_TASK_DUE_TIME : '') } : undefined;
 
-function clarifyWhen(w: ParsedWhen, ctx: InterpretContext): Intent | null {
+function clarifyWhen(w: ParsedWhen, ctx: InterpretContext, draftBase?: Omit<ReminderDraft, 'missing' | 'ambiguousHour'>): Intent | null {
   if (w.invalid) return { kind: 'clarify', question: t(ctx.locale, 'unknown') };
   if (w.ambiguousHour !== undefined)
-    return { kind: 'clarify', question: t(ctx.locale, 'ambiguous_time', { hour: w.ambiguousHour, hour24: w.ambiguousHour + 12 }) };
+    return {
+      kind: 'clarify',
+      question: t(ctx.locale, 'ambiguous_time', { hour: w.ambiguousHour, hour24: w.ambiguousHour + 12 }),
+      ...(draftBase ? { draft: { ...draftBase, missing: 'ambiguous_time' as const, ambiguousHour: w.ambiguousHour } } : {}),
+    };
   return null;
 }
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const EVENING = /^(?:in the )?(?:evening|pm|tonight|kechqurun|kechki|kechasi|вечером|вечер)$/;
+const MORNING = /^(?:in the )?(?:morning|am|ertalab|ertalabgi|утром|утра)$/;
+const TIME_ONLY = /^(?:at\s+|soat\s+|в\s+)?\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?(?:\s*(?:da|dan|ga))?$/;
+const today = (ctx: InterpretContext) => DateTime.fromJSDate(ctx.receivedAt, { zone: ctx.timezone }).toFormat('yyyy-LL-dd');
 
 const NEGATION_EN =
   /\b(?:not|no(?!\.?\s*\d)|never|don'?t|doesn'?t|didn'?t|isn'?t|aren'?t|wasn'?t|haven'?t|hasn'?t|won'?t|can'?t|cannot|without|ignore|mistake)\b/;
@@ -83,6 +94,27 @@ const clean = (s: string) =>
  * guesses an action. Russian is not covered by the rules adapter (returns unknown); use an LLM adapter for broader input.
  */
 export class RulesInterpreter implements TextInterpreterPort {
+  /**
+   * Finish a pending reminder with the owner's next message. Only a short, time-shaped reply counts ("17:00", "5 pm", "evening");
+   * anything else returns null so an unrelated message can never silently complete (or be mistaken for) the answer.
+   */
+  async completeDraft(raw: string, draft: ClarificationDraft, ctx: InterpretContext): Promise<Intent | null> {
+    const low = normalizeApostrophes(raw).trim().toLowerCase();
+    if (!low || low.length > 40) return null;
+    let time: string | undefined;
+    if (draft.missing === 'ambiguous_time' && draft.ambiguousHour !== undefined) {
+      const h = draft.ambiguousHour;
+      if (EVENING.test(low) && h + 12 <= 23) time = `${pad2(h + 12)}:00`;
+      else if (MORNING.test(low)) time = `${pad2(h)}:00`;
+    }
+    if (!time && TIME_ONLY.test(low)) {
+      const w = extractWhen(low, ctx);
+      if (!w.invalid && w.ambiguousHour === undefined && w.time) time = w.time;
+    }
+    if (!time) return null;
+    return { kind: 'create_reminder', title: draft.title, at: { date: draft.date, time }, ...(draft.recurrence ? { recurrence: draft.recurrence } : {}) };
+  }
+
   async interpret(raw: string, ctx: InterpretContext): Promise<Intent> {
     const text = normalizeApostrophes(raw).trim();
     const low = text.toLowerCase();
@@ -140,8 +172,6 @@ export class RulesInterpreter implements TextInterpreterPort {
     // create reminder
     if (/\bremind\b|\breminder\b|\beslat/.test(low)) {
       const w = extractWhen(text, ctx);
-      const amb = clarifyWhen(w, ctx);
-      if (amb) return amb;
       let title = w.rest;
       title = title
         .replace(/\b(?:please\s+)?remind\s+me\b/i, ' ')
@@ -149,9 +179,19 @@ export class RulesInterpreter implements TextInterpreterPort {
         .replace(/(\S+?)ni\s+eslat\w*(?:ib\s+qo'y)?\w*/i, '$1')
         .replace(/\beslat\w*(?:ib\s+qo'y)?\w*/i, ' ');
       title = clean(title);
+      const base = title
+        ? { kind: 'create_reminder' as const, title, date: w.date ?? today(ctx), ...(w.recurrence ? { recurrence: w.recurrence } : {}) }
+        : undefined;
+      const amb = clarifyWhen(w, ctx, base);
+      if (amb) return amb;
       if (!title) return { kind: 'clarify', question: t(ctx.locale, 'ask_reminder_text') };
       if (!w.date) return { kind: 'clarify', question: t(ctx.locale, 'unknown') };
-      if (!w.time) return { kind: 'clarify', question: t(ctx.locale, 'ask_time', { date: w.date }) };
+      if (!w.time)
+        return {
+          kind: 'clarify',
+          question: t(ctx.locale, 'ask_time', { date: w.date }),
+          draft: { kind: 'create_reminder', title, date: w.date, missing: 'time', ...(w.recurrence ? { recurrence: w.recurrence } : {}) },
+        };
       return { kind: 'create_reminder', title, at: { date: w.date, time: w.time }, ...(w.recurrence ? { recurrence: w.recurrence } : {}) };
     }
 

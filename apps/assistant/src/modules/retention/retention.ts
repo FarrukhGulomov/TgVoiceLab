@@ -17,6 +17,7 @@ export interface RetentionResult {
   idempotency: number;
   jobs: number;
   outbox: number;
+  drafts: number;
 }
 
 /**
@@ -50,6 +51,7 @@ export async function runRetention(db: Db, now: Date): Promise<RetentionResult> 
       jobs:
         (await c.query(`DELETE FROM jobs WHERE status IN ('done','cancelled') AND updated_at < $1`, [new Date(now.getTime() - RETENTION.doneJobsMs)]))
           .rowCount ?? 0,
+      drafts: (await c.query('DELETE FROM conversation_drafts WHERE expires_at < $1', [now])).rowCount ?? 0,
       outbox:
         (await c.query(`DELETE FROM outbox WHERE delivery_state='delivered' AND delivered_at < $1`, [new Date(now.getTime() - RETENTION.deliveredOutboxMs)]))
           .rowCount ?? 0,

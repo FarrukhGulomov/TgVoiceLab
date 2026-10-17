@@ -2,6 +2,7 @@ import { readdirSync } from 'node:fs';
 import { DateTime } from 'luxon';
 import { loadConfig } from './bootstrap/config.js';
 import { buildContainer } from './bootstrap/container.js';
+import { DbWatermarkStore } from './infrastructure/telegram/recovery.js';
 import { verifyConfiguredOwner } from './bootstrap/owner-check.js';
 import { drainWorker, startLane } from './bootstrap/worker.js';
 import { leastPrivilegeViolations } from './infrastructure/db/role-check.js';
@@ -143,6 +144,7 @@ if (gateway) {
     accountId: acct.id,
     expectedAssistantId: acct.assistant_telegram_user_id,
     ownerTelegramId: acct.owner_telegram,
+    watermarks: new DbWatermarkStore(db, () => new Date()),
     markActive: async () => {
       await db.query(`UPDATE telegram_accounts SET status='active' WHERE id=$1 AND status='unprovisioned'`, [acct.id]);
     },
@@ -170,6 +172,8 @@ const server = await buildServer({
     evidencePath: cfg.CALL_FEASIBILITY_EVIDENCE_PATH ?? null,
     buildFingerprint: cfg.BUILD_FINGERPRINT,
     transcription: false,
+    callsEnabled: cfg.CALLS_ENABLED,
+    messagingStatus: () => (gateway ? gateway.status() : { adapter: cfg.MESSAGING_ADAPTER }),
   },
 });
 await server.listen({ host: cfg.HTTP_HOST, port: cfg.HTTP_PORT });

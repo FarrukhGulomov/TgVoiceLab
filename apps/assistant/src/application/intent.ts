@@ -16,6 +16,22 @@ export interface RecurrenceIntent {
   byWeekday?: number[];
 }
 
+/**
+ * What the assistant is waiting to learn to finish an action it already understood part of (audit F16). One bounded, expiring draft
+ * per owner; it carries only the structured missing field, and the next compatible reply completes it. Nothing is executed
+ * until the completed action is shown back with its exact date and time.
+ */
+export interface ReminderDraft {
+  kind: 'create_reminder';
+  title: string;
+  date: string; // YYYY-MM-DD, already resolved
+  recurrence?: RecurrenceIntent;
+  missing: 'time' | 'ambiguous_time';
+  /** For `ambiguous_time`: the hour the owner wrote (1-12), to be resolved to morning or evening. */
+  ambiguousHour?: number;
+}
+export type ClarificationDraft = ReminderDraft;
+
 export type Intent =
   | { kind: 'create_task'; title: string; due?: LocalDateTime }
   | { kind: 'list_tasks' }
@@ -27,7 +43,7 @@ export type Intent =
   | { kind: 'list_reminders' }
   | { kind: 'stop_calling' }
   | { kind: 'help' }
-  | { kind: 'clarify'; question: string }
+  | { kind: 'clarify'; question: string; draft?: ClarificationDraft }
   | { kind: 'unknown' };
 
 export interface InterpretContext {
