@@ -14,7 +14,8 @@
     "dev:secrets": "tsx src/cli/dev-secrets.ts",
     "db:replay-tombstones": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/cli/restore-replay.ts",
     "keys:rotate": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/cli/rotate-keys.ts",
-    "build:contracts": "pnpm --filter @tgvl/contracts run build"
+    "build:contracts": "pnpm --filter @tgvl/contracts run build",
+    "live:ai-call": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/tools/ai-call-test.ts"
   },
   "dependencies": {
     "@tgvl/contracts": "workspace:*",
@@ -25,10 +26,12 @@
     "pg": "8.23.1",
     "pino": "10.4.0",
     "telegram": "2.26.22",
+    "ws": "8.18.3",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/luxon": "3.7.6",
-    "@types/pg": "8.23.1"
+    "@types/pg": "8.23.1",
+    "@types/ws": "8.18.1"
   }
 }

@@ -180,6 +180,20 @@ Recorded from the operator's runs on 2026-10-16. Raw evidence files stay local (
 
 Open: `LIVE_TEST_REPEAT=10` (G0-D), busy/no-answer/privacy-restricted/connectivity-loss (G0-E), and a target-host canary (G0-F). The workaround depends on undocumented behaviour of a third-party native library; the adapter must pin the exact version and keep a regression test.
 
+## 9b. Operator-run AI voice test (`pnpm live:ai-call`)
+
+The assistant rings the owner's own phone through the **production** `NtgcallsCallAdapter`, and an OpenAI Realtime session talks on the call (caller audio -> 24 kHz -> model; model audio -> 48 kHz -> exact 10 ms frames; barge-in drops queued audio and cancels the response). It is a test tool: it bypasses the orchestrator/policy/budget on purpose, is guarded like the other live spikes (opt-in, <= 2 h window, hard duration cap) and never enables calling in the service. It spends OpenAI credit while the call lasts.
+
+**Not verified:** the Realtime wire protocol was written from memory (the OpenAI docs were unreachable from the build sandbox). The model name is never defaulted (`OPENAI_REALTIME_MODEL`), two dialects exist (`OPENAI_REALTIME_DIALECT=ga|beta`), and every server `error` event is printed verbatim so a wrong field name shows up as a readable message on the first run. The production adapter has also not run on a real call before this test.
+
+```bash
+export LIVE_TEST_OPT_IN=yes LIVE_TEST_RECIPIENT_ID=<your numeric id> LIVE_TEST_RECIPIENT_CONSENT=yes
+export LIVE_TEST_WINDOW_START=$(date -u -v-1M +%Y-%m-%dT%H:%M:%SZ) LIVE_TEST_WINDOW_END=$(date -u -v+60M +%Y-%m-%dT%H:%M:%SZ)
+export LIVE_TEST_MAX_SECONDS=90
+# OPENAI_API_KEY and OPENAI_REALTIME_MODEL must be in .env (OPENAI_VOICE optional)
+pnpm live:ai-call
+```
+
 ## 10. Recommendation
 
 Proceed with ntgcalls + GramJS as the **single primary candidate**, behind the typed adapter, and spend the three-day timebox on live gates G0-A…G0-C first.
