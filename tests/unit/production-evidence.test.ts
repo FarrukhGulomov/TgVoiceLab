@@ -25,6 +25,7 @@ const run = (over: Partial<RunRecord> = {}): RunRecord => ({
   operatorConfirmedAction: 'skipped',
   dialRejected: null,
   bargeIns: 0,
+  endedBy: 'adapter',
   hostIsTarget: false,
   ...over,
 });
@@ -191,6 +192,15 @@ describe('contact-calling gates G0-D / G0-E / G0-F (test account standing in for
     expect(all(assemble(eRuns().map((r) => ({ ...r, operatorConfirmedAction: 'no' as const }))))['G0-E']).toBe('BLOCKED_EXTERNAL');
     expect(all(assemble(eRuns().map((r, i) => (i === 4 ? { ...r, endedReason: null } : r))))['G0-E']).toBe('BLOCKED_EXTERNAL'); // adapter never reported the end
     expect(all(assemble(eRuns().map((r, i) => (i === 2 ? { ...r, dialCount: 2 } : r))))['G0-E']).toBe('BLOCKED_EXTERNAL'); // redial
+  });
+
+  it("no_answer: a ring-timeout hang-up proven by the adapter counts (what production does); the tool's own fail-safe never does", () => {
+    const noAnswer = (endedBy: RunRecord['endedBy'], endedReason: string | null) => failing('no_answer', { endedBy, endedReason });
+    const others = eRuns().filter((r) => r.scenario !== 'no_answer');
+    expect(all(assemble([...others, noAnswer('ring_timeout', 'no_answer')]))['G0-E']).toBe('PASS');
+    expect(all(assemble([...others, noAnswer('adapter', 'no_answer')]))['G0-E']).toBe('PASS');
+    expect(all(assemble([...others, noAnswer('tool_failsafe', 'no_answer')]))['G0-E']).toBe('BLOCKED_EXTERNAL');
+    expect(all(assemble([...others, noAnswer('tool_failsafe', null)]))['G0-E']).toBe('BLOCKED_EXTERNAL');
   });
 
   it('G0-F needs a clean two-way run on the target host AND the operator attestation for this build', () => {

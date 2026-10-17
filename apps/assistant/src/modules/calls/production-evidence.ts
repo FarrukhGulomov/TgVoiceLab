@@ -37,6 +37,8 @@ export const RunRecordSchema = z.object({
   operatorConfirmedAction: z.enum(['yes', 'no', 'skipped']).default('skipped'),
   /** The dial itself was refused with this reason (e.g. privacy_restricted, busy). */
   dialRejected: z.string().nullable().default(null),
+  /** Who ended the call. `tool_failsafe` (the operator tool gave up waiting) never satisfies a scenario. */
+  endedBy: z.enum(['adapter', 'ring_timeout', 'tool_failsafe']).default('adapter'),
   bargeIns: z.number().int().min(0).default(0),
   /** The run happened on the intended deployment host/container (operator-declared with LIVE_TEST_HOST_IS_TARGET=yes). */
   hostIsTarget: z.boolean().default(false),
@@ -103,7 +105,7 @@ const scenarioOk = (r: RunRecord, sc: (typeof E_SCENARIOS)[number]): boolean => 
     case 'busy':
       return !r.connected && (r.endedReason === 'busy' || r.dialRejected === 'busy');
     case 'no_answer':
-      return !r.connected && r.endedReason === 'no_answer';
+      return !r.connected && r.endedReason === 'no_answer' && r.endedBy !== 'tool_failsafe';
     case 'privacy':
       return !r.connected && r.dialRejected === 'privacy_restricted';
     case 'connectivity_loss':

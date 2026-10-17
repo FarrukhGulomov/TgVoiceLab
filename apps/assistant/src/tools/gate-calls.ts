@@ -99,10 +99,12 @@ const INSTRUCTION: Record<Scenario, string> = {
   short_batch: 'ANSWER the call. The tool hangs up by itself.',
   decline: 'REJECT (decline) the call when it rings.',
   busy: 'Be IN ANOTHER CALL (Telegram or phone) before continuing, then let this one ring.',
-  no_answer: 'Let it ring and do NOT touch the phone (it can take ~100 s).',
+  no_answer: 'Let it ring and do NOT touch the phone (the tool hangs up after 45 s, like the service does).',
   privacy: 'Telegram > Settings > Privacy > Calls = "Nobody" (or block the assistant) on the test account BEFORE continuing.',
   connectivity_loss: 'ANSWER the call; after ~15 s switch the test phone to AIRPLANE MODE and leave it so (up to 150 s).',
 };
+/** Production default is 30 s; the live run waits a little longer so a slow phone can still pick up. */
+const RING_TIMEOUT_MS = 45_000;
 const WAIT_MS: Record<Scenario, number> = {
   short_batch: 90_000,
   decline: 90_000,
@@ -119,6 +121,8 @@ interface Outcome {
   dialRejected: string | null;
   dialCount: number;
   error: string | null;
+  /** Who ended the call: the adapter on its own, the ring timeout (what the orchestrator does in production), or this tool's fail-safe (never counts). */
+  endedBy: 'adapter' | 'ring_timeout' | 'tool_failsafe';
 }
 
 async function oneCall(batch?: { id: string; index: number; size: number }): Promise<Outcome> {
@@ -140,7 +144,7 @@ async function oneCall(batch?: { id: string; index: number; size: number }): Pro
   };
   const started = Date.now();
   const t = () => `[+${((Date.now() - started) / 1000).toFixed(1)}s]`;
-  const out: Outcome = { connected: false, durationSeconds: 0, endedReason: null, dialRejected: null, dialCount: 1, error: null };
+  const out: Outcome = { connected: false, durationSeconds: 0, endedReason: null, dialRejected: null, dialCount: 1, error: null, endedBy: 'adapter' };
   let handle;
   try {
     handle = await adapter.dial(plan, new AbortController().signal);
@@ -157,10 +161,21 @@ async function oneCall(batch?: { id: string; index: number; size: number }): Pro
   const failSafe = setTimeout(
     () => {
       console.log(`${t()} no end reported within the scenario wait: hanging up from the tool (this run will NOT count as the adapter reporting the end)`);
+      out.endedBy = 'tool_failsafe';
       void handle.end('cancelled').catch(() => undefined);
     },
     WAIT_MS[scenario] + (scenario === 'short_batch' ? holdSeconds * 1000 : 60_000),
   );
+  // no_answer mirrors production: the orchestrator does not wait for Telegram's own timeout, it hangs up an unanswered ringing call after
+  // its ring timeout with reason no_answer. The adapter must then PROVE the end (an `ended` event); that proof is what is recorded.
+  let ringTimer: NodeJS.Timeout | undefined;
+  if (scenario === 'no_answer') {
+    ringTimer = setTimeout(() => {
+      out.endedBy = 'ring_timeout';
+      console.log(`${t()} ring timeout (${RING_TIMEOUT_MS / 1000}s): hanging up with no_answer, like the orchestrator does`);
+      void handle.end('no_answer').catch(() => undefined);
+    }, RING_TIMEOUT_MS);
+  }
   let forced = false;
   let ended: CallEvent | null = null;
   for await (const ev of handle.events) {
@@ -177,6 +192,7 @@ async function oneCall(batch?: { id: string; index: number; size: number }): Pro
     }
   }
   clearTimeout(failSafe);
+  if (ringTimer) clearTimeout(ringTimer);
   if (holdTimer) clearTimeout(holdTimer);
   forced = ended?.reason === 'cancelled';
   out.durationSeconds = connectedAt === null ? 0 : Math.round((Date.now() - connectedAt) / 1000);
@@ -204,6 +220,7 @@ function write(o: Outcome, extra: Partial<RunRecord>): string {
     operatorHeardAiClearly: 'skipped',
     scenario,
     dialCount: o.dialCount,
+    endedBy: o.endedBy,
     dialRejected: o.dialRejected,
     hostIsTarget: env.LIVE_TEST_HOST_IS_TARGET === 'yes',
     ...extra,
