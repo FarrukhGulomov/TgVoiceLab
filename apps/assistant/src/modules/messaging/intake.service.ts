@@ -83,6 +83,8 @@ export class IntakeService {
       contacts?: ContactService;
       /** Resolves @username / +phone to a numeric id (Telegram-backed). Absent in tests and when messaging is disabled. */
       peers?: PeerResolverPort;
+      /** Called with the failure (never the audio or its text) when a voice note could not be transcribed. */
+      onVoiceError?: (e: Error) => void;
       /** Present only when calling is enabled in this deployment; without it a call to a contact is refused with an honest message. */
       contactCalls?: ContactCallService;
     },
@@ -130,7 +132,8 @@ export class IntakeService {
             rejection = { key: 'voice_uncertain', vars: { text: tr.text.slice(0, 200) } };
             outcome = 'voice_uncertain';
           }
-        } catch {
+        } catch (e) {
+          this.d.onVoiceError?.(e as Error);
           rejection = { key: 'voice_failed' };
         }
       }

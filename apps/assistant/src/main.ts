@@ -186,6 +186,7 @@ if (cfg.GEMINI_API_KEY && cfg.GEMINI_TRANSCRIPTION_MODEL) {
 
 const app = buildContainer({
   ...(transcription ? { transcription } : {}),
+  onVoiceError: (e) => log.warn({ err: e.message }, 'voice note could not be transcribed'),
   ...(sessionRunner ? { sessionRunner } : {}),
   ...(gateway ? { peers: gateway } : {}),
   db,
