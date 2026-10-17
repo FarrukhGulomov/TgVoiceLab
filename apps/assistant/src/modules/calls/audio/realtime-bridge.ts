@@ -45,6 +45,7 @@ export class RealtimeCallBridge {
   #down: StreamingResampler;
   #assembler = new FrameAssembler(FRAME_BYTES);
   #outChain: Promise<void> = Promise.resolve();
+  #silenceTimer: NodeJS.Timeout | undefined;
   #epoch = 0; // bumped on barge-in: audio queued before it is never sent
   #playedFrames = 0; // 10 ms frames of the current response that were actually handed to the call
 
@@ -52,6 +53,7 @@ export class RealtimeCallBridge {
     private readonly handle: CallHandle,
     private readonly link: RealtimeLink,
     private readonly log: (line: string) => void = () => undefined,
+    private readonly silenceMs = 15_000,
   ) {
     this.#up = new StreamingResampler(CALL_RATE, link.inputRateHz);
     this.#down = new StreamingResampler(link.outputRateHz, CALL_RATE);
@@ -107,11 +109,22 @@ export class RealtimeCallBridge {
       }
     })().catch((e: unknown) => this.stats.errors.push(`incoming audio: ${String((e as Error)?.message ?? e)}`));
 
-    if (greeting) this.link.respond(greeting);
+    if (greeting) {
+      this.link.respond(greeting);
+      // A model that never speaks must be visible, not silent: no error event arrives for "nothing happened".
+      this.#silenceTimer = setTimeout(() => {
+        if (!this.#stopped && this.stats.modelAudioChunks === 0) {
+          const m = `the model produced no audio ${this.silenceMs / 1000} s after the greeting request`;
+          this.stats.errors.push(m);
+          this.log(`error: ${m}`);
+        }
+      }, this.silenceMs);
+    }
   }
 
   stop(): void {
     this.#stopped = true;
+    clearTimeout(this.#silenceTimer);
     this.link.close();
   }
 }

@@ -22,6 +22,10 @@ export interface GeminiLiveOptions {
   googleSearch?: boolean | undefined;
   /** BCP-47 language hint for the spoken output (e.g. `uz-UZ`). Not defaulted: support differs by model; a rejected value shows up as a server error. */
   languageCode?: string | undefined;
+  /** Diagnostics: one line per server message (structure only — never audio data, never the API key). */
+  debug?: ((line: string) => void) | undefined;
+  /** How long to wait for `setupComplete` before reporting that the setup was rejected or ignored. */
+  setupTimeoutMs?: number | undefined;
   /** How a plain-text turn (the greeting) is sent. `realtime` = realtimeInput.text (newer), `client_content` = clientContent turn (older). */
   textMode?: 'realtime' | 'client_content' | undefined;
   baseUrl?: string | undefined;
@@ -56,6 +60,21 @@ export function geminiSetup(o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'inst
   };
 }
 
+/** A one-line structural summary of a server message: keys and audio part counts only. */
+export function describe(m: ServerMessage): string {
+  const keys = Object.keys(m);
+  const sc = m.serverContent;
+  if (!sc) return `msg ${keys.join(',') || '(empty)'}${m.error ? ` error=${JSON.stringify(m.error).slice(0, 200)}` : ''}`;
+  const parts = sc.modelTurn?.parts ?? [];
+  const flags = [
+    sc.interrupted && 'interrupted',
+    sc.turnComplete && 'turnComplete',
+    sc.inputTranscription && 'inputTranscription',
+    sc.outputTranscription && 'outputTranscription',
+  ].filter(Boolean);
+  return `serverContent audioParts=${parts.filter((p) => p.inlineData).length}${flags.length ? ` ${flags.join(',')}` : ''}`;
+}
+
 interface ServerMessage {
   setupComplete?: unknown;
   serverContent?: {
@@ -84,15 +103,30 @@ export class GeminiLiveLink implements RealtimeLink {
   #errors: Array<(m: string) => void> = [];
   #speaking = false;
   readonly #textMode: 'realtime' | 'client_content';
+  readonly #debug: ((line: string) => void) | undefined;
+  #setupTimer: NodeJS.Timeout | undefined;
 
   constructor(o: GeminiLiveOptions) {
     this.#textMode = o.textMode ?? 'realtime';
+    this.#debug = o.debug;
     const url = `${o.baseUrl ?? DEFAULT_URL}?key=${encodeURIComponent(o.apiKey)}`;
     this.#ws = o.socketFactory ? o.socketFactory(url) : new WebSocket(url);
-    this.#ws.on('open', () => this.#ws.send(JSON.stringify(geminiSetup(o))));
+    this.#ws.on('open', () => {
+      this.#debug?.('socket open; setup sent');
+      this.#ws.send(JSON.stringify(geminiSetup(o)));
+      const ms = o.setupTimeoutMs ?? 8000;
+      this.#setupTimer = setTimeout(() => {
+        if (!this.#ready && !this.#closed)
+          this.#emitError(
+            `no setupComplete within ${ms / 1000} s: the setup was rejected or ignored (try without GEMINI_GOOGLE_SEARCH / GEMINI_LANGUAGE_CODE)`,
+          );
+      }, ms);
+    });
     this.#ws.on('message', (raw: WebSocket.RawData) => this.#onMessage(raw.toString()));
     this.#ws.on('error', (e: Error) => this.#emitError(`websocket: ${e.message.replace(o.apiKey, '***')}`));
     this.#ws.on('close', (code: number, reason: Buffer) => {
+      clearTimeout(this.#setupTimer);
+      this.#debug?.(`socket closed (${code})`);
       if (!this.#closed) this.#emitError(`websocket closed (${code}) ${reason.toString().replace(o.apiKey, '***').slice(0, 300)}`.trim());
     });
   }
@@ -119,7 +153,9 @@ export class GeminiLiveLink implements RealtimeLink {
     } catch {
       return;
     }
+    this.#debug?.(describe(m));
     if (m.setupComplete !== undefined) {
+      clearTimeout(this.#setupTimer);
       this.#ready = true;
       for (const q of this.#queue) this.#ws.send(q);
       this.#queue = [];
@@ -186,6 +222,7 @@ export class GeminiLiveLink implements RealtimeLink {
   }
   close(): void {
     this.#closed = true;
+    clearTimeout(this.#setupTimer);
     try {
       this.#ws.close();
     } catch {

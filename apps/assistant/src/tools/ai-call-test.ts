@@ -10,7 +10,7 @@
  *   LIVE_TEST_MAX_SECONDS (default 120, max 600)
  *   AI_VOICE_PROVIDER=openai (default) | gemini
  *   openai: OPENAI_API_KEY  OPENAI_REALTIME_MODEL  [OPENAI_VOICE]  [OPENAI_REALTIME_DIALECT=ga|beta]  [OPENAI_TRANSCRIPTION_MODEL]
- *   gemini: GEMINI_API_KEY  GEMINI_LIVE_MODEL  [GEMINI_VOICE]  [GEMINI_TEXT_MODE=realtime|client_content]  [GEMINI_GOOGLE_SEARCH=on]  [GEMINI_LANGUAGE_CODE=uz-UZ]
+ *   gemini: GEMINI_API_KEY  GEMINI_LIVE_MODEL  [GEMINI_VOICE]  [GEMINI_TEXT_MODE=realtime|client_content]  [GEMINI_GOOGLE_SEARCH=on]  [GEMINI_DEBUG=on]  [GEMINI_LANGUAGE_CODE=uz-UZ]
  */
 import { randomUUID } from 'node:crypto';
 import { Api, TelegramClient } from 'telegram';
@@ -120,6 +120,7 @@ const link =
         instructions: INSTRUCTIONS,
         textMode: env.GEMINI_TEXT_MODE === 'client_content' ? 'client_content' : 'realtime',
         googleSearch: env.GEMINI_GOOGLE_SEARCH === 'on',
+        debug: env.GEMINI_DEBUG === 'on' ? (line) => console.log(`${t()} gemini: ${line}`) : undefined,
         languageCode: env.GEMINI_LANGUAGE_CODE || undefined,
       })
     : new OpenAiRealtimeLink({

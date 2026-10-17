@@ -428,3 +428,60 @@ describe('GeminiLiveLink', () => {
     expect(errs).toEqual([]);
   });
 });
+
+describe('silent-model diagnostics', () => {
+  it('RealtimeCallBridge reports a model that never speaks after the greeting request', async () => {
+    const h = fakeHandle();
+    const link = new FakeLink();
+    const lines: string[] = [];
+    const b = new RealtimeCallBridge(h.handle, link, (l) => lines.push(l), 30);
+    b.start('hi');
+    await new Promise((r) => setTimeout(r, 60));
+    expect(b.stats.errors).toEqual(['the model produced no audio 0.03 s after the greeting request']);
+    b.stop();
+    h.finish();
+  });
+  it('...but not when audio did arrive, and stop() cancels the watchdog', async () => {
+    const h = fakeHandle();
+    const link = new FakeLink();
+    const b = new RealtimeCallBridge(h.handle, link, () => undefined, 30);
+    b.start('hi');
+    link.audio!(tone(2400));
+    await new Promise((r) => setTimeout(r, 60));
+    expect(b.stats.errors).toEqual([]);
+    const b2 = new RealtimeCallBridge(fakeHandle().handle, new FakeLink(), () => undefined, 30);
+    b2.start('hi');
+    b2.stop();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(b2.stats.errors).toEqual([]);
+    b.stop();
+    h.finish();
+  });
+  it('GeminiLiveLink reports a setup that never completes, and describes messages without leaking data', async () => {
+    const sock = new FakeSocket();
+    const lines: string[] = [];
+    const link = new GeminiLiveLink({
+      apiKey: 'K',
+      model: 'm',
+      instructions: 'i',
+      setupTimeoutMs: 20,
+      debug: (l) => lines.push(l),
+      socketFactory: () => sock as never,
+    });
+    const errs: string[] = [];
+    link.onError((m) => errs.push(m));
+    sock.emit('open');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toMatch(/no setupComplete within 0\.02 s/);
+    sock.emit(
+      'message',
+      Buffer.from(
+        JSON.stringify({ serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=24000', data: 'AQI=' } }] }, turnComplete: true } }),
+      ),
+    );
+    expect(lines).toContain('serverContent audioParts=1 turnComplete');
+    expect(lines.join('\n')).not.toContain('AQI=');
+    link.close();
+  });
+});
