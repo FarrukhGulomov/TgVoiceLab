@@ -18,6 +18,10 @@ export interface GeminiLiveOptions {
   model: string;
   voice?: string | undefined;
   instructions: string;
+  /** Let the model use Google Search for facts it does not know (tool `googleSearch`). Off unless configured. */
+  googleSearch?: boolean | undefined;
+  /** BCP-47 language hint for the spoken output (e.g. `uz-UZ`). Not defaulted: support differs by model; a rejected value shows up as a server error. */
+  languageCode?: string | undefined;
   /** How a plain-text turn (the greeting) is sent. `realtime` = realtimeInput.text (newer), `client_content` = clientContent turn (older). */
   textMode?: 'realtime' | 'client_content' | undefined;
   baseUrl?: string | undefined;
@@ -29,14 +33,22 @@ export const GEMINI_INPUT_RATE = 16_000;
 export const GEMINI_OUTPUT_RATE = 24_000;
 const DEFAULT_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
-export function geminiSetup(o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'instructions'>): Record<string, unknown> {
+export function geminiSetup(o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'instructions' | 'googleSearch' | 'languageCode'>): Record<string, unknown> {
   return {
     setup: {
       model: o.model.startsWith('models/') ? o.model : `models/${o.model}`,
       generationConfig: {
         responseModalities: ['AUDIO'],
-        ...(o.voice ? { speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: o.voice } } } } : {}),
+        ...(o.voice || o.languageCode
+          ? {
+              speechConfig: {
+                ...(o.voice ? { voiceConfig: { prebuiltVoiceConfig: { voiceName: o.voice } } } : {}),
+                ...(o.languageCode ? { languageCode: o.languageCode } : {}),
+              },
+            }
+          : {}),
       },
+      ...(o.googleSearch ? { tools: [{ googleSearch: {} }] } : {}),
       systemInstruction: { parts: [{ text: o.instructions }] },
       inputAudioTranscription: {},
       outputAudioTranscription: {},

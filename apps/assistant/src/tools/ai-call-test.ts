@@ -10,7 +10,7 @@
  *   LIVE_TEST_MAX_SECONDS (default 120, max 600)
  *   AI_VOICE_PROVIDER=openai (default) | gemini
  *   openai: OPENAI_API_KEY  OPENAI_REALTIME_MODEL  [OPENAI_VOICE]  [OPENAI_REALTIME_DIALECT=ga|beta]  [OPENAI_TRANSCRIPTION_MODEL]
- *   gemini: GEMINI_API_KEY  GEMINI_LIVE_MODEL  [GEMINI_VOICE]  [GEMINI_TEXT_MODE=realtime|client_content]
+ *   gemini: GEMINI_API_KEY  GEMINI_LIVE_MODEL  [GEMINI_VOICE]  [GEMINI_TEXT_MODE=realtime|client_content]  [GEMINI_GOOGLE_SEARCH=on]  [GEMINI_LANGUAGE_CODE=uz-UZ]
  */
 import { randomUUID } from 'node:crypto';
 import { Api, TelegramClient } from 'telegram';
@@ -58,11 +58,11 @@ if (problems.length) {
 
 const INSTRUCTIONS = [
   "Sen egasining shaxsiy sun'iy intellekt yordamchisisan. Bu sinov qo'ng'irog'i.",
-  "Suhbatni o'zbek tilida olib bor, odam boshqa tilda gapirsa shu tilga o't.",
+  "SUHBAT TILI: O'ZBEK. Foydalanuvchi o'zbek tilida gapiradi, hatto eshitilishi boshqa tilga (turkcha, ruscha, nemischa) o'xshab ketsa ham. Har doim o'zbek tilida javob ber. Faqat foydalanuvchi aniq 'inglizcha gapir' yoki 'ruscha gapir' desagina o'sha tilga o't va so'ng yana o'zbekchaga qayt.",
   "Qo'ng'iroq ko'tarilganda sen birinchi gapirasan: o'zingni AI yordamchi deb tanishtirasan. Qo'ng'iroq allaqachon davom etayotgandek javob berma.",
   "Qisqa gapir: bir-ikki jumla. Odam gapira boshlasa, to'xta va tingla.",
-  "Sening soating, kalendaring, xotirang va vositalaring yo'q: hozirgi vaqtni BILMAYSAN va uni taxmin qilma; so'rashsa, bilmasligingni ayt.",
-  "Hech qanday vazifa, eslatma yoki qo'ng'iroqni eslab qolishga yoki qilishga va'da berma ('eslatib qo'yaman' dema): bu faqat ovoz sinovi va sen hech narsani saqlay olmaysan. So'rashsa, buni ochiq ayt.",
+  "Umumiy bilim savollariga (davlat poytaxti, tarix, fan, tarjima, oddiy maslahat) o'z bilimingdan to'g'ridan-to'g'ri qisqa javob ber; bunday savollarni rad etma. Aniq bilmasang, shuni ayt.",
+  "Faqat quyidagilarni BILMAYSAN va qila olmaysan: hozirgi vaqtni (uni taxmin qilma), egasining vazifa/eslatma/kontaktlarini, eslatma o'rnatish yoki qo'ng'iroq qilishni. Bularni so'rashsa, buni ochiq ayt va hech narsani eslab qolishga yoki bajarishga va'da berma ('eslatib qo'yaman' dema).",
 ].join(' ');
 // `response.create` instructions are a directive to the model, not text to read out: a bare greeting was answered as if it were a question.
 const GREETING =
@@ -119,6 +119,8 @@ const link =
         voice: env.GEMINI_VOICE,
         instructions: INSTRUCTIONS,
         textMode: env.GEMINI_TEXT_MODE === 'client_content' ? 'client_content' : 'realtime',
+        googleSearch: env.GEMINI_GOOGLE_SEARCH === 'on',
+        languageCode: env.GEMINI_LANGUAGE_CODE || undefined,
       })
     : new OpenAiRealtimeLink({
         apiKey,

@@ -356,6 +356,17 @@ describe('GeminiLiveLink', () => {
     expect(JSON.parse(sock.sent[2]!)).toEqual({ realtimeInput: { audio: { data: 'AQI=', mimeType: 'audio/pcm;rate=16000' } } });
   });
 
+  it('adds the Google Search tool and a language hint only when configured', () => {
+    const plain = geminiSetup({ model: 'm', instructions: 'i' }) as { setup: Record<string, unknown> };
+    expect(plain.setup).not.toHaveProperty('tools');
+    expect(plain.setup.generationConfig).not.toHaveProperty('speechConfig');
+    const full = geminiSetup({ model: 'm', instructions: 'i', voice: 'v', googleSearch: true, languageCode: 'uz-UZ' }) as {
+      setup: { tools: unknown; generationConfig: { speechConfig: unknown } };
+    };
+    expect(full.setup.tools).toEqual([{ googleSearch: {} }]);
+    expect(full.setup.generationConfig.speechConfig).toEqual({ voiceConfig: { prebuiltVoiceConfig: { voiceName: 'v' } }, languageCode: 'uz-UZ' });
+  });
+
   it('never double-prefixes the model and can send the greeting as a clientContent turn for older models', () => {
     expect((geminiSetup({ model: 'models/x', instructions: 'i' }) as { setup: { model: string } }).setup.model).toBe('models/x');
     const { link, sock, msg } = openGemini({ textMode: 'client_content' });
