@@ -14,7 +14,8 @@ const CATALOG = {
     contact_removed: 'Contact removed: {name}. Calls queued for them are cancelled.',
     contacts_empty: 'You have no contacts yet. Add one: "add contact Name 123456789" (their numeric Telegram id).',
     contacts_header: 'Your contacts:',
-    contact_unknown: 'I do not have a contact called "{name}". Add one: "add contact {name} 123456789".',
+    contact_unknown:
+      'I do not have a contact called "{name}". Add it first: share the contact card here, or write "add contact {name} @username" or "add contact {name} +998901234567".',
     contact_ambiguous: 'More than one contact matches "{name}": {names}. Please use the full name.',
     contact_how: 'To add a contact, share the contact card from Telegram here, or write: add contact Javlon @username (or +998901234567).',
     contact_not_found: 'I could not find a Telegram user for {who}. Check the @username / number, or share the contact card here.',
@@ -98,7 +99,8 @@ const CATALOG = {
     contact_removed: 'Kontakt o‘chirildi: {name}. Unga navbatdagi qo‘ng‘iroqlar bekor qilindi.',
     contacts_empty: 'Hali kontaktlaringiz yo‘q. Qo‘shish: «kontakt qo‘sh Ism 123456789» (Telegram raqamli ID si).',
     contacts_header: 'Kontaktlaringiz:',
-    contact_unknown: '«{name}» nomli kontakt topilmadi. Qo‘shish: «kontakt qo‘sh {name} 123456789».',
+    contact_unknown:
+      '«{name}» nomli kontakt topilmadi. Avval qo‘shing: kontakt kartasini shu yerga yuboring yoki yozing: «kontakt qo‘sh {name} @username» yoki «kontakt qo‘sh {name} +998901234567».',
     contact_ambiguous: '«{name}» ga bir nechta kontakt mos keladi: {names}. To‘liq ismini yozing.',
     contact_how: "Kontakt qo‘shish uchun Telegramdan kontakt kartasini shu yerga yuboring yoki yozing: kontakt qo'sh Javlon @username (yoki +998901234567).",
     contact_not_found: '{who} bo‘yicha Telegram foydalanuvchisi topilmadi. @username yoki raqamni tekshiring yoki kontakt kartasini yuboring.',
@@ -182,7 +184,8 @@ const CATALOG = {
     contact_removed: 'Контакт удалён: {name}. Запланированные звонки ему отменены.',
     contacts_empty: 'Контактов пока нет. Добавить: «add contact Имя 123456789» (числовой Telegram id).',
     contacts_header: 'Ваши контакты:',
-    contact_unknown: 'Контакт «{name}» не найден. Добавить: «add contact {name} 123456789».',
+    contact_unknown:
+      'Контакт «{name}» не найден. Сначала добавьте: пришлите карточку контакта или напишите «add contact {name} @username» / «add contact {name} +998901234567».',
     contact_ambiguous: 'Под «{name}» подходит несколько контактов: {names}. Напишите полное имя.',
     contact_how: 'Чтобы добавить контакт, перешлите сюда карточку контакта из Telegram или напишите: add contact Javlon @username (или +998901234567).',
     contact_not_found: 'Пользователь Telegram для {who} не найден. Проверьте @username / номер или отправьте карточку контакта.',

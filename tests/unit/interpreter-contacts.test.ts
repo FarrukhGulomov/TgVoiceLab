@@ -106,3 +106,12 @@ describe('adding a contact without a numeric id', () => {
     expect((await run("kontakt qo'sh Javlon")).kind).toBe('clarify');
   });
 });
+
+describe('call a contact and ask something that sounds like a reminder', () => {
+  it('"Ofiyatimga qungiroq qilib ehtiyot bo\'lishini eslat" rings the CONTACT, not the owner', async () => {
+    expect(await run("Ofiyatimga qungiroq qilib ehtiyot bo'lishini eslat")).toMatchObject({ kind: 'call_contact', contact: 'Ofiyatimga' });
+  });
+  it('"menga qungiroq qilib dorini eslat" still rings the owner', async () => {
+    expect(await run('soat 13:01 da menga qungiroq qilib dorini eslat')).toMatchObject({ kind: 'create_reminder', byCall: true });
+  });
+});

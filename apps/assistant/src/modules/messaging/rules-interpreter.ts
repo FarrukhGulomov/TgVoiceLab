@@ -170,7 +170,7 @@ export class RulesInterpreter implements TextInterpreterPort {
       const en = /^(?:please\s+)?call\s+(?!me\b|qil)(\S+)(?:\s+(.*))?$/i.exec(body);
       const NOT_NAMES = /^(?:men|me|sen|sizga?|menga|senga|unga|bizga|ularga|ertaga|bugun|indinga|kecha|hozir|kimga|nimaga|bunga|shunga)$/i;
       const who = uz ? body.split(/\s+/)[0]! : en ? en[1]! : '';
-      if ((uz || en) && !NOT_NAMES.test(who) && !/\beslat/.test(low)) {
+      if ((uz || en) && !NOT_NAMES.test(who)) {
         if (w0.invalid) return { kind: 'clarify', question: t(ctx.locale, 'unknown') };
         const amb = clarifyWhen(w0, ctx);
         if (amb) return amb;
