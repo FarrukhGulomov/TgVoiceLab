@@ -8,8 +8,7 @@ produced from this sandbox. Production calling is **disabled by construction** (
 
 **Since the previous update:** the 20 findings of the 2026-10-17 audit were confirmed and fixed offline (see [AUDIT_REMEDIATION.md](AUDIT_REMEDIATION.md)); the image
 now runs as real containers in `deploy/smoke.sh`; and a first **operator-run** call session against a second account of the owner is recorded in
-`docs/research/telegram-private-calls.md` §9a (setup, one 30 s call, clean outbound tone with 10 ms frames; inbound audio fix found locally and **not yet
-confirmed on a real call**). That session is **not** a gate pass and does not enable calling.
+`docs/research/telegram-private-calls.md` §9a (setup, 60 s and 300 s answered calls with clean two-way audio, and a decline run; see F-10…F-13). That session is **not** a gate pass and does not enable calling.
 
 Status vocabulary (spec §15): **implemented** · **automatically tested** · **live verified** · **blocked** · **not started**.
 Nothing in this repository is _live verified_ today. Fakes are labeled `FAKE`/`TEST-ONLY` and never count as live evidence.

@@ -173,7 +173,12 @@ Recorded from the operator's runs on 2026-10-16. Raw evidence files stay local (
 
 | F-9 | After the audit, `live-call.mjs` was refactored (placement tracking, call-bound updates, per-placement window check, validated integers, default 10 ms frames, `LIVE_TEST_EXPECTED_DISCARD_REASON` for G0-E). The guard logic is unit-tested offline; **the refactored script has not been re-run against Telegram**. | re-run needed |
 
-Open: a real-call confirmation of F-8, `LIVE_TEST_REPEAT=10` and 5-minute runs (G0-D), decline/busy (G0-E), and a target-host canary (G0-F). The workaround depends on undocumented behaviour of a third-party native library; the adapter must pin the exact version and keep a regression test.
+| F-10 | 2026-10-17, refactored `live-call.mjs` re-run (answer, 10 ms frames, 60 s): `G0-B` PASS, `G0-C` outbound PASS (operator: clean tone), inbound PASS (`receivedNonSilent` > 0 while the operator spoke). This **confirms F-8 on a real call**. An earlier run was scored FAIL only because the operator mistyped the tone answer (`clead`) and another because the operator hung up at 20 s (discard reason `Disconnect`, not `time_limit`); both records are kept as they were. | 1 PASS (operator-run, spike script) |
+| F-11 | Same script, 300 s: summary `G0-B` PASS, `G0-C` PASS, `G0-D-candidate` 1/1 at 300 s. | 1 PASS; **10-call repeat not run** |
+| F-12 | G0-E, `expect_decline`: operator rejected the ringing call twice. Telegram reported `PhoneCallDiscardReasonDisconnect` both times, with no redial. The first run declared `Busy` as expected reason and was scored FAIL (wrong expectation, record kept); the second, declaring `Disconnect`, PASS. | decline only; `Disconnect` is **not** a reliable "declined" signal |
+| F-13 | Every script run exits with `SIGABRT` after printing results (native teardown in ntgcalls). Results are not affected, but a production process must shut calls down cleanly. | open defect |
+
+Open: `LIVE_TEST_REPEAT=10` (G0-D), busy/no-answer/privacy-restricted/connectivity-loss (G0-E), and a target-host canary (G0-F). The workaround depends on undocumented behaviour of a third-party native library; the adapter must pin the exact version and keep a regression test.
 
 ## 10. Recommendation
 
