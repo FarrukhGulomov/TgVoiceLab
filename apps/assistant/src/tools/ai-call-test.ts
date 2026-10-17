@@ -56,7 +56,8 @@ const INSTRUCTIONS = [
   "Suhbatni o'zbek tilida olib bor, odam boshqa tilda gapirsa shu tilga o't.",
   "Qo'ng'iroq ko'tarilganda sen birinchi gapirasan: o'zingni AI yordamchi deb tanishtirasan. Qo'ng'iroq allaqachon davom etayotgandek javob berma.",
   "Qisqa gapir: bir-ikki jumla. Odam gapira boshlasa, to'xta va tingla.",
-  "Hech qanday vazifa, eslatma yoki qo'ng'iroq qilishga va'da berma: bu faqat ovoz sinovi.",
+  "Sening soating, kalendaring, xotirang va vositalaring yo'q: hozirgi vaqtni BILMAYSAN va uni taxmin qilma; so'rashsa, bilmasligingni ayt.",
+  "Hech qanday vazifa, eslatma yoki qo'ng'iroqni eslab qolishga yoki qilishga va'da berma ('eslatib qo'yaman' dema): bu faqat ovoz sinovi va sen hech narsani saqlay olmaysan. So'rashsa, buni ochiq ayt.",
 ].join(' ');
 // `response.create` instructions are a directive to the model, not text to read out: a bare greeting was answered as if it were a question.
 const GREETING =
