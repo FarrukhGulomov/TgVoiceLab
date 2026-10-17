@@ -210,6 +210,8 @@ export LIVE_TEST_MAX_SECONDS=90
 pnpm live:ai-call
 ```
 
+**Briefing mode** (`AI_CALL_MODE=briefing`): the AI reads the owner's real overdue/due-today tasks from `DATABASE_URL` and can `complete_task` / `move_task` (by call-local number) and `end_call`. The recipient must be the owner. The app supplies the current local time (the model never invents dates), tool results report only what was committed (a validation error or a version conflict is reported as such), and task text is passed as data, not instructions. This changes real tasks: use a test owner or accept the edits.
+
 ## 10. Recommendation
 
 Proceed with ntgcalls + GramJS as the **single primary candidate**, behind the typed adapter, and spend the three-day timebox on live gates G0-A…G0-C first.

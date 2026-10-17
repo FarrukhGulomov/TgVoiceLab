@@ -8,6 +8,7 @@
  *   LIVE_TEST_OPT_IN=yes  LIVE_TEST_RECIPIENT_ID=<numeric id>  LIVE_TEST_RECIPIENT_CONSENT=yes
  *   LIVE_TEST_WINDOW_START / LIVE_TEST_WINDOW_END  (ISO instants, at most 2 h apart)
  *   LIVE_TEST_MAX_SECONDS (default 120, max 600)
+ *   AI_CALL_MODE=chat (default) | briefing   (briefing: the AI reads the owner's real tasks from DATABASE_URL and can complete/move them; the recipient MUST be the owner)
  *   AI_VOICE_PROVIDER=openai (default) | gemini
  *   openai: OPENAI_API_KEY  OPENAI_REALTIME_MODEL  [OPENAI_VOICE]  [OPENAI_REALTIME_DIALECT=ga|beta]  [OPENAI_TRANSCRIPTION_MODEL]
  *   gemini: GEMINI_API_KEY  GEMINI_LIVE_MODEL  [GEMINI_VOICE]  [GEMINI_TEXT_MODE=realtime|client_content]  [GEMINI_GOOGLE_SEARCH=on]  [GEMINI_DEBUG=on]  [GEMINI_LANGUAGE_CODE=uz-UZ]
@@ -23,6 +24,13 @@ import { createNtgcallsMedia, ntgcallsProtocol } from '../infrastructure/telegra
 import { OpenAiRealtimeLink } from '../infrastructure/openai/realtime.js';
 import { GeminiLiveLink } from '../infrastructure/gemini/live.js';
 import { resolveSecret } from '../infrastructure/crypto/secrets.js';
+import { loadConfig } from '../bootstrap/config.js';
+import { Db } from '../infrastructure/db/db.js';
+import { DataCrypto } from '../infrastructure/crypto/data-crypto.js';
+import { Envelope, parseKeyRing } from '../infrastructure/crypto/envelope.js';
+import { TaskService } from '../modules/tasks/tasks.service.js';
+import { systemClock } from '../application/clock.js';
+import { OWNER_CALL_TOOL_DECLARATIONS, OwnerCallTools, buildOwnerCallInstructions } from '../modules/calls/conversation/owner-call-tools.js';
 
 const env = process.env;
 const problems: string[] = [];
@@ -56,7 +64,7 @@ if (problems.length) {
   process.exit(2);
 }
 
-const INSTRUCTIONS = [
+const CHAT_INSTRUCTIONS = [
   "Sen egasining shaxsiy sun'iy intellekt yordamchisisan. Bu sinov qo'ng'irog'i.",
   "SUHBAT TILI: O'ZBEK. Foydalanuvchi o'zbek tilida gapiradi, hatto eshitilishi boshqa tilga (turkcha, ruscha, nemischa) o'xshab ketsa ham. Har doim o'zbek tilida javob ber. Faqat foydalanuvchi aniq 'inglizcha gapir' yoki 'ruscha gapir' desagina o'sha tilga o't va so'ng yana o'zbekchaga qayt.",
   "Qo'ng'iroq ko'tarilganda sen birinchi gapirasan: o'zingni AI yordamchi deb tanishtirasan. Qo'ng'iroq allaqachon davom etayotgandek javob berma.",
@@ -66,7 +74,7 @@ const INSTRUCTIONS = [
   "Faqat quyidagilarni BILMAYSAN va qila olmaysan: hozirgi vaqtni (uni taxmin qilma), egasining vazifa/eslatma/kontaktlarini, eslatma o'rnatish yoki qo'ng'iroq qilishni. Bularni so'rashsa, buni ochiq ayt va hech narsani eslab qolishga yoki bajarishga va'da berma ('eslatib qo'yaman' dema).",
 ].join(' ');
 // `response.create` instructions are a directive to the model, not text to read out: a bare greeting was answered as if it were a question.
-const TOOLS: ToolDeclaration[] = [
+const CHAT_TOOLS: ToolDeclaration[] = [
   {
     name: 'end_call',
     description:
@@ -74,8 +82,48 @@ const TOOLS: ToolDeclaration[] = [
     parameters: { type: 'object', properties: { reason: { type: 'string', description: 'Qisqa sabab' } }, required: [] },
   },
 ];
-const GREETING =
+const CHAT_GREETING =
   "Qo'ng'iroqqa hozir javob berildi. Faqat shu gapni ayt, keyin jim bo'l va tingla: «Salom! Men sizning shaxsiy AI yordamchingizman. Bu sinov qo'ng'irog'i.» Boshqa narsa qo'shma.";
+
+const briefingMode = env.AI_CALL_MODE === 'briefing';
+let INSTRUCTIONS = CHAT_INSTRUCTIONS;
+let TOOLS = CHAT_TOOLS;
+let GREETING = CHAT_GREETING;
+let ownerTools: OwnerCallTools | null = null;
+let onEndCall: () => void | Promise<void> = () => undefined;
+let closeDb: () => Promise<void> = async () => undefined;
+if (briefingMode) {
+  // Real owner data: read from the database as the owner (bound server-side), only ever to the owner's own number.
+  const cfg = loadConfig();
+  const db = new Db(cfg.DATABASE_URL);
+  closeDb = () => db.close();
+  const owners = (
+    await db.query<{ id: string; timezone: string; telegram_user_id: string }>('SELECT id, timezone, telegram_user_id FROM owners ORDER BY created_at')
+  ).rows;
+  const owner = owners[0];
+  if (owners.length !== 1 || !owner) {
+    console.error(`AI_CALL_MODE=briefing needs exactly one owner in the database (found ${owners.length}); run bootstrap:owner first`);
+    process.exit(2);
+  }
+  if (owner.telegram_user_id !== recipientId) {
+    console.error('AI_CALL_MODE=briefing may only call the owner: LIVE_TEST_RECIPIENT_ID is not the configured owner');
+    process.exit(2);
+  }
+  const crypto = new DataCrypto(new Envelope(parseKeyRing(resolveSecret(cfg.DATA_ENCRYPTION_KEY_REF!))));
+  ownerTools = new OwnerCallTools({
+    db,
+    tasks: new TaskService(crypto),
+    clock: systemClock,
+    ownerId: owner.id,
+    timezone: owner.timezone,
+    onEndCall: () => onEndCall(),
+  });
+  await ownerTools.load();
+  INSTRUCTIONS = buildOwnerCallInstructions({ now: new Date(), timezone: owner.timezone, tasks: ownerTools.describeList() });
+  TOOLS = OWNER_CALL_TOOL_DECLARATIONS;
+  GREETING = "Qo'ng'iroqqa hozir javob berildi. Brifingni boshla: o'zingni tanishtir va vazifalarni qisqa o'qib ber.";
+  console.log(`briefing mode: ${ownerTools.describeList().length} task(s) in scope for the briefing`);
+}
 
 const client = new TelegramClient(new StringSession(resolveSecret(sessionRef)), apiId, apiHash, { connectionRetries: 3 });
 await client.connect();
@@ -145,6 +193,7 @@ const link =
 const bridge = new RealtimeCallBridge(handle, link, {
   log: (line) => console.log(`${t()} ${line}`),
   onTool: (call) => {
+    if (ownerTools) return ownerTools.execute(call);
     if (call.name !== 'end_call') return { result: { error: `unknown tool ${call.name}` } };
     // Only the application ends the call, and only after the farewell has been played to the caller.
     return { result: { ok: true }, respond: false, afterPlayout: () => hangup('completed') };
@@ -158,6 +207,7 @@ const hangup = async (why: 'duration_limit' | 'cancelled' | 'completed') => {
     .end(why)
     .catch((e: unknown) => console.error(`hangup failed: ${String((e as Error)?.message ?? e)} — END THE CALL MANUALLY from the Telegram client`));
 };
+onEndCall = () => hangup('completed');
 process.on('SIGINT', () => void hangup('cancelled'));
 
 for await (const ev of handle.events) {
@@ -176,4 +226,5 @@ clearTimeout(hangupTimer);
 bridge.stop();
 console.log(JSON.stringify({ endedReason: ended?.reason ?? null, stats: bridge.stats }, null, 2));
 await client.disconnect();
+await closeDb();
 process.exit(bridge.stats.errors.length ? 1 : 0);
