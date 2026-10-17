@@ -9,6 +9,8 @@
  *   LIVE_TEST_WINDOW_START / LIVE_TEST_WINDOW_END  (ISO instants, at most 2 h apart)
  *   LIVE_TEST_MAX_SECONDS (default 120, max 600)
  *   AI_CALL_MODE=chat (default) | briefing   (briefing: the AI reads the owner's real tasks from DATABASE_URL and can complete/move them; the recipient MUST be the owner)
+ *   LIVE_TEST_RECIPIENT_KIND=test_account   (the recipient is the second test account standing in for a contact; counts for G0-D/E/F)
+ *   LIVE_TEST_HOST_IS_TARGET=yes            (this run is on the intended deployment host/container; needed once for G0-F)
  *   AI_VOICE_PROVIDER=openai (default) | gemini
  *   openai: OPENAI_API_KEY  OPENAI_REALTIME_MODEL  [OPENAI_VOICE]  [OPENAI_REALTIME_DIALECT=ga|beta]  [OPENAI_TRANSCRIPTION_MODEL]
  *   gemini: GEMINI_API_KEY  GEMINI_LIVE_MODEL  [GEMINI_VOICE]  [GEMINI_TEXT_MODE=realtime|client_content]  [GEMINI_GOOGLE_SEARCH=on]  [GEMINI_DEBUG=on]  [GEMINI_LANGUAGE_CODE=uz-UZ]
@@ -30,7 +32,7 @@ import { GeminiLiveLink } from '../infrastructure/gemini/live.js';
 import { resolveSecret } from '../infrastructure/crypto/secrets.js';
 import { loadConfig } from '../bootstrap/config.js';
 import { computeBuildFingerprint } from '../modules/calls/capability-evidence.js';
-import type { RunRecord } from '../modules/calls/production-evidence.js';
+import { RunRecordSchema, type RunRecord } from '../modules/calls/production-evidence.js';
 import { Db } from '../infrastructure/db/db.js';
 import { DataCrypto } from '../infrastructure/crypto/data-crypto.js';
 import { Envelope, parseKeyRing } from '../infrastructure/crypto/envelope.js';
@@ -246,7 +248,7 @@ bridge.stop();
     heard = ans === 'yes' ? 'yes' : 'no'; // anything but a full "yes" is a no: the attestation must be deliberate
   }
   const root = fileURLToPath(new URL('../../../../', import.meta.url));
-  const record: RunRecord = {
+  const record: RunRecord = RunRecordSchema.parse({
     schemaVersion: 1,
     kind: 'live',
     producedBy: 'production-adapter',
@@ -262,7 +264,13 @@ bridge.stop();
     callFramesOut: bridge.stats.callFramesOut,
     bridgeErrors: bridge.stats.errors.length,
     operatorHeardAiClearly: heard,
-  };
+    // LIVE_TEST_RECIPIENT_KIND=test_account: the second account standing in for a contact (needed for the contact-call gates G0-D/E/F)
+    ...(env.LIVE_TEST_RECIPIENT_KIND === 'test_account' && !briefingMode ? { recipientKind: 'test_account' } : {}),
+    scenario: 'chat',
+    dialCount: 1,
+    bargeIns: bridge.stats.bargeIns,
+    hostIsTarget: env.LIVE_TEST_HOST_IS_TARGET === 'yes',
+  });
   const dir = join(root, 'experiments/telegram-calls/evidence');
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `PA-${record.recordedAt.replace(/[:.]/g, '-')}.local.json`);

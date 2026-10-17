@@ -17,7 +17,8 @@ import { systemClock } from './application/clock.js';
 import { DisabledMessaging } from './infrastructure/telegram/disabled-messaging.js';
 import { FakeCallAdapter, FakeMessaging } from './testing/fakes.js';
 import { DisabledCallAdapter, EvidenceGatedCallAdapter } from './modules/calls/adapters.js';
-import { deriveCapabilities } from './modules/calls/capability-evidence.js';
+import { fileURLToPath } from 'node:url';
+import { computeBuildFingerprint, deriveCapabilities } from './modules/calls/capability-evidence.js';
 import { ensureDailyBudget } from './modules/operations/operations.service.js';
 import { buildServer } from './http/server.js';
 import type { MessagingPort } from './application/ports.js';
@@ -274,6 +275,18 @@ log.info(
   if (!cfg.CALL_FEASIBILITY_EVIDENCE_PATH) problems.push('CALL_FEASIBILITY_EVIDENCE_PATH is not set');
   if (!caps.ownerCallingAllowed) problems.push(...caps.reasons.filter((r) => !/^G0-[DEF]: not recorded/.test(r)));
   if (!cfg.AI_VOICE_PROVIDER) problems.push('AI_VOICE_PROVIDER is not set (a call would have nobody to talk)');
+  // BUILD_FINGERPRINT is supplied by the deployment; if the call-path sources in this checkout no longer hash to it, the evidence was
+  // recorded for different code. Say so (a warning, not a refusal: only the operator can decide to re-record).
+  try {
+    const actual = computeBuildFingerprint(fileURLToPath(new URL('../../../', import.meta.url)));
+    if (cfg.CALLS_ENABLED && actual !== cfg.BUILD_FINGERPRINT)
+      log.warn(
+        { configured: cfg.BUILD_FINGERPRINT.slice(0, 12), actual: actual.slice(0, 12) },
+        'the call-path code in this checkout differs from BUILD_FINGERPRINT: the live evidence was recorded for other code. Run `pnpm evidence:production` and re-record the 5-minute call if the call path changed',
+      );
+  } catch {
+    /* not a source checkout (e.g. a container image): the deployment pins the fingerprint */
+  }
   const state = problems.length ? 'owner calls are OFF' : 'owner calls are ON (the durable kill switch is still checked on every dial: GET /v1/capabilities)';
   (problems.length ? log.warn : log.info).call(
     log,

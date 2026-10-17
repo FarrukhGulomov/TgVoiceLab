@@ -39,6 +39,8 @@
     "keys:rotate": "pnpm --filter @tgvl/assistant run keys:rotate",
     "verify": "pnpm run lint && pnpm run format && pnpm run typecheck && pnpm run build && pnpm run test:all",
     "live:ai-call": "pnpm --filter @tgvl/assistant run live:ai-call",
+    "live:gate-calls": "pnpm --filter @tgvl/assistant run live:gate-calls",
+    "attest:target-host": "pnpm --filter @tgvl/assistant run attest:target-host",
     "evidence:production": "pnpm --filter @tgvl/assistant run evidence:production"
   },
   "devDependencies": {

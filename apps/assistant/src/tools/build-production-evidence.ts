@@ -35,9 +35,24 @@ try {
   /* no login record */
 }
 
+let gateF: { file: string; recordedAt: string } | null = null;
+try {
+  const f = JSON.parse(readFileSync(join(DIR, 'G0-F.local.json'), 'utf8')) as {
+    kind?: string;
+    result?: string;
+    recordedAt?: string;
+    buildFingerprint?: string;
+    phoneClients?: string[];
+  };
+  if (f.kind === 'live' && f.result === 'PASS' && f.recordedAt && f.buildFingerprint === fingerprint && f.phoneClients?.length)
+    gateF = { file: 'experiments/telegram-calls/evidence/G0-F.local.json', recordedAt: f.recordedAt };
+} catch {
+  /* no attestation */
+}
+
 const pkg = JSON.parse(readFileSync(join(ROOT, 'apps/assistant/package.json'), 'utf8')) as { dependencies: Record<string, string> };
 const pins = Object.fromEntries(['ntgcalls', 'telegram', 'ws'].map((k) => [k, pkg.dependencies[k] ?? 'unknown']));
-const artifact = assembleProductionEvidence({ records, gateA, fingerprint, pins, now: new Date() });
+const artifact = assembleProductionEvidence({ records, gateA, gateF, fingerprint, pins, now: new Date() });
 const out = join(DIR, 'production.local.json');
 writeFileSync(out, JSON.stringify(artifact, null, 2));
 
@@ -49,5 +64,7 @@ console.log(
 for (const [id, g] of Object.entries(artifact.gates)) console.log(`  ${id}: ${g.result}${g.result === 'PASS' ? '' : `  — ${g.evidenceRefs[0]}`}`);
 console.log(`written: ${out}`);
 console.log(`owner calling allowed for this build: ${caps.ownerCallingAllowed ? 'YES' : 'NO'}${caps.ownerCallingAllowed ? '' : ` (${caps.reasons.at(-1)})`}`);
-console.log('contact calls: still require all six gates (G0-D/E/F are not recorded by this tool)');
+console.log(
+  `contact calls (all six gates) allowed for this build: ${caps.productionCallingAllowed ? 'YES' : 'NO'}${caps.productionCallingAllowed ? '' : ' — see the G0-D / G0-E / G0-F lines above'}`,
+);
 console.log(`\nTo use it: BUILD_FINGERPRINT=${fingerprint}  CALL_FEASIBILITY_EVIDENCE_PATH=${out}`);
