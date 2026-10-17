@@ -29,8 +29,18 @@ export interface IncomingMessage {
   chat: { type: string; id: string };
   receivedAt: Date;
   text?: string;
-  /** `sizeBytes` lets an adapter report the size WITHOUT downloading an oversized file. */
-  voice?: { bytes: Uint8Array; mime: string; durationSeconds: number; sizeBytes?: number };
+  /**
+   * `sizeBytes` is the size DECLARED by the provider. An adapter must NOT download media itself: it supplies a lazy `download`
+   * and the intake service calls it only after the sender is authorized and every size/duration/format/transcription check passed
+   * (audit F02). `bytes` is accepted for already-available payloads (tests, other adapters).
+   */
+  voice?: {
+    mime: string;
+    durationSeconds: number;
+    sizeBytes?: number;
+    bytes?: Uint8Array;
+    download?: () => Promise<Uint8Array>;
+  };
   forwarded?: boolean;
 }
 
@@ -39,7 +49,36 @@ export type IntakeResult =
   | { status: 'denied'; reason: string }
   | { status: 'handled'; intent: Intent['kind'] | 'voice_rejected' | 'forwarded_ignored' | 'voice_uncertain' };
 
+const SUPPORTED_VOICE_MIME = /^audio\/(?:ogg|opus|mpeg|mp3|mp4|x-m4a|aac|wav|x-wav|webm)(?:\s*;.*)?$/i;
+
+/** Bounded concurrency for media downloads: a burst of voice notes cannot exhaust memory or bandwidth. */
+class Limiter {
+  private active = 0;
+  private readonly waiting: Array<() => void> = [];
+  constructor(private readonly max: number) {}
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.active >= this.max) await new Promise<void>((resolve) => this.waiting.push(resolve));
+    this.active++;
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+      this.waiting.shift()?.();
+    }
+  }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('voice download timed out')), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
+
 export class IntakeService {
+  private readonly downloads: Limiter;
+  private readonly downloadTimeoutMs: number;
   constructor(
     private readonly d: {
       db: Db;
@@ -49,8 +88,13 @@ export class IntakeService {
       reminders: ReminderService;
       interpreter: TextInterpreterPort;
       transcription?: TranscriptionPort | undefined;
+      voiceDownloadTimeoutMs?: number;
+      voiceMaxConcurrentDownloads?: number;
     },
-  ) {}
+  ) {
+    this.downloads = new Limiter(d.voiceMaxConcurrentDownloads ?? 2);
+    this.downloadTimeoutMs = d.voiceDownloadTimeoutMs ?? 30_000;
+  }
 
   async handle(m: IncomingMessage): Promise<IntakeResult> {
     const { db, clock } = this.d;
@@ -72,12 +116,18 @@ export class IntakeService {
       rejection = { key: 'forwarded_not_instruction' };
       outcome = 'forwarded_ignored';
     } else if (m.voice) {
+      const declared = m.voice.sizeBytes ?? m.voice.bytes?.byteLength;
       if (m.voice.durationSeconds > VOICE_MAX_SECONDS) rejection = { key: 'voice_too_long', vars: { limit: VOICE_MAX_SECONDS / 60 } };
-      else if ((m.voice.sizeBytes ?? m.voice.bytes.byteLength) > VOICE_MAX_BYTES) rejection = { key: 'voice_too_large' };
+      else if (declared === undefined || declared > VOICE_MAX_BYTES) rejection = { key: 'voice_too_large' };
+      else if (!SUPPORTED_VOICE_MIME.test(m.voice.mime)) rejection = { key: 'voice_unsupported_format' };
       else if (!this.d.transcription) rejection = { key: 'transcription_unavailable' };
       else {
         try {
-          const tr = await this.d.transcription.transcribe(m.voice);
+          // Authorized + every cheap check passed: only now fetch the payload (bounded concurrency and time).
+          const v = m.voice;
+          const bytes = v.bytes ?? (v.download ? await this.downloads.run(() => withTimeout(v.download!(), this.downloadTimeoutMs)) : undefined);
+          if (!bytes || bytes.byteLength > VOICE_MAX_BYTES) throw new Error('voice payload missing or over the byte cap');
+          const tr = await this.d.transcription.transcribe({ bytes, mime: v.mime, durationSeconds: v.durationSeconds });
           text = tr.text;
           confidence = tr.confidence;
           if (tr.confidence < TRANSCRIPT_MIN_CONFIDENCE) {

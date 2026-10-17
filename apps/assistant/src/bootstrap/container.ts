@@ -31,6 +31,8 @@ export interface ContainerDeps {
   ringTimeoutMs?: number;
   interpreter?: TextInterpreterPort;
   transcription?: TranscriptionPort;
+  voiceDownloadTimeoutMs?: number;
+  voiceMaxConcurrentDownloads?: number;
   workerId?: string;
 }
 
@@ -74,6 +76,8 @@ export function buildContainer(d: ContainerDeps) {
     reminders,
     interpreter: d.interpreter ?? new RulesInterpreter(),
     transcription: d.transcription,
+    ...(d.voiceDownloadTimeoutMs ? { voiceDownloadTimeoutMs: d.voiceDownloadTimeoutMs } : {}),
+    ...(d.voiceMaxConcurrentDownloads ? { voiceMaxConcurrentDownloads: d.voiceMaxConcurrentDownloads } : {}),
   });
   const jobHandlers: Record<string, JobHandler> = {
     'reminder.fire': reminderFireHandler({ clock: d.clock }),

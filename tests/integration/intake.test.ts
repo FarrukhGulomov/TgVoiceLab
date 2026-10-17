@@ -287,3 +287,76 @@ describe('voice notes', () => {
     await app.close();
   });
 });
+
+describe('F02 — media is never downloaded before authorization and policy checks', () => {
+  const OK_ASR: TranscriptionPort = { transcribe: async () => ({ text: 'add task buy tickets', confidence: 0.95 }) };
+  const lazy = (spy: { n: number; inflight: number; maxInflight: number }, bytes = 1000, delayMs = 0) => ({
+    mime: 'audio/ogg',
+    durationSeconds: 10,
+    sizeBytes: bytes,
+    download: async () => {
+      spy.n++;
+      spy.inflight++;
+      spy.maxInflight = Math.max(spy.maxInflight, spy.inflight);
+      if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+      spy.inflight--;
+      return new Uint8Array(bytes);
+    },
+  });
+  const newSpy = () => ({ n: 0, inflight: 0, maxInflight: 0 });
+  const voiceMsg = (v: unknown, over: Partial<IncomingMessage> = {}) => msg('', { text: undefined, voice: v as IncomingMessage['voice'], ...over });
+
+  it('stranger, group chat and forwarded voice cause zero downloads', async () => {
+    const spy = newSpy();
+    const { app } = setup({ transcription: OK_ASR });
+    await app.intake.handle(voiceMsg(lazy(spy), { senderTelegramId: '99999999', chat: { type: 'private', id: '99999999' } }));
+    await app.intake.handle(voiceMsg(lazy(spy), { chat: { type: 'supergroup', id: '-100123' } }));
+    await app.intake.handle(voiceMsg(lazy(spy), { forwarded: true }));
+    expect(spy.n).toBe(0);
+    await app.close();
+  });
+  it('over-long, over-large, unsupported-format voice and unavailable transcription cause zero downloads', async () => {
+    const spy = newSpy();
+    const { app } = setup({ transcription: OK_ASR });
+    await app.intake.handle(voiceMsg({ ...lazy(spy), durationSeconds: 301 }));
+    await app.intake.handle(voiceMsg(lazy(spy, 20 * 1024 * 1024 + 1)));
+    await app.intake.handle(voiceMsg({ ...lazy(spy), mime: 'application/x-msdownload' }));
+    expect(spy.n).toBe(0);
+    await app.close();
+    const noAsr = setup();
+    await noAsr.app.intake.handle(voiceMsg(lazy(spy)));
+    expect(spy.n).toBe(0);
+    await noAsr.app.close();
+  });
+  it('an authorized valid voice note is downloaded exactly once, and the transcript is acted on', async () => {
+    const spy = newSpy();
+    const { app, last, say } = setup({ transcription: OK_ASR });
+    const r = await app.intake.handle(voiceMsg(lazy(spy)));
+    await app.tick();
+    expect(r).toEqual({ status: 'handled', intent: 'create_task' });
+    expect(spy.n).toBe(1);
+    expect(last()).toBe('Task added: "buy tickets".');
+    void say;
+    await app.close();
+  });
+  it('bytes larger than the declared size are rejected after download (actual byte cap)', async () => {
+    const spy = newSpy();
+    const { app } = setup({ transcription: OK_ASR });
+    const liar = { ...lazy(spy), sizeBytes: 100, download: async () => new Uint8Array(20 * 1024 * 1024 + 1) };
+    const r = await app.intake.handle(voiceMsg(liar));
+    expect(r).toEqual({ status: 'handled', intent: 'voice_rejected' });
+    expect((await counts()).tasks).toBe(0);
+    await app.close();
+  });
+  it('a stalled download times out and concurrent downloads are capped', async () => {
+    const spy = newSpy();
+    const { app } = setup({ transcription: OK_ASR, voiceDownloadTimeoutMs: 50, voiceMaxConcurrentDownloads: 2 });
+    const stalled = { ...lazy(spy), download: () => new Promise<Uint8Array>(() => {}) };
+    const r = await app.intake.handle(voiceMsg(stalled));
+    expect(r).toEqual({ status: 'handled', intent: 'voice_rejected' });
+    const many = await Promise.all(Array.from({ length: 6 }, () => app.intake.handle(voiceMsg(lazy(spy, 1000, 30)))));
+    expect(many.every((x) => x.status === 'handled')).toBe(true);
+    expect(spy.maxInflight).toBeLessThanOrEqual(2);
+    await app.close();
+  });
+});

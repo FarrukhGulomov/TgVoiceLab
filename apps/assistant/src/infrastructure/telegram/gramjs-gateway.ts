@@ -13,6 +13,7 @@ import { StringSession } from 'telegram/sessions/index.js';
 import type { Logger } from '../observability/logger.js';
 import type { MessagingPort, OutboundMessage } from '../../application/ports.js';
 import type { IncomingMessage, IntakeService } from '../../modules/messaging/intake.service.js';
+import { convertMessage } from './convert.js';
 
 export interface GramjsOptions {
   apiId: number;
@@ -51,7 +52,7 @@ export class GramjsMessaging implements MessagingPort {
     this.client.addEventHandler(
       async (ev: NewMessageEvent) => {
         try {
-          const m = await this.toIncoming(ev, a.accountId);
+          const m = this.toIncoming(ev, a.accountId);
           if (m) await a.intake.handle(m);
         } catch (e) {
           this.o.log.error({ err: (e as Error).message }, 'inbound handling failed (will be retried on redelivery / restart recovery)');
@@ -72,38 +73,18 @@ export class GramjsMessaging implements MessagingPort {
     const msgs = await this.client.getMessages(peer, { limit: 50 });
     for (const msg of [...msgs].reverse()) {
       if (msg.out || Date.now() - msg.date * 1000 > RECOVERY_WINDOW_MS) continue;
-      const m = await this.convert(msg, a.accountId, true);
+      const m = this.convert(msg, a.accountId, true);
       if (m) await a.intake.handle(m);
     }
   }
 
-  private async toIncoming(ev: NewMessageEvent, accountId: string): Promise<IncomingMessage | null> {
+  private toIncoming(ev: NewMessageEvent, accountId: string): IncomingMessage | null {
     if (ev.message.out) return null;
     return this.convert(ev.message, accountId, ev.isPrivate ?? false);
   }
 
-  private async convert(msg: Api.Message, accountId: string, isPrivate: boolean): Promise<IncomingMessage | null> {
-    const sender = msg.senderId?.toString();
-    const chatId = msg.chatId?.toString() ?? sender;
-    if (!sender || !chatId) return null;
-    const base: IncomingMessage = {
-      accountId,
-      updateKey: `msg:${chatId}:${msg.id}`,
-      providerMessageId: String(msg.id),
-      senderTelegramId: sender,
-      chat: { type: isPrivate ? 'private' : 'other', id: chatId },
-      receivedAt: new Date(msg.date * 1000),
-      forwarded: !!msg.fwdFrom,
-    };
-    const doc = msg.voice;
-    if (doc) {
-      const audio = (doc as Api.Document).attributes.find((x): x is Api.DocumentAttributeAudio => x instanceof Api.DocumentAttributeAudio);
-      const size = Number((doc as Api.Document).size.toString());
-      // Do not download oversized files: report the size and let the intake policy reject them.
-      const bytes = size > 20 * 1024 * 1024 ? new Uint8Array(0) : new Uint8Array((await this.client.downloadMedia(msg)) as Buffer);
-      return { ...base, voice: { bytes, mime: (doc as Api.Document).mimeType, durationSeconds: audio?.duration ?? 0, sizeBytes: size } };
-    }
-    return { ...base, text: msg.message };
+  private convert(msg: Api.Message, accountId: string, isPrivate: boolean): IncomingMessage | null {
+    return convertMessage(msg, accountId, isPrivate, (m) => this.client.downloadMedia(m) as Promise<Buffer | undefined>);
   }
 
   /** Telegram `random_id` derived from the outbox event id: a redelivered send is deduplicated server-side. */

@@ -57,6 +57,21 @@ function clarifyWhen(w: ParsedWhen, ctx: InterpretContext): Intent | null {
   return null;
 }
 
+const NEGATION_EN =
+  /\b(?:not|no(?!\.?\s*\d)|never|don'?t|doesn'?t|didn'?t|isn'?t|aren'?t|wasn'?t|haven'?t|hasn'?t|won'?t|can'?t|cannot|without|ignore|mistake)\b/;
+const NEGATION_UZ =
+  /\b(?:emas|yo'q|yoq|aslo|hech|demadim|demang|\w+(?:ma|may)(?:di|dim|dik|ding|dingiz|ng|ngiz|sin|sinlar|yman)|\w*(?:qil|chir|bajar|tugat|sur)ma)\b/;
+const QUOTED = /["“”«»`]/;
+const QUESTION_START = /^(?:should|can|could|would|will|do|does|did|is|are|what|why|how|e\.g\.|for example|say|masalan)\b/;
+
+/**
+ * Audit F01: destructive intents (complete / cancel / move) must come from a clearly affirmative, plain command.
+ * Negation, questions, quoted examples and descriptive/mixed clauses are never executed: the caller asks for an explicit command.
+ */
+function notAnExplicitCommand(text: string, low: string): boolean {
+  return NEGATION_EN.test(low) || NEGATION_UZ.test(low) || QUOTED.test(text) || /\?\s*$/.test(text) || QUESTION_START.test(low) || /\bmi\s*$/.test(low);
+}
+
 const clean = (s: string) =>
   s
     .replace(/^[\s,:;.\-–—]+|[\s,:;.\-–—]+$/g, '')
@@ -92,12 +107,14 @@ export class RulesInterpreter implements TextInterpreterPort {
 
     // cancel reminder
     if (/\b(?:cancel|delete|remove)\b.*\breminder\b|\beslatma(?:ni)?\b.*\b(?:bekor|o'chir)/.test(low)) {
+      if (notAnExplicitCommand(text, low)) return { kind: 'clarify', question: t(ctx.locale, 'not_a_command') };
       const ref = findRef(low, 'reminder');
       return ref ? { kind: 'cancel_reminder', ref } : { kind: 'clarify', question: t(ctx.locale, 'ref_unresolved') };
     }
 
     // complete task
     if (/\b(?:done|complete[d]?|finish(?:ed)?|bajarildi|tugadi|bajardim)\b/.test(low) && !/\bremind/.test(low)) {
+      if (notAnExplicitCommand(text, low)) return { kind: 'clarify', question: t(ctx.locale, 'not_a_command') };
       const ref = findRef(low, 'task');
       if (ref) return { kind: 'complete_task', ref };
       const m = /(?:done|complete[d]?|finish(?:ed)?)[:\s]+(.+)/i.exec(text);
@@ -106,6 +123,7 @@ export class RulesInterpreter implements TextInterpreterPort {
 
     // move / reschedule
     if (/\b(?:move|reschedule|postpone|push|ko'chir|surish|surib\s+qo'y)\w*/.test(low)) {
+      if (notAnExplicitCommand(text, low)) return { kind: 'clarify', question: t(ctx.locale, 'not_a_command') };
       const isReminder = /\breminder\b|\beslatma/.test(low);
       const w = extractWhen(text, ctx);
       const amb = clarifyWhen(w, ctx);
