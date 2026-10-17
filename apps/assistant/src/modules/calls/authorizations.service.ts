@@ -4,6 +4,8 @@ import type { Clock } from '../../application/clock.js';
 import { NotFoundError, ValidationError, DomainError } from '../../application/errors.js';
 import { writeAudit } from '../audit/audit.js';
 import { computePlanHash } from './plan-hash.js';
+import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
+import { redactedPlan, sealPlan } from './plan-store.js';
 
 /**
  * Immutable call briefs + exact-plan authorizations. The plan JSON and its hash are written once; approval must present
@@ -13,6 +15,7 @@ export class AuthorizationService {
   constructor(
     private readonly db: Db,
     private readonly clock: Clock,
+    private readonly crypto: DataCrypto,
   ) {}
 
   /** Create the brief (pending). Returns what the owner must approve. If `ownerExplicitCommand`, approval is recorded immediately. */
@@ -48,7 +51,7 @@ export class AuthorizationService {
         [
           ownerId,
           ct.id,
-          JSON.stringify(body),
+          JSON.stringify(redactedPlan(body)), // authorizations never hold free text; the approved plan lives sealed in call_requests
           planHash,
           opts.sourceMessageId ?? null,
           opts.ownerExplicitCommand ? 'approved' : 'pending',
@@ -59,14 +62,16 @@ export class AuthorizationService {
       );
       const authorizationId = auth.rows[0]!.id;
       const plan = ApprovedCallPlanSchema.parse({ ...body, authorizationId, permissionVersion, planHash });
+      const sealed = sealPlan(this.crypto, ownerId, plan);
       const req = await c.query<{ id: string }>(
-        `INSERT INTO call_requests (id, owner_id, contact_id, plan, plan_hash, authorization_id, permission_version, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+        `INSERT INTO call_requests (id, owner_id, contact_id, plan, plan_enc, plan_hash, authorization_id, permission_version, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
         [
           body.callRequestId,
           ownerId,
           ct.id,
-          JSON.stringify(plan),
+          JSON.stringify(sealed.shell),
+          sealed.enc,
           planHash,
           authorizationId,
           permissionVersion,

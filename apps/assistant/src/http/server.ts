@@ -109,10 +109,14 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
       const body = schema.parse((req.body ?? {}) as unknown);
       const ownerId = await owner(req);
       const merged = { body, params: req.params };
-      const out = await runIdempotent<{ data: unknown }>(app.db, { ownerId, action, key, requestBody: merged, now: app.clock.now() }, async (c) => {
-        const r = await handler({ ownerId, body, c, req });
-        return { status: r.status, body: { data: r.data }, ...(r.afterCommit ? { afterCommit: r.afterCommit } : {}) };
-      });
+      const out = await runIdempotent<{ data: unknown }>(
+        app.db,
+        { ownerId, action, key, requestBody: merged, now: app.clock.now(), crypto: app.crypto },
+        async (c) => {
+          const r = await handler({ ownerId, body, c, req });
+          return { status: r.status, body: { data: r.data }, ...(r.afterCommit ? { afterCommit: r.afterCommit } : {}) };
+        },
+      );
       if (out.kind === 'conflict') return fail(req, rep, 409, 'idempotency_conflict', 'this Idempotency-Key was already used with a different request');
       rep.header('Idempotent-Replayed', out.kind === 'replayed' ? 'true' : 'false');
       return rep.status(out.status).send({ requestId: req.id, data: out.body.data });

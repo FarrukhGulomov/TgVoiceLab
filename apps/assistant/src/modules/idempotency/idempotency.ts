@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import type pg from 'pg';
 import type { Db } from '../../infrastructure/db/db.js';
+import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
+
+/** AAD label for sealed idempotency responses (audit F10): they replay task titles and call plans, so they are not stored in clear. */
+export const IDEMPOTENCY_AAD_COLUMN = 'idempotency_keys.response';
 
 export type IdempotentOutcome<T> = { kind: 'executed'; status: number; body: T } | { kind: 'replayed'; status: number; body: T } | { kind: 'conflict' };
 
@@ -24,7 +28,7 @@ export function canonicalJson(v: unknown): string {
  */
 export async function runIdempotent<T>(
   db: Db,
-  args: { ownerId: string; action: string; key: string; requestBody: unknown; ttlMs?: number; now: Date },
+  args: { ownerId: string; action: string; key: string; requestBody: unknown; ttlMs?: number; now: Date; crypto: DataCrypto },
   handler: (c: pg.PoolClient) => Promise<{ status: number; body: T; afterCommit?: () => Promise<void> }>,
 ): Promise<IdempotentOutcome<T>> {
   const reqHash = hashRequest(args.requestBody);
@@ -42,7 +46,9 @@ export async function runIdempotent<T>(
       );
       const row = prev.rows[0]!;
       if (row.request_hash !== reqHash) return { kind: 'conflict' } as const;
-      return { kind: 'replayed', status: row.status_code, body: row.response } as const;
+      // Sealed responses are a JSON string holding the ciphertext; rows written before sealing existed are plain objects.
+      const body = typeof row.response === 'string' ? (JSON.parse(args.crypto.dec(args.ownerId, IDEMPOTENCY_AAD_COLUMN, row.response)) as T) : row.response;
+      return { kind: 'replayed', status: row.status_code, body } as const;
     }
     const out = await handler(c);
     await c.query(`UPDATE idempotency_keys SET state='done', status_code=$4, response=$5 WHERE owner_id=$1 AND action=$2 AND key=$3`, [
@@ -50,7 +56,7 @@ export async function runIdempotent<T>(
       args.action,
       args.key,
       out.status,
-      JSON.stringify(out.body),
+      JSON.stringify(args.crypto.enc(args.ownerId, IDEMPOTENCY_AAD_COLUMN, JSON.stringify(out.body))),
     ]);
     after = out.afterCommit;
     return { kind: 'executed', status: out.status, body: out.body } as const;

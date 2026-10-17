@@ -60,11 +60,12 @@ export function buildContainer(d: ContainerDeps) {
     reasons: ['no evidence'],
   });
   const derive = d.deriveCapabilities ?? noCaps;
-  const contacts = new ContactService();
-  const authorizations = new AuthorizationService(d.db, d.clock);
+  const contacts = new ContactService(d.crypto);
+  const authorizations = new AuthorizationService(d.db, d.clock, d.crypto);
   const operations = new OperationsService(d.db, d.clock, registry);
   const orchestrator = new CallOrchestrator({
     db: d.db,
+    crypto: d.crypto,
     clock: d.clock,
     adapter: callAdapter,
     derive,

@@ -3,6 +3,7 @@ import { DateTime } from 'luxon';
 import { loadConfig } from './bootstrap/config.js';
 import { buildContainer } from './bootstrap/container.js';
 import { drainWorker, startLane } from './bootstrap/worker.js';
+import { sealLegacyPlaintext } from './modules/retention/seal-legacy.js';
 import { createLogger } from './infrastructure/observability/logger.js';
 import { Db } from './infrastructure/db/db.js';
 import { MIGRATIONS_DIR } from './infrastructure/db/paths.js';
@@ -118,6 +119,8 @@ if (owner) {
   const { ensureRetentionScheduled } = await import('./modules/retention/schedule.js');
   await ensureRetentionScheduled(db, owner.id, new Date());
 }
+const sealed = await sealLegacyPlaintext(db, crypto);
+if (Object.values(sealed).some(Boolean)) log.info(sealed, 'sealed plaintext copies written before field-level sealing existed');
 const rec = await app.recoverCalls();
 if (rec.recovered) log.warn({ recovered: rec.recovered }, 'reconciled calls orphaned by a previous crash (no redial performed)');
 

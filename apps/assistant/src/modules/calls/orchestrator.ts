@@ -1,5 +1,4 @@
 import {
-  ApprovedCallPlanSchema,
   DialOutcomeUnknownError,
   DialRejectedError,
   type ApprovedCallPlan,
@@ -18,6 +17,8 @@ import { evaluateDialPolicy, type DialPolicyInput } from '../policy/dial-policy.
 import { ActiveCallRegistry, reserveBudget } from '../operations/operations.service.js';
 import type { DerivedCapabilities } from './capability-evidence.js';
 import { transitionCall, TERMINAL, type CallState } from './state-machine.js';
+import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
+import { openPlan, PlanIntegrityError } from './plan-store.js';
 
 /**
  * Conversation layer port (Phase 3/4: media bridge, Realtime, consent gate, tools). NOT IMPLEMENTED: those phases are
@@ -35,6 +36,7 @@ export type DialOutcome =
 
 export interface OrchestratorDeps {
   db: Db;
+  crypto: DataCrypto;
   clock: Clock;
   adapter: TelegramCallAdapter;
   derive: () => DerivedCapabilities;
@@ -70,12 +72,18 @@ export class CallOrchestrator {
     callRequestId: string,
     o: { budgetReserved: boolean; excludeCallId?: string },
   ): Promise<DialPolicyInput | null> {
-    const req = await q.query<{ plan: unknown; authorization_id: string; contact_id: string; status: string }>(
-      'SELECT plan, authorization_id, contact_id, status FROM call_requests WHERE id=$1 AND owner_id=$2',
+    const req = await q.query<{ plan: unknown; plan_enc: string | null; authorization_id: string; contact_id: string; status: string }>(
+      'SELECT plan, plan_enc, authorization_id, contact_id, status FROM call_requests WHERE id=$1 AND owner_id=$2',
       [callRequestId, ownerId],
     );
     if (!req.rows[0]) return null;
-    const plan = ApprovedCallPlanSchema.parse(req.rows[0].plan);
+    let plan: ApprovedCallPlan;
+    try {
+      plan = openPlan(this.d.crypto, ownerId, req.rows[0].plan, req.rows[0].plan_enc);
+    } catch (e) {
+      if (e instanceof PlanIntegrityError) throw new PolicyDenied('plan_hash_mismatch'); // tampered storage is a hash mismatch: no dial
+      throw e;
+    }
     const [own, auth, contact, perm, ks, acct] = await Promise.all([
       q.query<{
         id: string;
@@ -185,7 +193,13 @@ export class CallOrchestrator {
   async dial(ownerId: string, callRequestId: string): Promise<DialOutcome> {
     const { db, clock } = this.d;
     // Pass 1 (read-only, no side effects): fail fast.
-    const pre = await this.loadInput(db, ownerId, callRequestId, { budgetReserved: true });
+    let pre: DialPolicyInput | null;
+    try {
+      pre = await this.loadInput(db, ownerId, callRequestId, { budgetReserved: true });
+    } catch (e) {
+      if (e instanceof PolicyDenied) return this.reject(ownerId, callRequestId, e.reason);
+      throw e;
+    }
     if (!pre) return this.reject(ownerId, callRequestId, 'call_request_not_found');
     const first = evaluateDialPolicy(pre);
     if (!first.allowed) return this.reject(ownerId, callRequestId, first.reasonCode);

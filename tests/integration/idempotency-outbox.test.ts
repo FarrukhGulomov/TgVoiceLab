@@ -4,6 +4,11 @@ import { seedOwner, type SeededOwner } from '../support/seed.js';
 import { runIdempotent } from '../../apps/assistant/src/modules/idempotency/idempotency.js';
 import { dispatchOutboxOnce, emitOutbox } from '../../apps/assistant/src/modules/outbox/outbox.js';
 
+import { randomBytes } from 'node:crypto';
+import { DataCrypto } from '../../apps/assistant/src/infrastructure/crypto/data-crypto.js';
+import { Envelope, parseKeyRing } from '../../apps/assistant/src/infrastructure/crypto/envelope.js';
+
+const tc = new DataCrypto(new Envelope(parseKeyRing(JSON.stringify({ active: 'k1', keys: { k1: randomBytes(32).toString('base64') } }))));
 let t: TestDb;
 let o: SeededOwner;
 const NOW = new Date('2026-10-15T10:00:00Z');
@@ -24,7 +29,7 @@ const taskCount = async () => (await t.db.query('SELECT count(*)::int AS n FROM 
 describe('idempotency keys', () => {
   it('replays the stored response and performs the mutation once', async () => {
     const before = await taskCount();
-    const args = { ownerId: o.ownerId, action: 'tasks.create', key: 'k-replay', requestBody: { title: 'A' }, now: NOW };
+    const args = { ownerId: o.ownerId, action: 'tasks.create', key: 'k-replay', requestBody: { title: 'A' }, now: NOW, crypto: tc };
     const r1 = await runIdempotent(t.db, args, createTask('A'));
     const r2 = await runIdempotent(t.db, args, createTask('A'));
     expect(r1.kind).toBe('executed');
@@ -34,24 +39,36 @@ describe('idempotency keys', () => {
   });
   it('same key with a different body is a conflict (409) and does not mutate', async () => {
     const before = await taskCount();
-    await runIdempotent(t.db, { ownerId: o.ownerId, action: 'tasks.create', key: 'k-conf', requestBody: { title: 'A' }, now: NOW }, createTask('A'));
+    await runIdempotent(
+      t.db,
+      { ownerId: o.ownerId, action: 'tasks.create', key: 'k-conf', requestBody: { title: 'A' }, now: NOW, crypto: tc },
+      createTask('A'),
+    );
     const r = await runIdempotent(
       t.db,
-      { ownerId: o.ownerId, action: 'tasks.create', key: 'k-conf', requestBody: { title: 'DIFFERENT' }, now: NOW },
+      { ownerId: o.ownerId, action: 'tasks.create', key: 'k-conf', requestBody: { title: 'DIFFERENT' }, now: NOW, crypto: tc },
       createTask('DIFFERENT'),
     );
     expect(r.kind).toBe('conflict');
     expect((await taskCount()) - before).toBe(1);
   });
   it('body key order does not matter', async () => {
-    const a = await runIdempotent(t.db, { ownerId: o.ownerId, action: 'x', key: 'k-order', requestBody: { a: 1, b: { c: 2, d: 3 } }, now: NOW }, async () => ({
-      status: 200,
-      body: {},
-    }));
-    const b = await runIdempotent(t.db, { ownerId: o.ownerId, action: 'x', key: 'k-order', requestBody: { b: { d: 3, c: 2 }, a: 1 }, now: NOW }, async () => ({
-      status: 200,
-      body: {},
-    }));
+    const a = await runIdempotent(
+      t.db,
+      { ownerId: o.ownerId, action: 'x', key: 'k-order', requestBody: { a: 1, b: { c: 2, d: 3 } }, now: NOW, crypto: tc },
+      async () => ({
+        status: 200,
+        body: {},
+      }),
+    );
+    const b = await runIdempotent(
+      t.db,
+      { ownerId: o.ownerId, action: 'x', key: 'k-order', requestBody: { b: { d: 3, c: 2 }, a: 1 }, now: NOW, crypto: tc },
+      async () => ({
+        status: 200,
+        body: {},
+      }),
+    );
     expect(a.kind).toBe('executed');
     expect(b.kind).toBe('replayed');
   });
@@ -59,7 +76,7 @@ describe('idempotency keys', () => {
     const before = await taskCount();
     const outs = await Promise.all(
       Array.from({ length: 10 }, () =>
-        runIdempotent(t.db, { ownerId: o.ownerId, action: 'tasks.create', key: 'k-conc', requestBody: { title: 'C' }, now: NOW }, createTask('C')),
+        runIdempotent(t.db, { ownerId: o.ownerId, action: 'tasks.create', key: 'k-conc', requestBody: { title: 'C' }, now: NOW, crypto: tc }, createTask('C')),
       ),
     );
     expect(outs.filter((x) => x.kind === 'executed')).toHaveLength(1);
@@ -68,7 +85,7 @@ describe('idempotency keys', () => {
   });
   it('a handler failure rolls back both the mutation and the key (client may retry)', async () => {
     const before = await taskCount();
-    const args = { ownerId: o.ownerId, action: 'tasks.create', key: 'k-fail', requestBody: { title: 'F' }, now: NOW };
+    const args = { ownerId: o.ownerId, action: 'tasks.create', key: 'k-fail', requestBody: { title: 'F' }, now: NOW, crypto: tc };
     await expect(
       runIdempotent(t.db, args, async (c) => {
         await createTask('F')(c);
@@ -80,11 +97,11 @@ describe('idempotency keys', () => {
   });
   it('keys are scoped per owner', async () => {
     const o2 = await seedOwner(t.db);
-    const a = await runIdempotent(t.db, { ownerId: o.ownerId, action: 'x', key: 'shared', requestBody: {}, now: NOW }, async () => ({
+    const a = await runIdempotent(t.db, { ownerId: o.ownerId, action: 'x', key: 'shared', requestBody: {}, now: NOW, crypto: tc }, async () => ({
       status: 200,
       body: { who: 1 },
     }));
-    const b = await runIdempotent(t.db, { ownerId: o2.ownerId, action: 'x', key: 'shared', requestBody: {}, now: NOW }, async () => ({
+    const b = await runIdempotent(t.db, { ownerId: o2.ownerId, action: 'x', key: 'shared', requestBody: {}, now: NOW, crypto: tc }, async () => ({
       status: 200,
       body: { who: 2 },
     }));
@@ -118,7 +135,7 @@ describe('transactional outbox', () => {
         if (fail) throw new Error('telegram 5xx');
       },
     };
-    const r1 = await dispatchOutboxOnce(t.db, handlers, { workerId: 'w', now: NOW });
+    const r1 = await dispatchOutboxOnce(t.db, handlers, { workerId: 'w', now: NOW, crypto: tc });
     expect(r1).toMatchObject({ delivered: 0, failed: 1 });
     // Backoff: not yet due.
     expect((await dispatchOutboxOnce(t.db, handlers, { workerId: 'w', now: new Date(NOW.getTime() + 100) })).failed).toBe(0);

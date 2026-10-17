@@ -2,6 +2,10 @@ import { TelegramUserIdSchema } from '@tgvl/contracts';
 import { inTx, type Queryable } from '../../infrastructure/db/db.js';
 import { NotFoundError, ValidationError } from '../../application/errors.js';
 import { writeAudit } from '../audit/audit.js';
+import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
+
+/** AAD label for sealed free-text context entries (audit F10). */
+export const CONTEXT_AAD_COLUMN = 'contact_permissions.context_allowlist';
 
 export interface PermissionGrant {
   allowCall: boolean;
@@ -17,6 +21,8 @@ export interface PermissionGrant {
  * only when the owner confirms the numeric id (e.g. by contact card / forwarded-from id) — recorded with its source.
  */
 export class ContactService {
+  constructor(private readonly crypto: DataCrypto) {}
+
   async create(
     q: Queryable,
     ownerId: string,
@@ -65,7 +71,7 @@ export class ContactService {
         g.allowCall,
         g.allowMessage ?? false,
         g.topicScopes,
-        g.contextAllowlist ?? [],
+        (g.contextAllowlist ?? []).map((e) => this.crypto.enc(ownerId, CONTEXT_AAD_COLUMN, e)), // free text is stored sealed, one entry per element
         g.allowedHours ? JSON.stringify(g.allowedHours) : null,
         g.expiresAt,
         now,

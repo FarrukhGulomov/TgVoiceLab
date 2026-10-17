@@ -170,6 +170,23 @@ describe('A04 — denials place no call and consume nothing', () => {
     await expectDenied(w, req.callRequestId, 'plan_hash_mismatch');
     await w.app.close();
   });
+  it('sealed plan: a tampered routable field, a swapped ciphertext, or injected clear text is a hash mismatch and places no call', async () => {
+    const w = await world();
+    const a = await w.request();
+    await t.db.query(`UPDATE call_requests SET plan = jsonb_set(plan, '{maxDurationSeconds}', '3600') WHERE id=$1`, [a.callRequestId]);
+    await expectDenied(w, a.callRequestId, 'plan_hash_mismatch');
+    const b = await w.request({ purpose: 'A completely different purpose for B' });
+    const c = await w.request();
+    // Swap valid ciphertext between two requests of the same owner: authenticates, but the recomputed hash no longer matches.
+    const encB = (await t.db.query('SELECT plan_enc FROM call_requests WHERE id=$1', [b.callRequestId])).rows[0].plan_enc;
+    await t.db.query('UPDATE call_requests SET plan_enc=$2 WHERE id=$1', [c.callRequestId, encB]);
+    await expectDenied(w, c.callRequestId, 'plan_hash_mismatch');
+    // Garbage ciphertext does not authenticate.
+    const d = await w.request();
+    await t.db.query(`UPDATE call_requests SET plan_enc='e1.k1.AAAA.BBBB' WHERE id=$1`, [d.callRequestId]);
+    await expectDenied(w, d.callRequestId, 'plan_hash_mismatch');
+    await w.app.close();
+  });
   it('unverified / ambiguous contact cannot even get a brief', async () => {
     const w = await world();
     await t.db.query(`UPDATE contacts SET verified_at=NULL, verification_source=NULL WHERE id=$1`, [w.contact.id]);
