@@ -52,7 +52,7 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
     connectionTimeout: 15_000,
     requestTimeout: 30_000,
     keepAliveTimeout: 5_000,
-    maxParamLength: 200,
+    routerOptions: { maxParamLength: 200 },
   });
   const failedAuth = new FailedAuthLimiter();
   const tokenDigests = d.adminTokens.map(digest);

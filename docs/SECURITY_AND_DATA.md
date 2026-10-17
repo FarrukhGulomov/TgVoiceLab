@@ -33,19 +33,33 @@ full pipeline is **not** "end-to-end encrypted by Telegram".
 
 ## Data inventory and retention (defaults; configurable before launch)
 
-| Data                                          | Stored as                                 | Default retention              | Mechanism                                       |
-| --------------------------------------------- | ----------------------------------------- | ------------------------------ | ----------------------------------------------- |
-| Owner messages                                | AEAD ciphertext (`messages.content_enc`)  | 30 days                        | `runRetention` (daily job), tombstone           |
-| Call reports                                  | structured JSON + encrypted narrative ref | 30 days                        | `runRetention`, tombstone                       |
-| Full third-party transcripts                  | **not stored** (feature off)              | — (7 days if ever enabled)     | `FULL_TRANSCRIPT_RETENTION_ENABLED=false`       |
-| Raw audio                                     | **never written**                         | — (7 days max if ever enabled) | `RAW_AUDIO_RECORDING_ENABLED=false`             |
-| Security audit metadata                       | IDs/codes only                            | 90 days                        | `runRetention`                                  |
-| Memory (owner-approved)                       | AEAD ciphertext + provenance              | until expiry/deletion          | table exists; feature **not started**           |
-| Idempotency keys, done jobs, delivered outbox | rows                                      | 24 h / 7 d / 7 d               | `runRetention`                                  |
-| Backups                                       | encrypted dumps (procedure only)          | 30 days                        | runbook; deletion is **not instant** in backups |
+| Data                                          | Stored as                                                                                  | Default retention              | Mechanism                                       |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------ | ----------------------------------------------- |
+| Owner messages                                | AEAD ciphertext (`messages.content_enc`)                                                   | 30 days                        | `runRetention` (daily job), tombstone           |
+| Call reports                                  | structured JSON + encrypted narrative ref                                                  | 30 days                        | `runRetention`, tombstone                       |
+| Full third-party transcripts                  | **not stored** (feature off)                                                               | — (7 days if ever enabled)     | `FULL_TRANSCRIPT_RETENTION_ENABLED=false`       |
+| Raw audio                                     | **never written**                                                                          | — (7 days max if ever enabled) | `RAW_AUDIO_RECORDING_ENABLED=false`             |
+| Security audit metadata                       | IDs/codes only                                                                             | 90 days                        | `runRetention`                                  |
+| Memory (owner-approved)                       | AEAD ciphertext + provenance                                                               | until expiry/deletion          | table exists; feature **not started**           |
+| Idempotency keys, done jobs, delivered outbox | rows                                                                                       | 24 h / 7 d / 7 d               | `runRetention`                                  |
+| Call plans (purpose, questions, context)      | AEAD in `call_requests.plan_enc`; `plan`/`authorizations.plan` hold routable metadata only | with the call request          | sealed; plan hash is over the logical plan      |
+| Permission context entries                    | AEAD per element (`contact_permissions.context_allowlist`)                                 | with the permission row        | sealed                                          |
+| Idempotency responses                         | AEAD (jsonb string)                                                                        | 24 h                           | `runRetention`; rotation covers it              |
+| Clarification drafts                          | AEAD (`conversation_drafts.draft_enc`)                                                     | 10 min                         | one per owner, expiring, `runRetention`         |
+| Telegram recovery watermarks                  | ids only                                                                                   | until superseded               | `recovery_watermarks`                           |
+| Backups                                       | encrypted dumps (procedure only)                                                           | 30 days                        | runbook; deletion is **not instant** in backups |
 
 Restore procedure re-applies `deletion_tombstones` (`replayTombstones`) so deleted content does not resurface. AI-processing consent, recording and transcript
 retention are separate consent kinds (`consent_events.kind`), append-only. Defaults: no recording, no persistent third-party transcript.
+
+## Database privileges
+
+Three logins (`deploy/postgres/roles.sql`): the bootstrap superuser (initialisation and break-glass only), `tgvl_migrator` (schema owner, runs forward-only
+migrations), `tgvl_app` (runtime: DML only; no DDL, no trigger or grant changes, no UPDATE/DELETE on `audit_events`/`consent_events`, no write to
+`schema_migrations`). Audit rows are purged only through the narrow `purge_audit_events` function, which refuses rows younger than 60 days. The append-only
+triggers protect against accidents, **not** against a privileged database actor; the boundary for the runtime login is its privilege set. Production refuses
+to start if its login is a superuser, owns schema objects, can create objects or can rewrite history (`DB_ALLOW_PRIVILEGED_ROLE=true` is for non-production only).
+Verified by `integration/least-privilege` (real roles) and by `deploy/smoke.sh` on containers.
 
 ## Secrets
 
@@ -55,10 +69,10 @@ non-interactive use. Rotation: runbooks `key-rotation`, `session-compromise`.
 
 ## Known gaps (do not assume these are covered)
 
-- No KMS integration (file/env refs only); key rotation re-encryption tool is **not written** (`Envelope.needsRotation` exists; see runbook).
+- No KMS integration (file/env refs only). `pnpm keys:rotate` re-encrypts every ciphertext location (including call plans, permission context, drafts, idempotency responses); transient outbox payloads are not rewritten (drain first).
 - Admin API has no TLS or per-token scopes; it must stay on loopback/private network.
 - No metrics export/alerting yet; only structured logs, audit rows, and `/health/ready`.
 - No row-level security (optional per spec).
 - Prompt-injection and consent-refusal behavior against real speech cannot be tested until the conversation layer exists.
-- Docker image builds in CI (`image` job) but has never been run as a container; `pnpm audit` runs in CI only.
+- The image and database run as real containers in `deploy/smoke.sh` (run locally and in CI); a real host canary with Telegram has **not** been done. `pnpm audit` runs in CI and was run locally on 2026-10-17.
 - LGPL-3.0 `ntgcalls`: excluded from the production image; legal review required before bundling (ADR-0001).

@@ -40,3 +40,9 @@ Full release requires A01–A15; A16 describes honest degraded delivery and is n
 `tests/unit/interpreter-language-eval.test.ts`: 37 English and 28 Uzbek utterances, including ambiguous hours ("at 5"), missing time, invalid hour, bare "done",
 statements that are not requests, and injection-shaped text; every negative case must yield `clarify`/`unknown`, never an action. This evaluates the
 **rules interpreter** on typed text only. Noisy audio, ASR quality, interruptions and consent-refusal speech are **not** evaluated (no ASR/conversation layer).
+
+## Audit findings (2026-10-17)
+
+The 20 audit findings (F01–F20) map to their regression tests in [AUDIT_REMEDIATION.md](AUDIT_REMEDIATION.md): `unit/interpreter-negation`,
+`unit/telegram-convert`, `unit/chunk`, `unit/spike-call-guards`, `integration/audit-batch2`…`audit-batch7`, `integration/least-privilege`, and the
+container smoke `deploy/smoke.sh`.

@@ -51,6 +51,11 @@ $PSQL_APP -c "delete from audit_events" 2>&1 | grep -qi "permission denied" || f
 $PSQL_APP -c "select purge_audit_events(now())" 2>&1 | grep -qi "younger than 60 days" || fail "audit purge guard missing"
 pass "runtime login: no DDL, no audit rewrite, purge floor enforced"
 
+# Production requires the configured owner to exist in the database (audit F18). The smoke seeds one the way `bootstrap:owner` does,
+# as the bootstrap superuser: it is a disposable stack with fake ids and no Telegram access.
+$PSQL_ADMIN -c "WITH o AS (INSERT INTO owners (telegram_user_id) VALUES ('1') RETURNING id) INSERT INTO telegram_accounts (owner_id, assistant_telegram_user_id, session_secret_ref) SELECT id, '2', 'file:/run/secrets/telegram_session' FROM o" >/dev/null || fail "could not seed the smoke owner"
+pass "smoke owner seeded (production refuses to start without the configured owner)"
+
 $DC up -d assistant >/dev/null
 i=0; until curl -fsS "http://127.0.0.1:$PORT/health/live" >/dev/null 2>&1; do i=$((i+1)); [ $i -gt 40 ] && { $DC logs assistant | tail -20; fail "assistant did not become live"; }; sleep 1; done
 pass "assistant live as a least-privilege login"

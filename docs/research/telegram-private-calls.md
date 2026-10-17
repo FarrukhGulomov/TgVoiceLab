@@ -151,8 +151,8 @@ pnpm spike:login                # G0-A  protected interactive login; prints assi
 LIVE_TEST_OPT_IN=yes LIVE_TEST_RECIPIENT_ID=<numeric id> LIVE_TEST_RECIPIENT_CONSENT=yes \
   LIVE_TEST_WINDOW_START=<ISO> LIVE_TEST_WINDOW_END=<ISO> pnpm spike:call     # G0-B/C (refuses unless ALL are present)
 LIVE_TEST_MAX_SECONDS=300 ... pnpm spike:call                                   # G0-D five-minute two-way session
-LIVE_TEST_REPEAT=10 ...      pnpm spike:call                                   # G0-D ten consecutive short calls
-LIVE_TEST_SCENARIO=expect_decline ... pnpm spike:call                           # G0-E (ask the participant to decline); repeat for expect_busy
+LIVE_TEST_REPEAT=10 ...      pnpm spike:call                                   # G0-D ten consecutive short calls (aborts the whole batch on any uncertain or unproven call)
+LIVE_TEST_SCENARIO=expect_decline LIVE_TEST_EXPECTED_DISCARD_REASON=<exact class> ... pnpm spike:call   # G0-E (ask the participant to decline); the expected Telegram discard class is declared by the operator; repeat for expect_busy
 OPERATOR_ATTESTS_LIVE=yes pnpm spike:record-gate G0-F PASS <evidence file>     # G0-F target host/container + phone clients
 pnpm spike:evidence                                                             # assemble gate records
 ```
@@ -170,6 +170,8 @@ Recorded from the operator's runs on 2026-10-16. Raw evidence files stay local (
 | F-6 | G0-B: outgoing call set up, accepted, `CONNECTED`, held 30 s and ended by the script (`time_limit`) in one attempt. One attempt is not the G0-D criterion.                                                                                                                                                                                                                                                                                                                                                  | 1 PASS, still needs G0-D repeats               |
 | F-7 | Inbound audio: remote RTP (PT 111) arrived but was dropped by WebRTC (`Failed to demux RTP packet`, ~500 packets) because no receive stream was created (`recv=0`, no `AddRecvStream`). `onFrames` never fired. Attaching the PLAYBACK stream as `speaker` before `connectP2p` (the documented-looking setup) does not work.                                                                                                                                                                                | root cause localised                           |
 | F-8 | Workaround found in an upstream issue thread (ntgcalls #44, user-reported, **not** maintainer-validated) and reproduced locally with two in-process peers: attach CAPTURE before `connectP2p`; after connect attach PLAYBACK **on the `microphone` slot**, `unmute`, `resume`, and keep a continuous outbound stream. Local result: 801 inbound frames of 960 bytes (10 ms, 48 kHz mono s16), `mode=PLAYBACK device=MICROPHONE`. Applied to `live-call.mjs`; **not yet confirmed on a real Telegram call**. | local only                                     |
+
+| F-9 | After the audit, `live-call.mjs` was refactored (placement tracking, call-bound updates, per-placement window check, validated integers, default 10 ms frames, `LIVE_TEST_EXPECTED_DISCARD_REASON` for G0-E). The guard logic is unit-tested offline; **the refactored script has not been re-run against Telegram**. | re-run needed |
 
 Open: a real-call confirmation of F-8, `LIVE_TEST_REPEAT=10` and 5-minute runs (G0-D), decline/busy (G0-E), and a target-host canary (G0-F). The workaround depends on undocumented behaviour of a third-party native library; the adapter must pin the exact version and keep a regression test.
 

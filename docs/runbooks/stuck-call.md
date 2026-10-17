@@ -11,4 +11,5 @@
    ```
    The call becomes `ended`; the action is audited. A retry still needs a **fresh explicit authorization** — the old one is consumed.
 4. A live call the supervisor lost: `POST /v1/calls/<callId>/cancel` (idempotent), or [kill-switch.md](kill-switch.md).
-5. After a process crash the service reconciles orphaned calls at startup (`recoverOrphanedCalls`): provider says ended ⇒ `failed`; unknown ⇒ `outcome_unknown`; never redials.
+5. After a process crash the service reconciles orphaned calls at startup (`recoverOrphanedCalls`): the provider **confirming** the end ⇒ `failed`/`ended`; anything else (active, unknown) ⇒ `outcome_unknown` for every in-flight state; never redials. The same rule applies while running: a call whose end is not proven (no terminal event and no provider confirmation after a bounded hangup) is persisted as `outcome_unknown`.
+6. An `outcome_unknown` call also keeps its **budget reservation** until you resolve it; resolving settles it exactly once.
