@@ -140,6 +140,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
           textMode: cfg.GEMINI_TEXT_MODE,
           googleSearch: cfg.GEMINI_GOOGLE_SEARCH,
           languageCode: cfg.GEMINI_LANGUAGE_CODE,
+          ...(cfg.GEMINI_DEBUG ? { debug: (line: string) => log.info({ gemini: true }, line.slice(0, 200)) } : {}),
         })
       : new OpenAiRealtimeLink({
           apiKey: cfg.OPENAI_API_KEY!,
@@ -169,6 +170,12 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     makeLink,
     costUsdPerMinute: cfg.AI_VOICE_COST_USD_PER_MINUTE,
     log: (line) => log.debug({ call: true }, line.slice(0, 200)),
+    onDone: (d) =>
+      (d.errors.length || !('callFramesOut' in d.stats) || d.stats.callFramesOut === 0 ? log.warn : log.info).call(
+        log,
+        { contactCall: d },
+        'contact call conversation ended',
+      ),
   });
   sessionRunner = new RoutingCallRunner(db, ownerRunner, contactRunner);
   if (cfg.AI_VOICE_PROVIDER === 'gemini')

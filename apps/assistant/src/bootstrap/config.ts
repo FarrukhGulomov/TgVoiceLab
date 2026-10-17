@@ -31,6 +31,8 @@ const EnvSchema = z
     GEMINI_TEXT_MODE: z.enum(['realtime', 'client_content']).default('realtime'),
     GEMINI_GOOGLE_SEARCH: bool.default(false),
     GEMINI_LANGUAGE_CODE: opt(z.string()),
+    /** Log the Gemini Live session's protocol events (setup, audio counts, tool calls, close codes) at info level. No speech content is logged. */
+    GEMINI_DEBUG: bool.default(false),
     /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset settles 0 (documented gap). */
     AI_VOICE_COST_USD_PER_MINUTE: opt(z.coerce.number().positive().max(100)),
     DATA_ENCRYPTION_KEY_REF: opt(z.string()),

@@ -16,6 +16,8 @@ export interface ContactCallRunnerDeps {
   tasks?: TaskService | undefined;
   costUsdPerMinute?: number | undefined;
   log?: ((line: string) => void) | undefined;
+  /** Content-free end-of-call diagnostics (counters and error strings; never speech or transcripts). */
+  onDone?: ((d: { stats: Record<string, unknown>; errors: string[]; endReason: string; seconds: number }) => void) | undefined;
 }
 
 const OUTCOMES = [
@@ -174,6 +176,12 @@ export class ContactCallRunner implements CallSessionRunner {
     // The contact spoke at all? No speech in => the report must not claim a conversation happened.
     const spoke = bridge.stats.nonSilentFramesIn > 0;
     bridge.stop();
+    this.d.onDone?.({
+      stats: { ...bridge.stats, errors: undefined },
+      errors: [...bridge.stats.errors],
+      endReason: why,
+      seconds: Math.round((Date.now() - started) / 1000),
+    });
     const seconds = (Date.now() - started) / 1000;
     const usageMicroUsd = this.d.costUsdPerMinute ? Math.round((seconds / 60) * this.d.costUsdPerMinute * 1_000_000) : undefined;
     // What the system really did is appended from committed state, never from the model's say-so.
