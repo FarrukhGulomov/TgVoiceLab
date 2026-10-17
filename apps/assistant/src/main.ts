@@ -2,6 +2,7 @@ import { readdirSync } from 'node:fs';
 import { DateTime } from 'luxon';
 import { loadConfig } from './bootstrap/config.js';
 import { buildContainer } from './bootstrap/container.js';
+import { drainWorker, startLane } from './bootstrap/worker.js';
 import { createLogger } from './infrastructure/observability/logger.js';
 import { Db } from './infrastructure/db/db.js';
 import { MIGRATIONS_DIR } from './infrastructure/db/paths.js';
@@ -113,9 +114,9 @@ if (gateway) {
   log.info('telegram gateway started (identity verified)');
 }
 if (owner) {
-  // One retention sweep per day (dedupe key makes enqueue idempotent across restarts / replicas).
-  const { enqueueJob } = await import('./modules/jobs/jobs.js');
-  await enqueueJob(db, { ownerId: owner.id, kind: 'retention.sweep', dueAt: new Date(), dedupeKey: `retention:${new Date().toISOString().slice(0, 10)}` });
+  // Startup catch-up only: every completed sweep schedules its own successor in the same transaction (audit F09).
+  const { ensureRetentionScheduled } = await import('./modules/retention/schedule.js');
+  await ensureRetentionScheduled(db, owner.id, new Date());
 }
 const rec = await app.recoverCalls();
 if (rec.recovered) log.warn({ recovered: rec.recovered }, 'reconciled calls orphaned by a previous crash (no redial performed)');
@@ -140,21 +141,27 @@ log.info(
 );
 
 // ---- worker loop --------------------------------------------------------------------------------------------------------
+// Independent, non-overlapping lanes: a long call can never delay reminders or text delivery (audit F08).
 let stopping = false;
-let inflight: Promise<unknown> = Promise.resolve();
-const loop = setInterval(() => {
-  if (stopping) return;
-  inflight = inflight.then(() => app.tick()).catch((e: Error) => log.error({ err: e.message }, 'worker tick failed'));
-}, 1000);
+const lanes = (['jobs', 'calls', 'outbox'] as const).map((name) =>
+  startLane({
+    name,
+    intervalMs: 1000,
+    run: () => app.tickLane(name),
+    onError: (e, lane) => log.error({ err: e.message, lane }, 'worker tick failed'),
+  }),
+);
 
 async function shutdown(sig: string) {
   if (stopping) return;
   stopping = true;
   log.info({ sig }, 'draining');
-  clearInterval(loop);
   const hard = setTimeout(() => process.exit(1), 30_000); // spec §11.2: shut down within 30 s
   hard.unref();
-  await inflight.catch(() => undefined);
+  // Stop claiming, ask every live call to end, and let supervisors persist their final or uncertain state (restart recovery
+  // reconciles anything still unsettled and never redials).
+  const drained = await drainWorker({ lanes, registry: app.registry, deadlineMs: 20_000 });
+  if (drained.endedCalls || drained.timedOut) log.warn(drained, 'drained with live calls / deadline reached');
   await server.close();
   await gateway?.stop().catch(() => undefined);
   await db.close();

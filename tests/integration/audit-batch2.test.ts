@@ -216,3 +216,20 @@ describe('F20 — permission versions are allocated under a contact lock', () =>
     expect(new Set(v).size).toBe(v.length);
   });
 });
+
+describe('F07 — dead letters are inspectable (not silently retried)', () => {
+  it('lists dead outbox rows and dead jobs with truncated errors and no payload content', async () => {
+    await t.db.query(
+      `INSERT INTO outbox (owner_id, aggregate_type, aggregate_id, type, delivery_state, attempts, last_error) VALUES ($1,'thing',gen_random_uuid(),'x.test','dead',8,$2)`,
+      [o.ownerId, 'e'.repeat(500)],
+    );
+    await t.db.query(`INSERT INTO jobs (owner_id, kind, status, attempts, due_at, last_error) VALUES ($1,'k','dead',5,now(),'boom')`, [o.ownerId]);
+    const r = await api('GET', '/v1/operations/dead-letters');
+    expect(r.statusCode).toBe(200);
+    const d = r.json().data;
+    expect(d.outbox).toHaveLength(1);
+    expect(d.outbox[0].last_error).toHaveLength(200);
+    expect(d.jobs).toEqual([expect.objectContaining({ kind: 'k', last_error: 'boom' })]);
+    expect(JSON.stringify(d)).not.toContain('payload');
+  });
+});

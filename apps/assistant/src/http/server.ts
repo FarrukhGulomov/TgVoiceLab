@@ -367,6 +367,22 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
     })),
   );
 
+  // Dead-letter inspection (audit F07): rows that exhausted their attempts are never redelivered automatically; an operator can see them.
+  srv.get('/v1/operations/dead-letters', async (req, rep) => {
+    const ownerId = await owner(req);
+    const [outbox, jobs] = await Promise.all([
+      app.db.query(
+        `SELECT event_id AS id, type, attempts, left(coalesce(last_error,''),200) AS last_error, created_at FROM outbox WHERE owner_id=$1 AND delivery_state='dead' ORDER BY created_at DESC LIMIT 100`,
+        [ownerId],
+      ),
+      app.db.query(
+        `SELECT id, kind, attempts, left(coalesce(last_error,''),200) AS last_error, created_at FROM jobs WHERE owner_id=$1 AND status='dead' ORDER BY created_at DESC LIMIT 100`,
+        [ownerId],
+      ),
+    ]);
+    return ok(req, rep, { outbox: outbox.rows, jobs: jobs.rows });
+  });
+
   // ---- health & honest capability reporting (authenticated) -----------------------------------------------------------
   const capabilities = async (ownerId: string | null) => {
     const caps = deriveCapabilities(d.runtime.evidencePath, d.runtime.buildFingerprint);

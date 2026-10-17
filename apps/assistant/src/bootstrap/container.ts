@@ -16,8 +16,11 @@ import { ReminderService } from '../modules/scheduling/reminders.service.js';
 import { reminderFireHandler } from '../modules/scheduling/reminder-jobs.js';
 import { makeOutboxHandlers } from '../modules/messaging/outbox-handlers.js';
 import { runRetention } from '../modules/retention/retention.js';
-import { completeJob, runJobsOnce, type JobHandler } from '../modules/jobs/jobs.js';
+import { completeJob, LostLeaseError, runJobsOnce, type JobHandler } from '../modules/jobs/jobs.js';
+import { scheduleNextRetention } from '../modules/retention/schedule.js';
 import { dispatchOutboxOnce, type OutboxHandler } from '../modules/outbox/outbox.js';
+
+export type LaneName = 'jobs' | 'calls' | 'outbox';
 
 export interface ContainerDeps {
   db: Db;
@@ -33,6 +36,8 @@ export interface ContainerDeps {
   transcription?: TranscriptionPort;
   voiceDownloadTimeoutMs?: number;
   voiceMaxConcurrentDownloads?: number;
+  /** Extra job handlers (tests / future modules) with the lane that must run them. */
+  extraJobHandlers?: Record<string, { lane: LaneName; handler: JobHandler }>;
   workerId?: string;
 }
 
@@ -85,7 +90,11 @@ export function buildContainer(d: ContainerDeps) {
     // so a redelivered job is refused rather than redialed. The job is settled after the orchestrator returns, whatever the outcome.
     'retention.sweep': async (job, db) => {
       await runRetention(db, d.clock.now());
-      await completeJob(db, job);
+      // The successor is scheduled in the SAME transaction that completes this sweep, so maintenance renews itself (audit F09).
+      await db.tx(async (c) => {
+        await scheduleNextRetention(c, job.ownerId, d.clock.now());
+        if (!(await completeJob(c, job))) throw new LostLeaseError(job.id);
+      });
     },
     'call.dial': async (job, db) => {
       const { callRequestId } = job.payload as { callRequestId: string };
@@ -95,6 +104,22 @@ export function buildContainer(d: ContainerDeps) {
   };
   const outboxHandlers: Record<string, OutboxHandler> = makeOutboxHandlers({ db: d.db, crypto: d.crypto, messaging: d.messaging });
   const workerId = d.workerId ?? `worker-${process.pid}`;
+  const laneOf = (kind: string): LaneName => d.extraJobHandlers?.[kind]?.lane ?? (kind === 'call.dial' ? 'calls' : 'jobs');
+  for (const [kind, x] of Object.entries(d.extraJobHandlers ?? {})) jobHandlers[kind] = x.handler;
+  const laneHandlers = (lane: LaneName): Record<string, JobHandler> =>
+    Object.fromEntries(Object.entries(jobHandlers).filter(([kind]) => laneOf(kind) === lane));
+
+  const clockNow = () => d.clock.now();
+  const runOutboxLane = () => dispatchOutboxOnce(d.db, outboxHandlers, { workerId, now: d.clock.now(), clockNow });
+  const runJobLane = (lane: Exclude<LaneName, 'outbox'>) =>
+    runJobsOnce(d.db, laneHandlers(lane), {
+      workerId,
+      leaseMs: lane === 'calls' ? 60_000 : 30_000,
+      limit: lane === 'calls' ? 1 : 20,
+      now: d.clock.now(),
+      clockNow,
+      handlerTimeoutMs: lane === 'calls' ? 30 * 60_000 : 60_000,
+    });
 
   return {
     ...d,
@@ -111,12 +136,28 @@ export function buildContainer(d: ContainerDeps) {
     outboxHandlers,
     /** Run once at startup, before taking work: reconcile calls orphaned by a crash. Never redials. */
     recoverCalls: () => recoverOrphanedCalls({ db: d.db, clock: d.clock, adapter: callAdapter, registry, callBudgetMicroUsd: callBudget }),
-    /** One worker iteration at the clock's current time. */
+    /**
+     * One iteration of ONE independent lane. Long call supervision (`calls`) can never delay reminders or text delivery
+     * (`jobs`, `outbox`) because each lane polls on its own (audit F08).
+     */
+    async tickLane(lane: LaneName) {
+      return lane === 'outbox' ? runOutboxLane() : runJobLane(lane);
+    },
+    /** All lanes once, sequentially (tests and one-shot tooling). */
     async tick() {
-      const now = d.clock.now();
-      const jobs = await runJobsOnce(d.db, jobHandlers, { workerId, leaseMs: 30_000, limit: 20, now });
-      const outbox = await dispatchOutboxOnce(d.db, outboxHandlers, { workerId, now });
-      return { jobs, outbox };
+      const jobs = await runJobLane('jobs');
+      const calls = await runJobLane('calls');
+      const outbox = await runOutboxLane();
+      return {
+        jobs: {
+          claimed: jobs.claimed + calls.claimed,
+          done: jobs.done + calls.done,
+          retried: jobs.retried + calls.retried,
+          dead: jobs.dead + calls.dead,
+          lost: jobs.lost + calls.lost,
+        },
+        outbox,
+      };
     },
   };
 }

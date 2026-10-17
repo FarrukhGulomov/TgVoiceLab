@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import type { Db, Queryable } from '../../infrastructure/db/db.js';
+import { withTimeout } from '../../application/async.js';
 
 export interface EnqueueArgs {
   ownerId: string;
@@ -121,17 +122,35 @@ export class LostLeaseError extends Error {
 
 export type JobHandler = (job: ClaimedJob, db: Db) => Promise<void>;
 
-/** One poll iteration: claim, dispatch, and settle. Returns counts for observability and tests. */
+export interface RunJobsOptions {
+  workerId: string;
+  leaseMs: number;
+  limit: number;
+  now: Date;
+  /** Live clock for lease renewal and settlement; defaults to the fixed `now` (deterministic tests). */
+  clockNow?: () => Date;
+  /** Per-handler time limit. A handler that exceeds it is failed (retry / dead-letter) instead of blocking the lane forever. */
+  handlerTimeoutMs?: number;
+  onDead?: (j: ClaimedJob, err: string) => Promise<void>;
+}
+
+/**
+ * One poll iteration: claim, dispatch, and settle. While a handler runs its lease is renewed periodically, so a long job (e.g. a
+ * call) is not reclaimed mid-run; if renewal fails the lease is lost and the handler's own fenced `completeJob` will refuse.
+ */
 export async function runJobsOnce(
   db: Db,
   handlers: Record<string, JobHandler>,
-  a: { workerId: string; leaseMs: number; limit: number; now: Date; onDead?: (j: ClaimedJob, err: string) => Promise<void> },
+  a: RunJobsOptions,
 ): Promise<{ claimed: number; done: number; retried: number; dead: number; lost: number }> {
   const jobs = await claimJobs(db, { ...a, kinds: Object.keys(handlers) });
+  const nowFn = a.clockNow ?? (() => a.now);
   const out = { claimed: jobs.length, done: 0, retried: 0, dead: 0, lost: 0 };
   for (const j of jobs) {
+    const renew = setInterval(() => void renewLease(db, j, a.leaseMs, nowFn()).catch(() => undefined), Math.max(10, Math.floor(a.leaseMs / 3)));
     try {
-      await handlers[j.kind]!(j, db);
+      const run = handlers[j.kind]!(j, db);
+      await (a.handlerTimeoutMs ? withTimeout(run, a.handlerTimeoutMs, `job ${j.kind}`) : run);
       out.done++;
     } catch (e) {
       if (e instanceof LostLeaseError) {
@@ -139,12 +158,14 @@ export async function runJobsOnce(
         continue;
       }
       const msg = e instanceof Error ? e.message : String(e);
-      const res = await failJob(db, j, msg, a.now);
+      const res = await failJob(db, j, msg, nowFn());
       if (res === 'retry') out.retried++;
       else if (res === 'dead') {
         out.dead++;
         await a.onDead?.(j, msg);
       } else out.lost++;
+    } finally {
+      clearInterval(renew);
     }
   }
   return out;

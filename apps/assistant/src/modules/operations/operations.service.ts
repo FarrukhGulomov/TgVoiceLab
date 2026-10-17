@@ -17,6 +17,9 @@ export class ActiveCallRegistry {
   remove(id: string) {
     this.m.delete(id);
   }
+  all() {
+    return [...this.m.values()];
+  }
   list(ownerId: string) {
     return [...this.m.values()].filter((c) => c.ownerId === ownerId);
   }

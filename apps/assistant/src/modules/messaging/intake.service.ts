@@ -13,6 +13,7 @@ import type { TaskService, Task } from '../tasks/tasks.service.js';
 import type { ReminderService } from '../scheduling/reminders.service.js';
 import { describeInstant, resolveWallClock } from '../scheduling/wallclock.js';
 import { t, type Locale, type MessageKey } from './i18n.js';
+import { Limiter, withTimeout } from '../../application/async.js';
 
 export const VOICE_MAX_SECONDS = 300; // spec §9.3: five minutes
 export const VOICE_MAX_BYTES = 20 * 1024 * 1024; // spec §9.3: 20 MiB
@@ -50,31 +51,6 @@ export type IntakeResult =
   | { status: 'handled'; intent: Intent['kind'] | 'voice_rejected' | 'forwarded_ignored' | 'voice_uncertain' };
 
 const SUPPORTED_VOICE_MIME = /^audio\/(?:ogg|opus|mpeg|mp3|mp4|x-m4a|aac|wav|x-wav|webm)(?:\s*;.*)?$/i;
-
-/** Bounded concurrency for media downloads: a burst of voice notes cannot exhaust memory or bandwidth. */
-class Limiter {
-  private active = 0;
-  private readonly waiting: Array<() => void> = [];
-  constructor(private readonly max: number) {}
-  async run<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.active >= this.max) await new Promise<void>((resolve) => this.waiting.push(resolve));
-    this.active++;
-    try {
-      return await fn();
-    } finally {
-      this.active--;
-      this.waiting.shift()?.();
-    }
-  }
-}
-
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('voice download timed out')), ms);
-  });
-  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
-}
 
 export class IntakeService {
   private readonly downloads: Limiter;
@@ -125,7 +101,8 @@ export class IntakeService {
         try {
           // Authorized + every cheap check passed: only now fetch the payload (bounded concurrency and time).
           const v = m.voice;
-          const bytes = v.bytes ?? (v.download ? await this.downloads.run(() => withTimeout(v.download!(), this.downloadTimeoutMs)) : undefined);
+          const bytes =
+            v.bytes ?? (v.download ? await this.downloads.run(() => withTimeout(v.download!(), this.downloadTimeoutMs, 'voice download')) : undefined);
           if (!bytes || bytes.byteLength > VOICE_MAX_BYTES) throw new Error('voice payload missing or over the byte cap');
           const tr = await this.d.transcription.transcribe({ bytes, mime: v.mime, durationSeconds: v.durationSeconds });
           text = tr.text;
