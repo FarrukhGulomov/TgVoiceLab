@@ -52,7 +52,7 @@ async function world(
   const app = boot(t.url, clock, new FakeMessaging(), 'w', {
     callAdapter: adapter,
     deriveCapabilities: () => ALL_PASS,
-    ringTimeoutMs: 200,
+    ringTimeoutMs: 3000,
     ...(opts.dailyCap ? { dailyCapMicroUsd: opts.dailyCap } : {}),
     ...(opts.extra ?? {}),
   });

@@ -41,7 +41,7 @@ beforeEach(async () => {
   clock = new FakeClock(new Date(NOW));
   adapter = new FakeCallAdapter();
   adapter.script = { kind: 'answer' };
-  app = boot(t.url, clock, new FakeMessaging(), 'w', { callAdapter: adapter, deriveCapabilities: () => ALL_PASS, ringTimeoutMs: 200 });
+  app = boot(t.url, clock, new FakeMessaging(), 'w', { callAdapter: adapter, deriveCapabilities: () => ALL_PASS, ringTimeoutMs: 3000 });
   srv = await buildServer({
     app,
     log: createLogger('silent'),
