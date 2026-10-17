@@ -22,6 +22,7 @@ const PLAIN_TEXT_CONFIDENCE = 0.75;
 const PROMPT = [
   'Transcribe this voice message exactly as spoken. The speaker most likely speaks Uzbek (Latin script); Russian and English are also possible.',
   'Write Uzbek in Latin script. Do not translate, summarize, add or answer anything.',
+  'Typical content: short commands to a personal assistant, e.g. "ertaga soat 10 da hisobotni ko\'rib chiqishni eslat", "vazifalarim", "qo\'ng\'iroq qilib eslat", "dori ichishni eslat", "kontakt qo\'sh", "1-vazifani bajardim", times (soat 9, 14:30), weekdays and dates. Prefer these words when the audio is ambiguous.',
   'Reply ONLY with JSON: {"text": string, "confident": boolean, "language": string}.',
   '"confident" is false if parts of the audio were unclear, noisy, or you had to guess words or numbers (dates, times, names). If there is no speech, text is "".',
 ].join(' ');

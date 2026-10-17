@@ -179,6 +179,9 @@ export class IntakeService {
 
       await this.storeMessage(c, p, m, text, confidence);
 
+      // A voice note is always answered with what was heard, so a mishearing is visible before (or next to) the confirmation.
+      if (m.voice && !rejection && text.trim()) await this.reply(c, p, t(p.locale, 'voice_heard', { text: text.trim().slice(0, 300) }));
+
       let replyText: string | null;
       let kind: Extract<IntakeResult, { status: 'handled' }>['intent'];
       if (rejection) {
