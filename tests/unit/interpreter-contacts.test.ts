@@ -82,3 +82,18 @@ describe('owner phrasing seen live (voice-call reminders, relative minutes)', ()
     expect(await go("ertaga 10:00 da onamga qo'ng'iroq qilishni eslat")).not.toHaveProperty('byCall');
   });
 });
+
+describe('live phrasing 2', () => {
+  const go = (text: string, at: string) => interp.interpret(text, { receivedAt: new Date(at), timezone: 'Asia/Samarkand', locale: 'uz' });
+  it('"X degan kontaktga qungiroq qil va ... sura 12:59 da" -> call_contact', async () => {
+    expect(await go('Ofiyatim degan kontaktga qungiroq qil va ovqat tayyormi sura 12:59 da', '2026-10-17T07:58:30Z')).toEqual({
+      kind: 'call_contact',
+      contact: 'Ofiyatim',
+      message: 'ovqat tayyormi sura',
+      at: { date: '2026-10-17', time: '12:59' },
+    });
+  });
+  it('"soat 13:01 ga qungiroq qil va dori ichishni eslat" -> clean title', async () => {
+    expect(await go('soat 13:01 ga qungiroq qil va dori ichishni eslat', '2026-10-17T08:00:30Z')).toMatchObject({ title: 'dori ichish', byCall: true });
+  });
+});
