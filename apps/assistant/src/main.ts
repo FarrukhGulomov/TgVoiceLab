@@ -122,39 +122,57 @@ let sessionRunner: import('./modules/calls/orchestrator.js').CallSessionRunner |
 if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const { OwnerCallRunner } = await import('./modules/calls/conversation/owner-call-runner.js');
   const { TaskService } = await import('./modules/tasks/tasks.service.js');
+  const { ContactService } = await import('./modules/contacts/contacts.service.js');
+  const { ContactCallService } = await import('./modules/calls/contact-calls.service.js');
+  const { AuthorizationService } = await import('./modules/calls/authorizations.service.js');
   const { ReminderService } = await import('./modules/scheduling/reminders.service.js');
   const { GeminiLiveLink } = await import('./infrastructure/gemini/live.js');
   const { OpenAiRealtimeLink } = await import('./infrastructure/openai/realtime.js');
-  sessionRunner = new OwnerCallRunner({
+  const makeLink = ({ instructions, tools }: { instructions: string; tools: import('./modules/calls/audio/realtime-bridge.js').ToolDeclaration[] }) =>
+    cfg.AI_VOICE_PROVIDER === 'gemini'
+      ? new GeminiLiveLink({
+          apiKey: cfg.GEMINI_API_KEY!,
+          model: cfg.GEMINI_LIVE_MODEL!,
+          voice: cfg.GEMINI_VOICE,
+          instructions,
+          tools,
+          textMode: cfg.GEMINI_TEXT_MODE,
+          googleSearch: cfg.GEMINI_GOOGLE_SEARCH,
+          languageCode: cfg.GEMINI_LANGUAGE_CODE,
+        })
+      : new OpenAiRealtimeLink({
+          apiKey: cfg.OPENAI_API_KEY!,
+          model: cfg.OPENAI_REALTIME_MODEL!,
+          voice: cfg.OPENAI_VOICE,
+          instructions,
+          tools,
+          dialect: cfg.OPENAI_REALTIME_DIALECT,
+          transcriptionModel: cfg.OPENAI_TRANSCRIPTION_MODEL,
+        });
+  const ownerRunner = new OwnerCallRunner({
     db,
     tasks: new TaskService(crypto),
     reminders: new ReminderService(db, crypto, systemClock),
     clock: systemClock,
     callRemindersLive: cfg.CALLS_ENABLED,
+    contacts: new ContactService(crypto),
+    contactCalls: cfg.CALLS_ENABLED ? new ContactCallService(new AuthorizationService(db, systemClock, crypto), systemClock) : undefined,
     costUsdPerMinute: cfg.AI_VOICE_COST_USD_PER_MINUTE,
     log: (line) => log.debug({ call: true }, line.slice(0, 200)), // transcripts are never persisted or logged above debug level
-    makeLink: ({ instructions, tools }) =>
-      cfg.AI_VOICE_PROVIDER === 'gemini'
-        ? new GeminiLiveLink({
-            apiKey: cfg.GEMINI_API_KEY!,
-            model: cfg.GEMINI_LIVE_MODEL!,
-            voice: cfg.GEMINI_VOICE,
-            instructions,
-            tools,
-            textMode: cfg.GEMINI_TEXT_MODE,
-            googleSearch: cfg.GEMINI_GOOGLE_SEARCH,
-            languageCode: cfg.GEMINI_LANGUAGE_CODE,
-          })
-        : new OpenAiRealtimeLink({
-            apiKey: cfg.OPENAI_API_KEY!,
-            model: cfg.OPENAI_REALTIME_MODEL!,
-            voice: cfg.OPENAI_VOICE,
-            instructions,
-            tools,
-            dialect: cfg.OPENAI_REALTIME_DIALECT,
-            transcriptionModel: cfg.OPENAI_TRANSCRIPTION_MODEL,
-          }),
+    makeLink,
   });
+  const { ContactCallRunner, RoutingCallRunner } = await import('./modules/calls/conversation/contact-call-runner.js');
+  const contactRunner = new ContactCallRunner({
+    db,
+    makeLink,
+    costUsdPerMinute: cfg.AI_VOICE_COST_USD_PER_MINUTE,
+    log: (line) => log.debug({ call: true }, line.slice(0, 200)),
+  });
+  sessionRunner = new RoutingCallRunner(db, ownerRunner, contactRunner);
+  if (cfg.AI_VOICE_PROVIDER === 'gemini')
+    log.warn(
+      "contact calls send the contact's voice to Gemini; on the free tier Google may use that data to improve its products — use a paid tier before calling contacts",
+    );
   log.warn({ provider: cfg.AI_VOICE_PROVIDER }, 'owner-call conversation layer loaded; calls still require CALLS_ENABLED and valid evidence');
 }
 

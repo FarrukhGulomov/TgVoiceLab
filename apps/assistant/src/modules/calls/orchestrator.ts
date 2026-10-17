@@ -25,7 +25,12 @@ import { openPlan, PlanIntegrityError } from './plan-store.js';
  * blocked behind the Phase 0 gates. The default runner ends the call immediately, so no unverified conversational path exists.
  */
 export interface CallSessionRunner {
-  run(ctx: { callId: string; ownerId: string; plan: ApprovedCallPlan; handle: CallHandle }): Promise<{ endReason: CallEndReason; usageMicroUsd?: number }>;
+  run(ctx: { callId: string; ownerId: string; plan: ApprovedCallPlan; handle: CallHandle }): Promise<{
+    endReason: CallEndReason;
+    usageMicroUsd?: number;
+    /** Contact calls: what the AI reports back to the owner (the narrative is stored sealed). */
+    report?: { outcome: string; summary: string };
+  }>;
 }
 export const noSessionRunner: CallSessionRunner = { run: async () => ({ endReason: 'cancelled' }) };
 
@@ -417,6 +422,7 @@ export class CallOrchestrator {
     let providerCallId: string | undefined;
     let terminalSeen = false;
     let usageMicroUsd = 0;
+    let report: { outcome: string; summary: string } | undefined;
     const endOnce = async (reason: CallEndReason) => {
       if (ending) return;
       ending = true;
@@ -467,6 +473,7 @@ export class CallOrchestrator {
           void this.runner.run({ callId, ownerId, plan, handle }).then(
             (r) => {
               usageMicroUsd = r.usageMicroUsd ?? 0;
+              report = r.report;
               return endOnce(r.endReason);
             },
             () => endOnce('transport_error'),
@@ -513,7 +520,24 @@ export class CallOrchestrator {
       }
       await c.query(`UPDATE call_requests SET status=$2 WHERE id=$1`, [callRequestId, final === 'completed' ? 'completed' : 'failed']);
       await settleCallBudget(c, ownerId, callId, usageMicroUsd, now);
-      // Truthful minimal report: no conversation layer exists yet, so the report is explicitly incomplete.
+      if (report) {
+        await c.query(
+          `INSERT INTO call_reports (call_id, owner_id, status, structured_result, narrative_enc, complete) VALUES ($1,$2,'generated',$3,$4,true) ON CONFLICT (call_id) DO NOTHING`,
+          [
+            callId,
+            ownerId,
+            JSON.stringify({ outcome: report.outcome, endReason: final, conversationHeld: true }),
+            this.d.crypto.enc(ownerId, 'call_reports.narrative', report.summary),
+          ],
+        );
+        await emitOutbox(
+          c,
+          { ownerId, aggregateType: 'call', aggregateId: callId, type: 'call.report', payload: { outcome: report.outcome, reason: final } },
+          now,
+        );
+        return;
+      }
+      // Truthful minimal report: no conversation took place.
       await c.query(
         `INSERT INTO call_reports (call_id, owner_id, status, structured_result, complete) VALUES ($1,$2,'generated',$3,false) ON CONFLICT (call_id) DO NOTHING`,
         [callId, ownerId, JSON.stringify({ outcome: terminalState, endReason: final, conversationHeld: false, note: 'no conversation layer ran' })],

@@ -73,6 +73,7 @@ export function buildContainer(d: ContainerDeps) {
   const derive = d.deriveCapabilities ?? noCaps;
   const contacts = new ContactService(d.crypto);
   const authorizations = new AuthorizationService(d.db, d.clock, d.crypto);
+  const contactCalls = d.callsEnabled ? new ContactCallService(authorizations, d.clock) : undefined;
   const operations = new OperationsService(d.db, d.clock, registry);
   const orchestrator = new CallOrchestrator({
     db: d.db,
@@ -98,7 +99,7 @@ export function buildContainer(d: ContainerDeps) {
     transcription: d.transcription,
     ownerCalls: operations,
     contacts,
-    ...(d.callsEnabled ? { contactCalls: new ContactCallService(authorizations, d.clock) } : {}),
+    ...(contactCalls ? { contactCalls } : {}),
     ...(d.voiceDownloadTimeoutMs ? { voiceDownloadTimeoutMs: d.voiceDownloadTimeoutMs } : {}),
     ...(d.voiceMaxConcurrentDownloads ? { voiceMaxConcurrentDownloads: d.voiceMaxConcurrentDownloads } : {}),
   });
@@ -189,6 +190,7 @@ export function buildContainer(d: ContainerDeps) {
     reminders,
     intake,
     contacts,
+    contactCalls,
     authorizations,
     operations,
     registry,

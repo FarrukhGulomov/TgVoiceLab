@@ -3,6 +3,8 @@ import type { Db } from '../../../infrastructure/db/db.js';
 import type { Clock } from '../../../application/clock.js';
 import { DomainError, NotFoundError, ValidationError, VersionConflictError } from '../../../application/errors.js';
 import type { Task, TaskService } from '../../tasks/tasks.service.js';
+import type { ContactService } from '../../contacts/contacts.service.js';
+import type { ContactCallService } from '../contact-calls.service.js';
 import type { ReminderService } from '../../scheduling/reminders.service.js';
 import { writeAudit } from '../../audit/audit.js';
 import { describeInstant, resolveWallClock } from '../../scheduling/wallclock.js';
@@ -63,6 +65,16 @@ export const OWNER_CALL_TOOL_DECLARATIONS: ToolDeclaration[] = [
     },
   },
   {
+    name: 'call_contact',
+    description:
+      "Egasi tasdiqlagan kontaktga (ro'yxatdagi ism bo'yicha) uning nomidan qo'ng'iroq qilishni navbatga qo'yadi. AVVAL egasidan ism va nima deyilishini so'rab, ovoz chiqarib tasdiqlat. name — kontakt ismi; message — kontaktga nima yetkazilishi yoki nima haqida gaplashilishi; date (YYYY-MM-DD) va time (HH:mm) ixtiyoriy (bo'lmasa darrov). Natijaga qarab egasiga haqiqatni ayt.",
+    parameters: {
+      type: 'object',
+      properties: { name: { type: 'string' }, message: { type: 'string' }, date: { type: 'string' }, time: { type: 'string' } },
+      required: ['name', 'message'],
+    },
+  },
+  {
     name: 'end_call',
     description:
       "Qo'ng'iroqni tugatadi. FAQAT egasi aniq xayrlashganda ('xayr', 'sog' bo'ling', 'boshqa gapim yo'q') chaqir: avval qisqa xayrlash, KEYIN shu vositani chaqir. Suhbat o'rtasida hech qachon chaqirma.",
@@ -81,6 +93,9 @@ export interface OwnerCallToolsDeps {
   clock: Clock;
   ownerId: string;
   timezone: string;
+  /** Present only when contact calling is built; without them the model is told it cannot call contacts. */
+  contacts?: ContactService | undefined;
+  contactCalls?: ContactCallService | undefined;
   /** Called when the model asks to end the call; the bridge hangs up after the farewell has played. */
   onEndCall: () => void | Promise<void>;
 }
@@ -190,6 +205,37 @@ export class OwnerCallTools {
             },
           };
         }
+        case 'call_contact': {
+          const { contacts, contactCalls } = this.d;
+          if (!contacts || !contactCalls) return { result: { ok: false, error: "kontaktlarga qo'ng'iroq hozir yoqilmagan" } };
+          const name = String(call.args.name ?? '');
+          const message = String(call.args.message ?? '');
+          const due = this.#optionalDue(call.args);
+          const out = await this.d.db.tx(async (c) => {
+            const r = await contacts.resolveByName(c, this.d.ownerId, name);
+            if (r.kind === 'none') return { ok: false as const, error: `'${name}' nomli kontakt yo'q` };
+            if (r.kind === 'many') return { ok: false as const, error: `bir nechta mos kontakt: ${r.names.join(', ')}; qaysi biri?` };
+            const res = await contactCalls.request(c, this.d.ownerId, { contactId: r.contact.id, message, dueAt: due?.utc, language: 'uz' });
+            if (!res.ok)
+              return { ok: false as const, error: res.reason === 'empty_message' ? 'nima deyilishi aniq emas' : "bu kontaktga qo'ng'iroq ruxsati yo'q" };
+            await writeAudit(c, {
+              ownerId: this.d.ownerId,
+              actorType: 'owner',
+              action: 'contact_call.request',
+              resourceType: 'contact',
+              resourceId: r.contact.id,
+              allowed: true,
+              reasonCode: 'ok',
+              metadata: { channel: 'owner_call' },
+            });
+            return { ok: true as const, contact: r.contact.displayName, when: this.#fmt(res.dueAt) };
+          });
+          return {
+            result: out.ok
+              ? { ok: true, contact: out.contact, when: out.when, note: "Qo'ng'iroq navbatga qo'yildi; natija Telegramda hisobot bo'lib keladi." }
+              : out,
+          };
+        }
         case 'end_call': {
           return { result: { ok: true }, respond: false, afterPlayout: () => this.d.onEndCall() };
         }
@@ -262,7 +308,7 @@ export function buildOwnerCallInstructions(a: {
     list,
     "Vazifani bajarilgan deb belgilash yoki muddatini ko'chirish uchun FAQAT complete_task va move_task vositalarini ishlat, raqam bo'yicha. Vosita 'ok: true' qaytargandan keyingina egasiga bajarilganini ayt; xato qaytarsa, buni ochiq ayt. Ko'chirishda yangi sana va vaqtni aniq ayt.",
     "Vazifa raqami noaniq bo'lsa yoki egasi bir nechta vazifani nazarda tutsa, avval so'ra. Hech qachon taxmin bilan o'zgartirma.",
-    "Egasi so'rasa, create_task bilan yangi vazifa, create_reminder bilan eslatma qo'sha olasan (sana va vaqtni aniqlashtirib ol; 'ertaga' kabilarni yuqoridagi hozirgi vaqtdan hisoblab ber). Qo'ng'iroq bilan eslatish (by_call) faqat egasi aniq so'raganda; natijadagi delivery/note ni halol ayt. Kontaktlar bilan ish qila olmaysan. Vosita 'ok: true' demaguncha hech narsani 'qo'shdim/o'rnatdim' dema.",
+    "Egasi so'rasa, create_task bilan yangi vazifa, create_reminder bilan eslatma qo'sha olasan (sana va vaqtni aniqlashtirib ol; 'ertaga' kabilarni yuqoridagi hozirgi vaqtdan hisoblab ber). Qo'ng'iroq bilan eslatish (by_call) faqat egasi aniq so'raganda; natijadagi delivery/note ni halol ayt. Kontaktga qo'ng'iroq: egasi so'rasa call_contact (avval ism va nima deyilishini ovoz chiqarib tasdiqlat). Vosita 'ok: true' demaguncha hech narsani 'qo'shdim/o'rnatdim' dema.",
     "Umumiy bilim savollariga qisqa javob ber. Qisqa gapir: bir-ikki jumla. Egasi gapira boshlasa, to'xta va tingla.",
     "Suhbat tugaganda (egasi aniq xayrlashsa yoki boshqa gapi yo'qligini aytsa) qisqa xayrlash, so'ng end_call vositasini chaqir. Suhbat o'rtasida end_call chaqirma.",
   ].join('\n');

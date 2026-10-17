@@ -78,6 +78,7 @@ const CATALOG = {
     version_conflict: 'That item changed in the meantime. Please check the list and try again.',
     internal_error: 'Something went wrong on my side; nothing was changed. Please try again.',
     fallback_clarify: 'Could you rephrase that?',
+    call_report: 'Call report — {name} ({outcome}):\n{summary}',
     call_rejected: 'The call to {name} was not placed: {reason}.',
     call_ended: 'The call to {name} ended ({reason}). No conversation took place — the conversation layer is not enabled in this build.',
     call_outcome_unknown:
@@ -160,6 +161,7 @@ const CATALOG = {
     version_conflict: 'Bu element shu orada o‘zgargan. Ro‘yxatni tekshirib, qayta urinib ko‘ring.',
     internal_error: 'Mening tomonimda xatolik yuz berdi; hech narsa o‘zgarmadi. Qayta urinib ko‘ring.',
     fallback_clarify: 'Iltimos, boshqacha ifodalab ko‘ring.',
+    call_report: 'Qo‘ng‘iroq hisoboti — {name} ({outcome}):\n{summary}',
     call_rejected: '{name} bilan qo‘ng‘iroq amalga oshirilmadi: {reason}.',
     call_ended: '{name} bilan qo‘ng‘iroq tugadi ({reason}). Suhbat bo‘lmadi — bu versiyada suhbat qatlami yoqilmagan.',
     call_outcome_unknown: '{name} bilan qo‘ng‘iroq qilinganini aniqlay olmadim. O‘zim qayta urinmayman. Qayta urinishimni xohlasangiz, aniq ayting.',
@@ -240,6 +242,7 @@ const CATALOG = {
     version_conflict: 'Элемент тем временем изменился. Проверьте список и повторите.',
     internal_error: 'Ошибка с моей стороны; ничего не изменено. Повторите попытку.',
     fallback_clarify: 'Переформулируйте, пожалуйста.',
+    call_report: 'Отчёт о звонке — {name} ({outcome}):\n{summary}',
     call_rejected: 'Звонок {name} не совершён: {reason}.',
     call_ended: 'Звонок {name} завершён ({reason}). Разговора не было — слой диалога не включён в этой сборке.',
     call_outcome_unknown: 'Не удалось подтвердить, был ли совершён звонок {name}. Сам повторять не буду. Скажите явно, если хотите, чтобы я попробовал снова.',

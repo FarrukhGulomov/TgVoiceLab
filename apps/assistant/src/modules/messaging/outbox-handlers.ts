@@ -164,6 +164,24 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
       await messaging.sendMessage({ toTelegramUserId: owner.telegram_user_id, text, silent: p.silent, idempotencyKey: row.eventId });
     },
 
+    'call.report': async (row) => {
+      const p = row.payload as { outcome: string; reason?: string };
+      const owner = await loadOwner(row.ownerId);
+      const r = (
+        await db.query<{ narrative_enc: string | null; display_name: string }>(
+          `SELECT rp.narrative_enc, c.display_name FROM call_reports rp JOIN calls k ON k.id=rp.call_id JOIN call_requests q ON q.id=k.call_request_id JOIN contacts c ON c.id=q.contact_id WHERE rp.call_id=$1 AND rp.owner_id=$2`,
+          [row.aggregateId, row.ownerId],
+        )
+      ).rows[0];
+      if (!r) return; // a call to the owner has no contact report
+      const summary = r.narrative_enc ? crypto.dec(row.ownerId, 'call_reports.narrative', r.narrative_enc) : '';
+      await messaging.sendMessage({
+        toTelegramUserId: owner.telegram_user_id,
+        text: t(owner.locale, 'call_report', { name: r.display_name, outcome: p.outcome, summary }),
+        idempotencyKey: row.eventId,
+      });
+    },
+
     'call.notify': async (row) => {
       const p = row.payload as { variant: 'rejected' | 'ended' | 'outcome_unknown'; reason?: string };
       const owner = await loadOwner(row.ownerId);

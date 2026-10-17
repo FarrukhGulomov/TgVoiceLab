@@ -123,7 +123,7 @@ describe('OwnerCallRunner', () => {
     const { link, instructions, tools } = s.links[0]!;
     expect(instructions).toContain('1. Hisobot (muddati: 2026-10-16 15:00)');
     expect(instructions).toContain('2026-10-16 09:00 (Asia/Samarkand)');
-    expect(tools.map((x) => x.name)).toEqual(['list_tasks', 'complete_task', 'move_task', 'create_task', 'create_reminder', 'end_call']);
+    expect(tools.map((x) => x.name)).toEqual(['list_tasks', 'complete_task', 'move_task', 'create_task', 'create_reminder', 'call_contact', 'end_call']);
     expect(link.greeting).toContain('Brifingni boshla');
     // the model completes a task by voice: committed, then confirmed
     link.toolCb!({ id: 'a', name: 'complete_task', args: { number: 1 } });

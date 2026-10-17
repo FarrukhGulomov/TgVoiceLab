@@ -3,6 +3,8 @@ import type { Db } from '../../../infrastructure/db/db.js';
 import type { Clock } from '../../../application/clock.js';
 import type { TaskService } from '../../tasks/tasks.service.js';
 import type { ReminderService } from '../../scheduling/reminders.service.js';
+import type { ContactService } from '../../contacts/contacts.service.js';
+import type { ContactCallService } from '../contact-calls.service.js';
 import type { CallSessionRunner } from '../orchestrator.js';
 import { RealtimeCallBridge, type RealtimeLink, type ToolDeclaration } from '../audio/realtime-bridge.js';
 import { OWNER_CALL_TOOL_DECLARATIONS, OwnerCallTools, buildOwnerCallInstructions } from './owner-call-tools.js';
@@ -16,6 +18,8 @@ export interface OwnerCallRunnerDeps {
   makeLink(a: { instructions: string; tools: ToolDeclaration[] }): RealtimeLink;
   /** True when a reminder set `by_call` will really ring (calling enabled). Told to the model so it never over-promises. */
   callRemindersLive: boolean;
+  contacts?: ContactService | undefined;
+  contactCalls?: ContactCallService | undefined;
   /** Estimated provider cost, used only to settle the call budget. Unset => settles 0 (documented gap). */
   costUsdPerMinute?: number | undefined;
   log?: ((line: string) => void) | undefined;
@@ -49,6 +53,8 @@ export class OwnerCallRunner implements CallSessionRunner {
       ownerId,
       timezone: owner.timezone,
       callRemindersLive: this.d.callRemindersLive,
+      contacts: this.d.contacts,
+      contactCalls: this.d.contactCalls,
       onEndCall: () => endRequested(),
     });
     await tools.load();

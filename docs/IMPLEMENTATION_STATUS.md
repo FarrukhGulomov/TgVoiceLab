@@ -58,6 +58,12 @@ See `docs/ACCEPTANCE_MAP.md` for A01–A16 and the test that covers each.
 - The source BRD (`AI yordamchi imkoniyatlari`) was **not in the repository**; nothing was invented from it (ADR-0006).
 - Vitest 5 / TypeScript 5.9 / ESLint 9 chosen; TypeScript 7.x was available but unsupported by typescript-eslint.
 
+## Contact calls (ADR 0007)
+
+Implemented offline: contact grammar (add/remove/list, `call_contact` in chat and by voice), owner-attested consent, `ContactCallRunner`
+(AI disclosure, `submit_report`/`end_call`), sealed report to the owner. **Not verified live**, and dialing a contact still needs all six
+evidence gates (G0-D 10 calls, G0-E variants, G0-F canary) — not recorded yet.
+
 ## Not verified because of sandbox limits
 
 `core.telegram.org`, `github.com` and `developers.openai.com` were blocked by the egress proxy. Telegram call-protocol facts come from the GramJS TL schema and
