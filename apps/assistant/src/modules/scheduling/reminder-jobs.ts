@@ -6,10 +6,12 @@ import { writeAudit } from '../audit/audit.js';
 import { nextOccurrence, type Recurrence } from './recurrence.js';
 import { inQuietHours, type QuietHours } from './quiet-hours.js';
 
-export type FireOutcome = 'fired' | 'fired_late' | 'call_downgraded_to_message' | 'missed_summarized' | 'stale_rejected';
+export type FireOutcome = 'fired' | 'fired_late' | 'call_downgraded_to_message' | 'missed_summarized' | 'briefing_skipped' | 'stale_rejected';
 
 export const MESSAGE_GRACE_MS = 24 * 3600_000; // spec §7: deliver overdue message reminders within 24h, once
 export const CALL_GRACE_MS = 5 * 60_000; // spec §7: call reminders missed by >5 min become message notices
+/** A morning briefing that could not be sent for hours is stale news: skip it silently instead of delivering it late. */
+export const BRIEFING_GRACE_MS = 3 * 3600_000;
 
 export interface FireDeps {
   clock: Clock;
@@ -21,6 +23,7 @@ interface ReminderRow {
   status: string;
   schedule_version: number;
   mode: 'message' | 'call';
+  kind: 'reminder' | 'briefing';
   recurrence: Recurrence | null;
   timezone: string;
   local: string;
@@ -32,7 +35,7 @@ export async function fireReminderOccurrence(db: Db, job: ClaimedJob, deps: Fire
     const now = deps.clock.now();
     // Lock order: reminder, then occurrence. Reschedule/cancel take the same order, so they serialize with us.
     const rem = await c.query<ReminderRow>(
-      `SELECT id, owner_id, status, schedule_version, mode, recurrence, timezone, to_char(local_wall_clock, 'YYYY-MM-DD"T"HH24:MI') AS local
+      `SELECT id, owner_id, status, schedule_version, mode, kind, recurrence, timezone, to_char(local_wall_clock, 'YYYY-MM-DD"T"HH24:MI') AS local
        FROM reminders WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
       [reminderId, job.ownerId],
     );
@@ -67,7 +70,17 @@ export async function fireReminderOccurrence(db: Db, job: ClaimedJob, deps: Fire
 
     let outcome: FireOutcome;
     let variant: string | null;
-    if (lateMs > MESSAGE_GRACE_MS) {
+    if (r.kind === 'briefing') {
+      if (lateMs > BRIEFING_GRACE_MS) {
+        outcome = 'briefing_skipped';
+        variant = null;
+        await c.query(`UPDATE reminder_occurrences SET state='summarized_missed', fired_at=$2 WHERE id=$1`, [occurrenceId, now]);
+      } else {
+        outcome = lateMs > CALL_GRACE_MS ? 'fired_late' : 'fired';
+        variant = 'briefing';
+        await c.query(`UPDATE reminder_occurrences SET state='fired', fired_at=$2 WHERE id=$1`, [occurrenceId, now]);
+      }
+    } else if (lateMs > MESSAGE_GRACE_MS) {
       outcome = 'missed_summarized';
       variant = 'missed_summary';
       await c.query(`UPDATE reminder_occurrences SET state='summarized_missed', fired_at=$2 WHERE id=$1`, [occurrenceId, now]);
@@ -87,17 +100,18 @@ export async function fireReminderOccurrence(db: Db, job: ClaimedJob, deps: Fire
       }
     }
 
-    await emitOutbox(
-      c,
-      {
-        ownerId: job.ownerId,
-        aggregateType: 'reminder',
-        aggregateId: reminderId,
-        type: 'reminder.notify',
-        payload: { reminderId, occurrenceId, variant, silent: quiet, scheduledAt: o.scheduled_at.toISOString() },
-      },
-      now,
-    );
+    if (variant)
+      await emitOutbox(
+        c,
+        {
+          ownerId: job.ownerId,
+          aggregateType: 'reminder',
+          aggregateId: reminderId,
+          type: 'reminder.notify',
+          payload: { reminderId, occurrenceId, variant, silent: quiet, scheduledAt: o.scheduled_at.toISOString() },
+        },
+        now,
+      );
 
     // Schedule the next occurrence (recurring) or complete the reminder, in the same transaction as the firing.
     if (r.recurrence) {

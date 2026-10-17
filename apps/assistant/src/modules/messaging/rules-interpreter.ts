@@ -124,6 +124,20 @@ export class RulesInterpreter implements TextInterpreterPort {
     if (/\b(?:stop\s+calling(?:\s+me)?|(?:do\s*n'?t|do\s+not)\s+call\s+me|qo'ng'iroq\s+qilma(?:ng)?|qong'iroq\s+qilma(?:ng)?)\b/.test(low))
       return { kind: 'stop_calling' };
 
+    // daily briefing: "daily briefing at 8", "brief me every day at 08:30", "har kuni soat 8 da brifing", "brifingni o'chir"
+    // A reminder/task that merely MENTIONS a briefing ("remind me to prepare the briefing at 9") is not a briefing command.
+    if (/\b(?:briefing|brief\s+me|brifing\w*)\b/.test(low) && !/\b(?:remind\w*|reminder|task|todo|vazifa\w*|eslat\w*)\b/.test(low)) {
+      if (/\b(?:cancel|stop|disable|remove|delete|turn\s+off|o'chir\w*|bekor|to'xtat\w*)\b/.test(low)) {
+        if (notAnExplicitCommand(text, low)) return { kind: 'clarify', question: t(ctx.locale, 'not_a_command') };
+        return { kind: 'cancel_briefing' };
+      }
+      const w = extractWhen(text, ctx);
+      const amb = clarifyWhen(w, ctx);
+      if (amb) return amb;
+      if (!w.time) return { kind: 'clarify', question: t(ctx.locale, 'briefing_ask_time') };
+      return { kind: 'set_briefing', time: w.time };
+    }
+
     if (
       /^(?:\/tasks|(?:my|list|show)(?:\s+(?:my|all|open))*\s+tasks?|what(?:'s|\s+are)\s+my\s+tasks|tasks?|vazifalarim|vazifalar(?:\s+ro'yxati)?|vazifalarni\s+ko'rsat)\??$/.test(
         low,

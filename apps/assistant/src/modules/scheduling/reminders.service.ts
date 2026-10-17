@@ -19,6 +19,7 @@ export interface ReminderView {
   nextOccurrenceAt: string | null;
   next: { date: string; time: string; tz: string } | null;
   mode: 'message' | 'call';
+  kind: 'reminder' | 'briefing';
   status: 'active' | 'cancelled' | 'completed';
   version: number;
   scheduleVersion: number;
@@ -32,11 +33,12 @@ interface Row {
   recurrence: Recurrence | null;
   next_occurrence_at: Date | null;
   mode: 'message' | 'call';
+  kind: 'reminder' | 'briefing';
   status: ReminderView['status'];
   version: number;
   schedule_version: number;
 }
-const COLS = `id, title_enc, to_char(local_wall_clock, 'YYYY-MM-DD"T"HH24:MI') AS local_wall_clock, timezone, recurrence, next_occurrence_at, mode, status, version, schedule_version`;
+const COLS = `id, title_enc, to_char(local_wall_clock, 'YYYY-MM-DD"T"HH24:MI') AS local_wall_clock, timezone, recurrence, next_occurrence_at, mode, kind, status, version, schedule_version`;
 
 export interface CreateReminderInput {
   title: string;
@@ -44,6 +46,7 @@ export interface CreateReminderInput {
   timezone?: string | undefined;
   recurrence?: Recurrence | undefined;
   mode?: 'message' | 'call' | undefined;
+  kind?: 'reminder' | 'briefing' | undefined;
   taskId?: string | undefined;
 }
 
@@ -64,6 +67,7 @@ export class ReminderService {
       nextOccurrenceAt: r.next_occurrence_at?.toISOString() ?? null,
       next: r.next_occurrence_at ? describeInstant(r.next_occurrence_at, r.timezone) : null,
       mode: r.mode,
+      kind: r.kind,
       status: r.status,
       version: r.version,
       scheduleVersion: r.schedule_version,
@@ -127,8 +131,8 @@ export class ReminderService {
       if (!title) throw new ValidationError('title is required');
       const first = this.firstInstant(i.localDateTime, tz, i.recurrence, this.clock.now());
       const ins = await c.query<Row>(
-        `INSERT INTO reminders (owner_id, task_id, title_enc, local_wall_clock, timezone, recurrence, mode)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING ${COLS}`,
+        `INSERT INTO reminders (owner_id, task_id, title_enc, local_wall_clock, timezone, recurrence, mode, kind)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${COLS}`,
         [
           ownerId,
           i.taskId ?? null,
@@ -137,6 +141,7 @@ export class ReminderService {
           tz,
           i.recurrence ? JSON.stringify(i.recurrence) : null,
           i.mode ?? 'message',
+          i.kind ?? 'reminder',
         ],
       );
       const id = ins.rows[0]!.id;
@@ -260,6 +265,55 @@ export class ReminderService {
     return idemCtx ? run(idemCtx) : this.db.tx(run);
   }
 
+  /**
+   * Daily briefing at a local wall-clock time ("HH:mm"): one active briefing per owner. Setting a new time replaces the old one in the
+   * same transaction (the old occurrence and its job are cancelled and fenced, like any reschedule).
+   */
+  async setBriefing(ownerId: string, time: string, idemCtx?: pg.PoolClient): Promise<ReminderView> {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new ValidationError('time must be HH:mm');
+    const run = async (c: pg.PoolClient) => {
+      await this.cancelBriefing(ownerId, c, true);
+      const tz = await this.ownerTz(c, ownerId);
+      const today = DateTime.fromJSDate(this.clock.now(), { zone: tz }).toFormat('yyyy-LL-dd');
+      return this.create(
+        ownerId,
+        { title: 'briefing', localDateTime: `${today}T${time}`, timezone: tz, recurrence: { freq: 'daily', interval: 1 }, kind: 'briefing' },
+        c,
+      );
+    };
+    return idemCtx ? run(idemCtx) : this.db.tx(run);
+  }
+
+  /** Cancel the owner's active briefing, if any. Returns whether one was cancelled. `silent` skips the owner notice (used by replace). */
+  async cancelBriefing(ownerId: string, idemCtx?: pg.PoolClient, silent = false): Promise<boolean> {
+    const run = async (c: pg.PoolClient) => {
+      const cur = await c.query<{ id: string }>(`SELECT id FROM reminders WHERE owner_id=$1 AND kind='briefing' AND status='active' FOR UPDATE`, [ownerId]);
+      const id = cur.rows[0]?.id;
+      if (!id) return false;
+      await this.cancelScheduled(c, id);
+      await c.query(`UPDATE reminders SET status='cancelled', next_occurrence_at=NULL, schedule_version=schedule_version+1, version=version+1 WHERE id=$1`, [
+        id,
+      ]);
+      if (!silent)
+        await emitOutbox(
+          c,
+          { ownerId, aggregateType: 'reminder', aggregateId: id, type: 'owner.notice', payload: { template: 'reminder_cancelled', reminderId: id } },
+          this.clock.now(),
+        );
+      await writeAudit(c, {
+        ownerId,
+        actorType: 'owner',
+        action: 'briefing.cancel',
+        resourceType: 'reminder',
+        resourceId: id,
+        allowed: true,
+        reasonCode: 'ok',
+      });
+      return true;
+    };
+    return idemCtx ? run(idemCtx) : this.db.tx(run);
+  }
+
   async get(ownerId: string, id: string): Promise<ReminderView> {
     const r = await this.db.query<Row>(`SELECT ${COLS} FROM reminders WHERE id=$1 AND owner_id=$2`, [id, ownerId]);
     if (!r.rows[0]) throw new NotFoundError('reminder');
@@ -267,10 +321,10 @@ export class ReminderService {
   }
 
   async listActive(ownerId: string, limit = 50): Promise<ReminderView[]> {
-    const r = await this.db.query<Row>(`SELECT ${COLS} FROM reminders WHERE owner_id=$1 AND status='active' ORDER BY next_occurrence_at NULLS LAST LIMIT $2`, [
-      ownerId,
-      limit,
-    ]);
+    const r = await this.db.query<Row>(
+      `SELECT ${COLS} FROM reminders WHERE owner_id=$1 AND status='active' AND kind='reminder' ORDER BY next_occurrence_at NULLS LAST LIMIT $2`,
+      [ownerId, limit],
+    );
     return r.rows.map((x) => this.view(ownerId, x));
   }
 }

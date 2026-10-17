@@ -6,6 +6,8 @@ import type { OutboxHandler } from '../outbox/outbox.js';
 import { t, type Locale, type MessageKey } from './i18n.js';
 import type { Recurrence } from '../scheduling/recurrence.js';
 import { chunkText } from './chunk.js';
+import { composeBriefing } from './briefing.js';
+import type { TaskService } from '../tasks/tasks.service.js';
 
 interface OwnerRow {
   telegram_user_id: string;
@@ -18,6 +20,7 @@ interface ReminderRow {
   recurrence: Recurrence | null;
   next_occurrence_at: Date | null;
   local: string;
+  kind: 'reminder' | 'briefing';
 }
 
 const recurrenceText = (loc: Locale, rec: Recurrence | null): string => {
@@ -52,7 +55,7 @@ const REASONS: Record<string, string> = {
 };
 
 /** Outbox -> Telegram. Idempotent on the outbox event id (used as the provider dedupe key). */
-export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging: MessagingPort }): Record<string, OutboxHandler> {
+export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging: MessagingPort; tasks: TaskService }): Record<string, OutboxHandler> {
   const { db, crypto } = deps;
   // Every send goes through the central length limit: long text becomes "(i/N)" chunks with stable per-chunk idempotency keys, so a
   // retry after a partial failure re-sends the same keys and the provider suppresses the ones already delivered.
@@ -76,7 +79,7 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
   const loadReminder = async (ownerId: string, id: string): Promise<ReminderRow & { title: string }> => {
     const r = (
       await db.query<ReminderRow>(
-        `SELECT title_enc, timezone, recurrence, next_occurrence_at, to_char(local_wall_clock,'YYYY-MM-DD"T"HH24:MI') AS local FROM reminders WHERE id=$1 AND owner_id=$2`,
+        `SELECT title_enc, kind, timezone, recurrence, next_occurrence_at, to_char(local_wall_clock,'YYYY-MM-DD"T"HH24:MI') AS local FROM reminders WHERE id=$1 AND owner_id=$2`,
         [id, ownerId],
       )
     ).rows[0]!;
@@ -95,7 +98,18 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
       const owner = await loadOwner(row.ownerId);
       const rem = await loadReminder(row.ownerId, p.reminderId);
       let text: string;
-      if (p.template === 'reminder_cancelled') text = t(owner.locale, 'reminder_cancelled', { title: rem.title });
+      if (rem.kind === 'briefing') {
+        // The daily briefing has its own wording: it is not "a reminder with a title".
+        if (p.template === 'reminder_cancelled') text = t(owner.locale, 'briefing_cancelled');
+        else {
+          const at = DateTime.fromISO(p.scheduledAt!, { zone: p.timezone ?? rem.timezone });
+          text = t(owner.locale, 'briefing_scheduled', {
+            time: DateTime.fromISO(rem.local, { zone: rem.timezone }).toFormat('HH:mm'),
+            tz: p.timezone ?? rem.timezone,
+            dst: p.dstGap ? t(owner.locale, 'dst_gap', { time: at.toFormat('HH:mm') }) : '',
+          });
+        }
+      } else if (p.template === 'reminder_cancelled') text = t(owner.locale, 'reminder_cancelled', { title: rem.title });
       else {
         // Render the instant captured when the notice was created, not the reminder's current (mutable) next occurrence:
         // the notice may be delivered long after the fact (outage), when the reminder has already fired or moved.
@@ -118,6 +132,21 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
       const owner = await loadOwner(row.ownerId);
       const rem = await loadReminder(row.ownerId, p.reminderId);
       const sched = DateTime.fromISO(p.scheduledAt, { zone: owner.timezone });
+      if (p.variant === 'briefing') {
+        const b = await composeBriefing({
+          q: db,
+          tasks: deps.tasks,
+          ownerId: row.ownerId,
+          locale: owner.locale,
+          timezone: owner.timezone,
+          scheduledAt: sched.toJSDate(),
+        });
+        // "Done 2" / "move the second task to tomorrow" must resolve against what the owner is actually looking at.
+        if (b.taskIds.length)
+          await db.query('INSERT INTO list_snapshots (owner_id, kind, item_ids, created_at) VALUES ($1,$2,$3,now())', [row.ownerId, 'tasks', b.taskIds]);
+        await messaging.sendMessage({ toTelegramUserId: owner.telegram_user_id, text: b.text, silent: p.silent, idempotencyKey: row.eventId });
+        return;
+      }
       const key =
         (
           {

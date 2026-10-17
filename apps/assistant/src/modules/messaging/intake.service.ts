@@ -343,6 +343,15 @@ export class IntakeService {
         });
         return t(loc, 'calls_stopped');
       }
+      case 'set_briefing': {
+        // The scheduling confirmation (with the exact local time and zone) is emitted via the outbox by the service itself.
+        await reminders.setBriefing(p.ownerId, intent.time, c);
+        return null;
+      }
+      case 'cancel_briefing': {
+        // On success the cancellation notice travels through the outbox; "nothing to cancel" is answered directly.
+        return (await reminders.cancelBriefing(p.ownerId, c)) ? null : t(loc, 'briefing_none');
+      }
       case 'create_task': {
         const due = intent.due ? this.local(intent.due, p.timezone) : null;
         const task = await tasks.create(c, p.ownerId, { title: intent.title, dueAt: due?.utc });

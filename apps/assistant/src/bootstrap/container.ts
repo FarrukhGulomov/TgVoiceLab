@@ -115,7 +115,7 @@ export function buildContainer(d: ContainerDeps) {
       await completeJob(db, job);
     },
   };
-  const outboxHandlers: Record<string, OutboxHandler> = makeOutboxHandlers({ db: d.db, crypto: d.crypto, messaging: d.messaging });
+  const outboxHandlers: Record<string, OutboxHandler> = makeOutboxHandlers({ db: d.db, crypto: d.crypto, messaging: d.messaging, tasks });
   const workerId = d.workerId ?? `worker-${process.pid}`;
   const laneOf = (kind: string): LaneName => d.extraJobHandlers?.[kind]?.lane ?? (kind === 'call.dial' ? 'calls' : 'jobs');
   for (const [kind, x] of Object.entries(d.extraJobHandlers ?? {})) jobHandlers[kind] = x.handler;

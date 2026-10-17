@@ -41,6 +41,8 @@ export type Intent =
   | { kind: 'reschedule_reminder'; ref: TaskRef; at: LocalDateTime }
   | { kind: 'cancel_reminder'; ref: TaskRef }
   | { kind: 'list_reminders' }
+  | { kind: 'set_briefing'; time: string } // HH:mm, daily
+  | { kind: 'cancel_briefing' }
   | { kind: 'stop_calling' }
   | { kind: 'help' }
   | { kind: 'clarify'; question: string; draft?: ClarificationDraft }
