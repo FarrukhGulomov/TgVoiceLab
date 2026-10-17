@@ -42,7 +42,11 @@ export type FakeCallScript =
   | { kind: 'unknown_outcome'; providerCallId?: string }
   | { kind: 'hang_in_dial' }
   | { kind: 'event_stream_dies' }
-  | { kind: 'duplicate_events' };
+  | { kind: 'duplicate_events' }
+  /** Rings and connects, then goes completely silent: no events, the stream never closes. */
+  | { kind: 'silent_after_connect' }
+  /** The adapter ignores the abort signal and only returns a handle after `delayMs` (an unkillable dial). */
+  | { kind: 'dial_ignores_abort'; delayMs: number };
 
 /** FAKE call adapter. Scripted behaviors for tests; its events are synthetic and can never count as live evidence. */
 export class FakeCallAdapter implements TelegramCallAdapter {
@@ -50,6 +54,10 @@ export class FakeCallAdapter implements TelegramCallAdapter {
   readonly dials: ApprovedCallPlan[] = [];
   readonly ended: Array<{ callId: string; reason: CallEndReason }> = [];
   reconcileResult: ReconcileResult = 'unknown';
+  /** `end()` rejects (hangup failed). */
+  endShouldFail = false;
+  /** `end()` resolves but the provider never reports the end (no event, stream stays open). */
+  endSilent = false;
   async capabilities(): Promise<CallAdapterCapabilities> {
     return { privateOutbound: true, privateInbound: false, pcmSend: true, pcmReceive: true, evidenceArtifact: 'FAKE', buildFingerprint: 'fake' };
   }
@@ -61,6 +69,7 @@ export class FakeCallAdapter implements TelegramCallAdapter {
     const s = this.script;
     if (s.kind === 'reject') throw new DialRejectedError(s.reason, undefined, s.retryAfterSeconds);
     if (s.kind === 'unknown_outcome') throw new DialOutcomeUnknownError('socket closed after request', s.providerCallId);
+    if (s.kind === 'dial_ignores_abort') await new Promise((r) => setTimeout(r, s.delayMs));
     if (s.kind === 'hang_in_dial')
       await new Promise((_, rej) => signal.addEventListener('abort', () => rej(new Error('aborted while dialing')), { once: true }));
 
@@ -78,6 +87,8 @@ export class FakeCallAdapter implements TelegramCallAdapter {
     const callId = plan.callRequestId;
     const providerCallId = `fake-provider-${this.dials.length}`;
     const adapterEnded = this.ended;
+    const failEnd = () => this.endShouldFail;
+    const silentEnd = () => this.endSilent;
     const handle: CallHandle = {
       callId,
       incomingAudio: (async function* (): AsyncGenerator<PcmFrame> {
@@ -95,14 +106,17 @@ export class FakeCallAdapter implements TelegramCallAdapter {
       async sendAudio() {},
       async flushOutput() {},
       async end(reason) {
+        if (failEnd()) throw new Error('FAKE hangup failed');
         adapterEnded.push({ callId, reason });
+        if (silentEnd()) return;
         push({ type: 'ended', reason });
         close();
       },
     };
     queueMicrotask(() => {
       push({ type: 'ringing', providerCallId });
-      if (s.kind === 'answer') setTimeout(() => push({ type: 'connected', providerCallId }), 1);
+      if (s.kind === 'answer' || s.kind === 'silent_after_connect' || s.kind === 'dial_ignores_abort')
+        setTimeout(() => push({ type: 'connected', providerCallId }), 1);
       else if (s.kind === 'no_answer') {
         /* never answers: the orchestrator's ring timeout must fire */
       } else if (s.kind === 'event_stream_dies') setTimeout(close, 5);

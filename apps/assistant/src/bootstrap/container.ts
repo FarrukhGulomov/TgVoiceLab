@@ -31,6 +31,9 @@ export interface ContainerDeps {
   deriveCapabilities?: () => DerivedCapabilities;
   sessionRunner?: CallSessionRunner;
   callBudgetMicroUsd?: number;
+  /** Daily cap (micro-USD); the day's budget row is created lazily so budgets survive midnights without a restart. */
+  dailyCapMicroUsd?: number;
+  callTimeouts?: { dialMs?: number; eventIdleMs?: number; hangupMs?: number };
   ringTimeoutMs?: number;
   interpreter?: TextInterpreterPort;
   transcription?: TranscriptionPort;
@@ -73,6 +76,8 @@ export function buildContainer(d: ContainerDeps) {
     ...(d.sessionRunner ? { sessionRunner: d.sessionRunner } : {}),
     callBudgetMicroUsd: callBudget,
     ...(d.ringTimeoutMs ? { ringTimeoutMs: d.ringTimeoutMs } : {}),
+    ...(d.dailyCapMicroUsd ? { dailyCapMicroUsd: d.dailyCapMicroUsd } : {}),
+    ...(d.callTimeouts ? { timeouts: d.callTimeouts } : {}),
   });
   const intake = new IntakeService({
     db: d.db,
@@ -82,6 +87,7 @@ export function buildContainer(d: ContainerDeps) {
     reminders,
     interpreter: d.interpreter ?? new RulesInterpreter(),
     transcription: d.transcription,
+    ownerCalls: operations,
     ...(d.voiceDownloadTimeoutMs ? { voiceDownloadTimeoutMs: d.voiceDownloadTimeoutMs } : {}),
     ...(d.voiceMaxConcurrentDownloads ? { voiceMaxConcurrentDownloads: d.voiceMaxConcurrentDownloads } : {}),
   });

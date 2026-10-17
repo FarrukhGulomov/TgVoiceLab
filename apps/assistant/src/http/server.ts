@@ -9,7 +9,6 @@ import { runIdempotent } from '../modules/idempotency/idempotency.js';
 import { enqueueJob } from '../modules/jobs/jobs.js';
 import { writeAudit } from '../modules/audit/audit.js';
 import { deriveCapabilities } from '../modules/calls/capability-evidence.js';
-import { transitionCall } from '../modules/calls/state-machine.js';
 
 export interface ServerDeps {
   app: Container;
@@ -321,21 +320,7 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
       z.object({ operatorConfirmsNoLiveCall: z.literal(true), note: z.string().min(3).max(300) }),
       async ({ ownerId, body, c, req }) => {
         const { id } = idParam.parse(req.params);
-        const cur = await c.query<{ state: string }>('SELECT state FROM calls WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, ownerId]);
-        if (!cur.rows[0]) throw new DomainError('not_found', 'call not found');
-        if (cur.rows[0].state !== 'outcome_unknown') throw new DomainError('invalid_state', `call is ${cur.rows[0].state}, not outcome_unknown`);
-        await transitionCall(c, ownerId, id, 'ended', { endReason: 'outcome_unknown', now: app.clock.now() });
-        await writeAudit(c, {
-          ownerId,
-          actorType: 'admin_api',
-          action: 'call.resolve_unknown',
-          resourceType: 'call',
-          resourceId: id,
-          allowed: true,
-          reasonCode: 'operator_confirmed_no_live_call',
-          correlationId: req.id,
-          metadata: { noteLength: body.note.length },
-        });
+        await app.operations.resolveUnknownCall(ownerId, id, { note: body.note, now: app.clock.now(), requestId: req.id }, c);
         return { status: 200, data: { resolved: true, retryRequiresFreshAuthorization: true } };
       },
     ),

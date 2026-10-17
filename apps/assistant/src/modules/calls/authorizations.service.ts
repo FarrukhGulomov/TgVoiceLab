@@ -32,25 +32,34 @@ export class AuthorizationService {
     const planHash = computePlanHash(body);
 
     return inTx(q, async (c) => {
-      const contact = await c.query<{ id: string; telegram_user_id: string; verified_at: Date | null }>(
-        'SELECT id, telegram_user_id, verified_at FROM contacts WHERE owner_id=$1 AND telegram_user_id=$2',
-        [ownerId, body.recipientTelegramId],
-      );
-      const ct = contact.rows[0];
-      if (!ct) throw new NotFoundError('contact');
-      if (!ct.verified_at) throw new ValidationError('contact identity is not verified (numeric id required)');
-      const perm = await c.query<{ version: number }>(
-        'SELECT version FROM contact_permissions WHERE contact_id=$1 AND owner_id=$2 ORDER BY version DESC LIMIT 1',
-        [ct.id, ownerId],
-      );
-      const permissionVersion = perm.rows[0]?.version ?? 0;
+      // A call addressed to the owner's own numeric id is an OWNER call: no contact row or permission applies, the owner's
+      // opt-out and quiet hours do (decided in the dial policy). Everything else needs a verified contact.
+      const ownerRow = await c.query<{ telegram_user_id: string }>('SELECT telegram_user_id FROM owners WHERE id=$1', [ownerId]);
+      const isOwnerCall = ownerRow.rows[0]?.telegram_user_id === body.recipientTelegramId;
+      let contactId: string | null = null;
+      let permissionVersion = 0;
+      if (!isOwnerCall) {
+        const contact = await c.query<{ id: string; telegram_user_id: string; verified_at: Date | null }>(
+          'SELECT id, telegram_user_id, verified_at FROM contacts WHERE owner_id=$1 AND telegram_user_id=$2',
+          [ownerId, body.recipientTelegramId],
+        );
+        const ct = contact.rows[0];
+        if (!ct) throw new NotFoundError('contact');
+        if (!ct.verified_at) throw new ValidationError('contact identity is not verified (numeric id required)');
+        const perm = await c.query<{ version: number }>(
+          'SELECT version FROM contact_permissions WHERE contact_id=$1 AND owner_id=$2 ORDER BY version DESC LIMIT 1',
+          [ct.id, ownerId],
+        );
+        contactId = ct.id;
+        permissionVersion = perm.rows[0]?.version ?? 0;
+      }
 
       const auth = await c.query<{ id: string }>(
         `INSERT INTO authorizations (owner_id, action, target_contact_id, plan, plan_hash, source_message_id, state, expires_at, approved_at, created_at)
-         VALUES ($1,'contact_call',$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+         VALUES ($1,$10,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
         [
           ownerId,
-          ct.id,
+          contactId,
           JSON.stringify(redactedPlan(body)), // authorizations never hold free text; the approved plan lives sealed in call_requests
           planHash,
           opts.sourceMessageId ?? null,
@@ -58,6 +67,7 @@ export class AuthorizationService {
           body.expiresAt,
           opts.ownerExplicitCommand ? now : null,
           now,
+          isOwnerCall ? 'owner_call' : 'contact_call',
         ],
       );
       const authorizationId = auth.rows[0]!.id;
@@ -69,7 +79,7 @@ export class AuthorizationService {
         [
           body.callRequestId,
           ownerId,
-          ct.id,
+          contactId,
           JSON.stringify(sealed.shell),
           sealed.enc,
           planHash,

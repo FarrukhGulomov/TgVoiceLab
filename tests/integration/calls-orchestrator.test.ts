@@ -391,13 +391,21 @@ describe('A12 — kill switch / revocation during a live call', () => {
 });
 
 describe('A13 / state-machine robustness', () => {
-  it('event stream dying after answer => controlled end as transport_error, no false completion', async () => {
+  it('event stream dying after answer, provider CONFIRMS it is over => controlled end as transport_error, no false completion', async () => {
     const w = await world({ script: { kind: 'event_stream_dies' }, ringTimeoutMs: 5000 });
+    w.adapter.reconcileResult = 'ended';
     const req = await w.request();
     const out = await w.app.orchestrator.dial(o.ownerId, req.callRequestId);
     expect(out).toMatchObject({ status: 'finished', endReason: 'transport_error' });
     expect(out.status === 'finished' && out.state).not.toBe('active');
     expect((await t.db.query('SELECT complete FROM call_reports')).rows[0].complete).toBe(false);
+    await w.app.close();
+  });
+  it('event stream dying after answer, end NOT proven => outcome_unknown (the account stays occupied), not a false "ended"', async () => {
+    const w = await world({ script: { kind: 'event_stream_dies' }, ringTimeoutMs: 5000 }); // default reconcile: unknown
+    const req = await w.request();
+    expect((await w.app.orchestrator.dial(o.ownerId, req.callRequestId)).status).toBe('outcome_unknown');
+    expect((await t.db.query('SELECT state FROM calls')).rows[0].state).toBe('outcome_unknown');
     await w.app.close();
   });
   it('duplicate provider events are applied once', async () => {

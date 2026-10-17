@@ -101,7 +101,16 @@ if (cfg.TEXT_AI_ADAPTER === 'openai') {
 }
 
 const derive = () => deriveCapabilities(cfg.CALL_FEASIBILITY_EVIDENCE_PATH, cfg.BUILD_FINGERPRINT);
-const app = buildContainer({ db, crypto, clock: systemClock, messaging, callAdapter, deriveCapabilities: derive, workerId: `worker-${process.pid}` });
+const app = buildContainer({
+  db,
+  crypto,
+  clock: systemClock,
+  messaging,
+  callAdapter,
+  deriveCapabilities: derive,
+  workerId: `worker-${process.pid}`,
+  ...(cfg.DAILY_AI_BUDGET_USD ? { dailyCapMicroUsd: Math.round(cfg.DAILY_AI_BUDGET_USD * 1_000_000) } : {}),
+});
 
 const owner = (await db.query<{ id: string; timezone: string }>('SELECT id, timezone FROM owners ORDER BY created_at LIMIT 1')).rows[0];
 if (owner && cfg.DAILY_AI_BUDGET_USD) {

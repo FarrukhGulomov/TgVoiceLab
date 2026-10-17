@@ -66,6 +66,14 @@ export class IntakeService {
       transcription?: TranscriptionPort | undefined;
       voiceDownloadTimeoutMs?: number;
       voiceMaxConcurrentDownloads?: number;
+      /**
+       * Owner opt-out scope: calls TO the owner. `cancelOwnerCallIntents` runs inside the intake transaction; `terminateLiveOwnerCalls`
+       * runs after it commits (audit F14).
+       */
+      ownerCalls?: {
+        cancelOwnerCallIntents(q: pg.PoolClient, ownerId: string): Promise<number>;
+        terminateLiveOwnerCalls(ownerId: string): Promise<number>;
+      };
     },
   ) {
     this.downloads = new Limiter(d.voiceMaxConcurrentDownloads ?? 2);
@@ -122,7 +130,8 @@ export class IntakeService {
       ? null
       : await this.d.interpreter.interpret(text, { receivedAt: m.receivedAt, timezone: p.timezone, locale: p.locale });
 
-    return db.tx(async (c) => {
+    const afterCommit: Array<() => Promise<unknown>> = [];
+    const result = await db.tx(async (c) => {
       // Durable dedupe + effect in ONE transaction: a crash before commit means redelivery reprocesses from scratch; after
       // commit, redelivery is a no-op. Together that gives exactly-once *effect* for at-least-once *delivery*.
       const ins = await c.query('INSERT INTO inbound_updates (account_id, update_key) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING 1', [
@@ -140,11 +149,14 @@ export class IntakeService {
         kind = outcome ?? 'voice_rejected';
       } else {
         kind = intent!.kind;
-        replyText = await this.execute(c, p, intent!);
+        replyText = await this.execute(c, p, intent!, afterCommit);
       }
       if (replyText !== null) await this.reply(c, p, replyText);
       return { status: 'handled', intent: kind } as const;
     });
+    // External effects (ending a live call) happen only after the transaction committed.
+    if (result.status === 'handled') for (const f of afterCommit) await f().catch(() => undefined);
+    return result;
   }
 
   private async storeMessage(c: pg.PoolClient, p: Principal, m: IncomingMessage, text: string, confidence: number | null) {
@@ -194,11 +206,13 @@ export class IntakeService {
   }
 
   /** Execute inside a savepoint: a DomainError becomes a user-facing reply and rolls back only that intent's writes. */
-  private async execute(c: pg.PoolClient, p: Principal, intent: Intent): Promise<string | null> {
+  private async execute(c: pg.PoolClient, p: Principal, intent: Intent, afterCommit: Array<() => Promise<unknown>>): Promise<string | null> {
     await c.query('SAVEPOINT intent');
     try {
-      const out = await this.run(c, p, intent);
+      const local: Array<() => Promise<unknown>> = [];
+      const out = await this.run(c, p, intent, local);
       await c.query('RELEASE SAVEPOINT intent');
+      afterCommit.push(...local); // only effects of an intent that actually committed
       return out;
     } catch (e) {
       await c.query('ROLLBACK TO SAVEPOINT intent');
@@ -254,7 +268,7 @@ export class IntakeService {
     throw bad('ref_unresolved');
   }
 
-  private async run(c: pg.PoolClient, p: Principal, intent: Intent): Promise<string | null> {
+  private async run(c: pg.PoolClient, p: Principal, intent: Intent, afterCommit: Array<() => Promise<unknown>>): Promise<string | null> {
     const { tasks, reminders } = this.d;
     const loc = p.locale;
     switch (intent.kind) {
@@ -264,10 +278,22 @@ export class IntakeService {
         return t(loc, 'unknown');
       case 'clarify':
         return intent.question;
-      case 'stop_calling':
+      case 'stop_calling': {
+        // The owner row update takes the lock a concurrent dial transaction also needs, so the two serialize (no handover gap).
         await c.query('UPDATE owners SET call_opt_out=true WHERE id=$1', [p.ownerId]);
-        await writeAudit(c, { ownerId: p.ownerId, actorType: 'owner', action: 'owner.call_opt_out', allowed: true, reasonCode: 'ok' });
+        const owner = this.d.ownerCalls;
+        const cancelled = owner ? await owner.cancelOwnerCallIntents(c, p.ownerId) : 0;
+        if (owner) afterCommit.push(() => owner.terminateLiveOwnerCalls(p.ownerId));
+        await writeAudit(c, {
+          ownerId: p.ownerId,
+          actorType: 'owner',
+          action: 'owner.call_opt_out',
+          allowed: true,
+          reasonCode: 'ok',
+          metadata: { scope: 'owner_calls', cancelledRequests: cancelled },
+        });
         return t(loc, 'calls_stopped');
+      }
       case 'create_task': {
         const due = intent.due ? this.local(intent.due, p.timezone) : null;
         const task = await tasks.create(c, p.ownerId, { title: intent.title, dueAt: due?.utc });

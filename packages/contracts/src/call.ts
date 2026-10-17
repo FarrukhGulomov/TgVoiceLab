@@ -73,6 +73,12 @@ export interface PcmFrame extends z.infer<typeof PcmFrameSchema> {
   samples: Uint8Array;
 }
 
+/**
+ * Events a call adapter streams to the orchestrator. CONTRACT (audit F04): while a call is live the adapter MUST emit a
+ * `heartbeat` at least every 30 s. A stream that shows no event for the orchestrator's idle deadline (default 90 s) is treated as
+ * stalled: the orchestrator asks the provider whether the call is over and, if that is not confirmed, persists `outcome_unknown`
+ * (which keeps the account occupied). A terminal `ended`/`error` event, or `reconcile() === 'ended'`, is the only proof of an end.
+ */
 export interface CallEvent {
   eventId: string;
   type: 'ringing' | 'connected' | 'ended' | 'error' | 'heartbeat' | 'playback_progress';

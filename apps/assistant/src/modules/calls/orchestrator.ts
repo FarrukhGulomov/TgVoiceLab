@@ -8,13 +8,13 @@ import {
   type TelegramCallAdapter,
 } from '@tgvl/contracts';
 import { DateTime } from 'luxon';
-import type pg from 'pg';
 import type { Db, Queryable } from '../../infrastructure/db/db.js';
 import type { Clock } from '../../application/clock.js';
 import { writeAudit } from '../audit/audit.js';
 import { emitOutbox } from '../outbox/outbox.js';
 import { evaluateDialPolicy, type DialPolicyInput } from '../policy/dial-policy.js';
-import { ActiveCallRegistry, reserveBudget } from '../operations/operations.service.js';
+import { ActiveCallRegistry, ensureDailyBudget, reserveBudget, settleCallBudget } from '../operations/operations.service.js';
+import { withTimeout } from '../../application/async.js';
 import type { DerivedCapabilities } from './capability-evidence.js';
 import { transitionCall, TERMINAL, type CallState } from './state-machine.js';
 import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
@@ -25,7 +25,7 @@ import { openPlan, PlanIntegrityError } from './plan-store.js';
  * blocked behind the Phase 0 gates. The default runner ends the call immediately, so no unverified conversational path exists.
  */
 export interface CallSessionRunner {
-  run(ctx: { callId: string; ownerId: string; plan: ApprovedCallPlan; handle: CallHandle }): Promise<{ endReason: CallEndReason }>;
+  run(ctx: { callId: string; ownerId: string; plan: ApprovedCallPlan; handle: CallHandle }): Promise<{ endReason: CallEndReason; usageMicroUsd?: number }>;
 }
 export const noSessionRunner: CallSessionRunner = { run: async () => ({ endReason: 'cancelled' }) };
 
@@ -44,7 +44,14 @@ export interface OrchestratorDeps {
   sessionRunner?: CallSessionRunner;
   /** Reserved against the daily cap before connecting (micro-USD). */
   callBudgetMicroUsd: number;
+  /** Daily cap (micro-USD). When set, each local day's budget row is created lazily and atomically before the first reservation. */
+  dailyCapMicroUsd?: number;
   ringTimeoutMs?: number;
+  /**
+   * Bounded waits (audit F04). `dialMs`: the adapter must return a handle or fail; `eventIdleMs`: a live call's event stream must
+   * show life (adapters emit a `heartbeat` at least every 30 s); `hangupMs`: ending the call and asking the provider must finish.
+   */
+  timeouts?: { dialMs?: number; eventIdleMs?: number; hangupMs?: number };
 }
 
 class PolicyDenied extends Error {
@@ -57,8 +64,10 @@ const REASON_TO_STATE: Partial<Record<CallEndReason, CallState>> = { declined: '
 
 export class CallOrchestrator {
   private readonly runner: CallSessionRunner;
+  private readonly tm: { dialMs: number; eventIdleMs: number; hangupMs: number };
   constructor(private readonly d: OrchestratorDeps) {
     this.runner = d.sessionRunner ?? noSessionRunner;
+    this.tm = { dialMs: d.timeouts?.dialMs ?? 45_000, eventIdleMs: d.timeouts?.eventIdleMs ?? 90_000, hangupMs: d.timeouts?.hangupMs ?? 10_000 };
   }
 
   private dayKey(tz: string): string {
@@ -87,12 +96,13 @@ export class CallOrchestrator {
     const [own, auth, contact, perm, ks, acct] = await Promise.all([
       q.query<{
         id: string;
+        telegram_user_id: string;
         disabled: boolean;
         timezone: string;
         quiet_hours: DialPolicyInput['owner']['quietHours'];
         call_opt_out: boolean;
         policy_version: number;
-      }>('SELECT id, disabled, timezone, quiet_hours, call_opt_out, policy_version FROM owners WHERE id=$1', [ownerId]),
+      }>('SELECT id, telegram_user_id, disabled, timezone, quiet_hours, call_opt_out, policy_version FROM owners WHERE id=$1', [ownerId]),
       q.query<{ id: string; owner_id: string; state: string; expires_at: Date; plan_hash: string }>(
         'SELECT id, owner_id, state, expires_at, plan_hash FROM authorizations WHERE id=$1',
         [req.rows[0].authorization_id],
@@ -129,7 +139,8 @@ export class CallOrchestrator {
     const p = perm.rows[0];
     return {
       now: this.d.clock.now(),
-      kind: 'contact_call',
+      // A call addressed to the owner's own numeric id is an owner call (opt-out and quiet hours apply); everything else is a contact call.
+      kind: plan.recipientTelegramId === o0.telegram_user_id ? 'owner_call' : 'contact_call',
       policyVersion: o0.policy_version,
       owner: { id: o0.id, disabled: o0.disabled, timezone: o0.timezone, quietHours: o0.quiet_hours, callOptOut: o0.call_opt_out, verified: true },
       plan,
@@ -205,6 +216,10 @@ export class CallOrchestrator {
     if (!first.allowed) return this.reject(ownerId, callRequestId, first.reasonCode);
     const plan = pre.plan;
     const day = this.dayKey(pre.owner.timezone);
+    const contactId = pre.contact?.id ?? null;
+    const kind = pre.kind;
+    const ac = new AbortController();
+    let registered: string | null = null;
 
     // Pass 2: take the call row (the "lease"), consume the single-use authorization, reserve budget, and RE-EVALUATE with
     // fresh data inside the same transaction. Any denial rolls everything back — nothing is consumed by a refused dial.
@@ -212,6 +227,9 @@ export class CallOrchestrator {
     try {
       callId = await db.tx(async (c) => {
         await c.query('SELECT 1 FROM operation_settings WHERE owner_id=$1 FOR SHARE', [ownerId]);
+        // Serialises with the owner opt-out (which updates this row): an opt-out that commits first is seen by the re-evaluation
+        // below; one that waits for us finds this call already registered (see `registry.add` before commit).
+        await c.query('SELECT 1 FROM owners WHERE id=$1 FOR SHARE', [ownerId]);
         // Serialize on the authorization so two dials cannot both pass the check; it stays 'approved' until after re-evaluation.
         await c.query('SELECT 1 FROM authorizations WHERE id=$1 AND owner_id=$2 FOR UPDATE', [plan.authorizationId, ownerId]);
         const acct = await c.query<{ id: string; gateway_generation: string }>(
@@ -226,7 +244,10 @@ export class CallOrchestrator {
           [ownerId, callRequestId, acct.rows[0]!.id, attempt, plan.authorizationId, acct.rows[0]!.gateway_generation, clock.now()],
         );
         const id = ins.rows[0]!.id;
+        // Each local day's budget row is created on demand (audit F13); the reservation is recorded ON the call.
+        if (this.d.dailyCapMicroUsd) await ensureDailyBudget(c, ownerId, day, this.d.dailyCapMicroUsd);
         const reserved = await reserveBudget(c, ownerId, day, this.d.callBudgetMicroUsd);
+        if (reserved) await c.query('UPDATE calls SET budget_day=$2::date, budget_reserved_micro=$3 WHERE id=$1', [id, day, this.d.callBudgetMicroUsd]);
         // Re-evaluate EVERY check with fresh data, after taking the call row and before the external side effect.
         const fresh = await this.loadInput(c, ownerId, callRequestId, { budgetReserved: reserved, excludeCallId: id });
         const second = evaluateDialPolicy(fresh!);
@@ -247,11 +268,15 @@ export class CallOrchestrator {
           resourceId: id,
           allowed: true,
           reasonCode: 'ok',
-          metadata: { callRequestId, attempt, planHash: plan.planHash },
+          metadata: { callRequestId, attempt, planHash: plan.planHash, kind },
         });
+        // Registered BEFORE commit so a kill switch / opt-out that is waiting on our locks always finds this call (no handover gap).
+        this.d.registry.add({ callId: id, ownerId, contactId, kind, end: async () => ac.abort() });
+        registered = id;
         return id;
       });
     } catch (e) {
+      if (registered) this.d.registry.remove(registered);
       if (e instanceof PolicyDenied) return this.reject(ownerId, callRequestId, e.reason);
       if ((e as { code?: string }).code === '23505' && String((e as { constraint?: string }).constraint).includes('calls_one_active_per_account'))
         return this.reject(ownerId, callRequestId, 'active_call_exists');
@@ -259,27 +284,30 @@ export class CallOrchestrator {
     }
 
     // ---- external side effect: the intent is already durable ------------------------------------------------------
-    const ac = new AbortController();
-    this.d.registry.add({ callId, ownerId, contactId: pre.contact?.id ?? null, end: async () => ac.abort() });
+    // The dial itself is bounded: an adapter that never returns is aborted at the deadline and the outcome is treated as unknown.
+    const dialTimer = setTimeout(() => ac.abort(), this.tm.dialMs);
     let handle: CallHandle;
     try {
       handle = await this.d.adapter.dial(plan, ac.signal);
     } catch (e) {
+      clearTimeout(dialTimer);
       this.d.registry.remove(callId);
-      return this.onDialError(ownerId, callRequestId, callId, e, day);
+      return this.onDialError(ownerId, callRequestId, callId, e);
     }
-    return this.supervise(ownerId, callRequestId, callId, plan, handle, day, pre.contact?.id ?? null);
+    clearTimeout(dialTimer);
+    // A stop requested during the dial (kill switch, opt-out, revocation, deadline) must not vanish in the handover.
+    return this.supervise(ownerId, callRequestId, callId, plan, handle, contactId, kind, ac.signal.aborted);
   }
 
   /** Dial failed. Distinguish "definitely not placed" from "may have been placed"; never redial in either case. */
-  private async onDialError(ownerId: string, callRequestId: string, callId: string, e: unknown, day: string): Promise<DialOutcome> {
+  private async onDialError(ownerId: string, callRequestId: string, callId: string, e: unknown): Promise<DialOutcome> {
     const now = this.d.clock.now();
     if (e instanceof DialRejectedError) {
       const state: CallState = REASON_TO_STATE[e.reason] ?? 'failed';
       await this.d.db.tx(async (c) => {
         await transitionCall(c, ownerId, callId, state, { endReason: e.reason, now });
         await c.query(`UPDATE call_requests SET status='failed' WHERE id=$1`, [callRequestId]);
-        await this.releaseBudget(c, ownerId, day);
+        await settleCallBudget(c, ownerId, callId, 0, now); // definitely not placed: nothing was spent
         await emitOutbox(
           c,
           {
@@ -310,7 +338,7 @@ export class CallOrchestrator {
       await this.d.db.tx(async (c) => {
         await transitionCall(c, ownerId, callId, 'failed', { endReason: 'transport_error', providerCallId: providerId, now });
         await c.query(`UPDATE call_requests SET status='failed' WHERE id=$1`, [callRequestId]);
-        await this.releaseBudget(c, ownerId, day);
+        await settleCallBudget(c, ownerId, callId, 0, now);
         await emitOutbox(
           c,
           { ownerId, aggregateType: 'call', aggregateId: callId, type: 'call.notify', payload: { variant: 'ended', reason: 'transport_error' } },
@@ -319,56 +347,71 @@ export class CallOrchestrator {
       });
       return { status: 'finished', callId, state: 'failed', endReason: 'transport_error' };
     }
-    // 'active' (we have no handle to control it) or 'unknown': the account stays occupied until an operator resolves it.
+    // 'active' (we have no handle to control it) or 'unknown': the account stays occupied and the reservation is KEPT until an
+    // operator resolves the call.
+    await this.persistUnknown(ownerId, callRequestId, callId, 'dial_outcome_unknown', providerId);
+    return { status: 'outcome_unknown', callId };
+  }
+
+  /** Persist an unproven outcome: the call row becomes outcome_unknown (occupies the account), the reservation stays reserved. */
+  private async persistUnknown(ownerId: string, callRequestId: string, callId: string, why: string, providerCallId?: string): Promise<void> {
+    const now = this.d.clock.now();
     await this.d.db.tx(async (c) => {
-      await transitionCall(c, ownerId, callId, 'outcome_unknown', { endReason: 'outcome_unknown', providerCallId: providerId, now });
+      const cur = (await c.query<{ state: CallState }>('SELECT state FROM calls WHERE id=$1 FOR UPDATE', [callId])).rows[0]?.state;
+      if (!cur || TERMINAL.has(cur)) return; // someone (recovery, an operator) already settled it with better knowledge
+      await transitionCall(c, ownerId, callId, 'outcome_unknown', { endReason: 'outcome_unknown', providerCallId, now });
       await c.query(`UPDATE call_requests SET status='failed' WHERE id=$1`, [callRequestId]);
       await emitOutbox(c, { ownerId, aggregateType: 'call', aggregateId: callId, type: 'call.notify', payload: { variant: 'outcome_unknown' } }, now);
       await writeAudit(c, {
         ownerId,
         actorType: 'system',
-        action: 'call.dial_result',
+        action: 'call.outcome_unknown',
         resourceType: 'call',
         resourceId: callId,
         allowed: false,
-        reasonCode: 'outcome_unknown',
+        reasonCode: why,
       });
     });
-    return { status: 'outcome_unknown', callId };
   }
 
-  private async releaseBudget(c: pg.PoolClient, ownerId: string, day: string, actualMicro = 0) {
-    await c.query(
-      `UPDATE usage_budgets SET reserved_micro_usd = GREATEST(0, reserved_micro_usd - $3), actual_micro_usd = actual_micro_usd + $4 WHERE owner_id=$1 AND day=$2`,
-      [ownerId, day, this.d.callBudgetMicroUsd, actualMicro],
-    );
-  }
-
-  /** Consume adapter events with idempotent persistence; enforce ring timeout and duration cap; end safely on any loss. */
+  /**
+   * Consume adapter events with idempotent persistence. Every wait is bounded: the event stream must show life (idle deadline), the
+   * whole call has a lifetime deadline, and ending the call is bounded too. If the end of the call cannot be PROVEN (a terminal
+   * event, or the provider confirming it is over) the outcome is persisted as outcome_unknown and keeps the account occupied.
+   */
   private async supervise(
     ownerId: string,
     callRequestId: string,
     callId: string,
     plan: ApprovedCallPlan,
     handle: CallHandle,
-    day: string,
     contactId: string | null,
+    kind: 'owner_call' | 'contact_call',
+    abortRequested: boolean,
   ): Promise<DialOutcome> {
     const { db, clock } = this.d;
+    const tm = this.tm;
     let seq = 0;
     let endReason: CallEndReason | null = null;
     let ending = false;
+    let providerCallId: string | undefined;
+    let terminalSeen = false;
+    let usageMicroUsd = 0;
     const endOnce = async (reason: CallEndReason) => {
       if (ending) return;
       ending = true;
       endReason ??= reason;
-      await handle.end(reason).catch(() => undefined);
+      // An abort signal or a resolved promise is not proof: swallow the failure here, the proof is checked after the loop.
+      await withTimeout(handle.end(reason), tm.hangupMs, 'hangup').catch(() => undefined);
     };
-    this.d.registry.add({ callId, ownerId, contactId, end: (r) => endOnce(r) });
+    this.d.registry.add({ callId, ownerId, contactId, kind, end: (r) => endOnce(r) });
+    if (abortRequested) void endOnce('cancelled');
 
-    const ringTimer = setTimeout(() => void endOnce('no_answer'), this.d.ringTimeoutMs ?? 30_000);
+    const ringMs = this.d.ringTimeoutMs ?? 30_000;
+    const ringTimer = setTimeout(() => void endOnce('no_answer'), ringMs);
     let durTimer: NodeJS.Timeout | undefined;
     let connected = false;
+    const deadline = Date.now() + ringMs + plan.maxDurationSeconds * 1000 + tm.hangupMs + 30_000;
 
     const record = async (ev: CallEvent): Promise<boolean> => {
       const r = await db.query(
@@ -378,8 +421,20 @@ export class CallOrchestrator {
       return r.rowCount === 1; // false => duplicate provider event, already applied
     };
 
+    const it = handle.events[Symbol.asyncIterator]();
     try {
-      for await (const ev of handle.events) {
+      for (;;) {
+        const left = deadline - Date.now();
+        if (left <= 0) break; // lifetime deadline: stop waiting, prove the end below
+        let step: IteratorResult<CallEvent>;
+        try {
+          step = await withTimeout(it.next(), Math.min(tm.eventIdleMs, left), 'call event');
+        } catch {
+          break; // a stream that shows no life is a stalled stream: prove the end below
+        }
+        if (step.done) break;
+        const ev = step.value;
+        if (ev.providerCallId) providerCallId = ev.providerCallId;
         if (!(await record(ev))) continue;
         const now = clock.now();
         if (ev.type === 'ringing') await transitionCall(db, ownerId, callId, 'ringing', { providerCallId: ev.providerCallId, now });
@@ -390,24 +445,44 @@ export class CallOrchestrator {
           durTimer = setTimeout(() => void endOnce('duration_limit'), plan.maxDurationSeconds * 1000);
           // Conversation (consent gate, Realtime, tools) is Phase 3/4. With no runner this ends the call at once.
           void this.runner.run({ callId, ownerId, plan, handle }).then(
-            (r) => endOnce(r.endReason),
+            (r) => {
+              usageMicroUsd = r.usageMicroUsd ?? 0;
+              return endOnce(r.endReason);
+            },
             () => endOnce('transport_error'),
           );
         } else if (ev.type === 'ended' || ev.type === 'error') {
+          terminalSeen = true;
           endReason ??= ev.reason ?? 'transport_error';
           break;
         }
       }
-      if (endReason === null) endReason = 'transport_error'; // event stream closed without a terminal event: transport loss
     } catch {
       endReason ??= 'transport_error';
     } finally {
       clearTimeout(ringTimer);
       if (durTimer) clearTimeout(durTimer);
       this.d.registry.remove(callId);
+      void Promise.resolve(it.return?.()).catch(() => undefined);
     }
 
-    const final = endReason;
+    // Prove the end. Without a terminal event: try to hang up (bounded), then ask the provider.
+    let proven = terminalSeen;
+    if (!proven) {
+      await endOnce(endReason ?? 'transport_error');
+      const pid =
+        providerCallId ??
+        (await db.query<{ provider_call_id: string | null }>('SELECT provider_call_id FROM calls WHERE id=$1', [callId])).rows[0]?.provider_call_id ??
+        undefined;
+      const rec = pid ? await withTimeout(this.d.adapter.reconcile(pid), tm.hangupMs, 'reconcile').catch(() => 'unknown' as const) : ('unknown' as const);
+      proven = rec === 'ended';
+    }
+    if (!proven) {
+      await this.persistUnknown(ownerId, callRequestId, callId, 'end_not_proven', providerCallId);
+      return { status: 'outcome_unknown', callId };
+    }
+
+    const final = endReason ?? 'transport_error';
     const now = clock.now();
     const cur = (await db.query<{ state: CallState }>('SELECT state FROM calls WHERE id=$1', [callId])).rows[0]!.state;
     const terminalState: CallState = !connected ? (REASON_TO_STATE[final] ?? 'failed') : 'ended';
@@ -417,7 +492,7 @@ export class CallOrchestrator {
         await transitionCall(c, ownerId, callId, terminalState, { endReason: final, now });
       }
       await c.query(`UPDATE call_requests SET status=$2 WHERE id=$1`, [callRequestId, final === 'completed' ? 'completed' : 'failed']);
-      await this.releaseBudget(c, ownerId, day);
+      await settleCallBudget(c, ownerId, callId, usageMicroUsd, now);
       // Truthful minimal report: no conversation layer exists yet, so the report is explicitly incomplete.
       await c.query(
         `INSERT INTO call_reports (call_id, owner_id, status, structured_result, complete) VALUES ($1,$2,'generated',$3,false) ON CONFLICT (call_id) DO NOTHING`,
@@ -431,7 +506,8 @@ export class CallOrchestrator {
 
 /**
  * Crash recovery (spec §7, A11/A13). After a restart the in-process registry is empty, so any non-terminal call has lost its
- * supervisor. Reconcile with the provider where we have an id; otherwise mark outcome_unknown. NEVER redials.
+ * supervisor. Reconcile with the provider where we have an id. Anything the provider does not CONFIRM as over stays
+ * `outcome_unknown` (occupying the account, reservation kept) for every in-flight state, never "failed". NEVER redials.
  */
 export async function recoverOrphanedCalls(d: {
   db: Db;
@@ -440,47 +516,38 @@ export async function recoverOrphanedCalls(d: {
   registry: ActiveCallRegistry;
   callBudgetMicroUsd: number;
 }): Promise<{ recovered: number }> {
-  const live = new Set<string>();
   const rows = await d.db.query<{ id: string; owner_id: string; call_request_id: string; provider_call_id: string | null; state: CallState }>(
     `SELECT id, owner_id, call_request_id, provider_call_id, state FROM calls
      WHERE state IN ('preflight','dialing','ringing','connected','awaiting_consent','active','ending')`,
   );
   let recovered = 0;
   for (const r of rows.rows) {
-    if (live.has(r.id) || d.registry.list(r.owner_id).some((c) => c.callId === r.id)) continue;
+    if (d.registry.list(r.owner_id).some((c) => c.callId === r.id)) continue;
     const now = d.clock.now();
     const rec = r.provider_call_id ? await d.adapter.reconcile(r.provider_call_id).catch(() => 'unknown' as const) : ('unknown' as const);
     await d.db.tx(async (c) => {
+      let variant: 'ended' | 'outcome_unknown' = 'ended';
       if (r.state === 'preflight') {
         // Intent was persisted but we never reached the provider: nothing was dialed. Fail it; fresh authority is required.
         await transitionCall(c, r.owner_id, r.id, 'cancelled', { endReason: 'cancelled', now });
+        await settleCallBudget(c, r.owner_id, r.id, 0, now);
       } else if (rec === 'ended') {
         if (r.state === 'dialing' || r.state === 'ringing') await transitionCall(c, r.owner_id, r.id, 'failed', { endReason: 'transport_error', now });
         else {
           if (r.state !== 'ending') await transitionCall(c, r.owner_id, r.id, 'ending', { now });
           await transitionCall(c, r.owner_id, r.id, 'ended', { endReason: 'transport_error', now });
         }
-      } else if (r.state === 'dialing' || r.state === 'ringing') {
-        await transitionCall(c, r.owner_id, r.id, 'outcome_unknown', { endReason: 'outcome_unknown', now });
+        await settleCallBudget(c, r.owner_id, r.id, 0, now); // the ORIGINAL reservation (day and amount are on the call row)
       } else {
-        // Was connected/active when we died and we have no handle: we cannot prove it ended. Fail closed, flag it.
-        await transitionCall(c, r.owner_id, r.id, 'failed', { endReason: 'transport_error', now });
+        // The provider did not confirm the end (active or unknown): the call may be live. Keep the account occupied and the
+        // reservation reserved until an operator resolves it.
+        await transitionCall(c, r.owner_id, r.id, 'outcome_unknown', { endReason: 'outcome_unknown', now });
+        variant = 'outcome_unknown';
       }
       await c.query(`UPDATE call_requests SET status='failed' WHERE id=$1 AND status IN ('dialing','preflight')`, [r.call_request_id]);
-      await c.query(`UPDATE usage_budgets SET reserved_micro_usd = GREATEST(0, reserved_micro_usd - $3) WHERE owner_id=$1 AND day = $2`, [
-        r.owner_id,
-        now.toISOString().slice(0, 10),
-        d.callBudgetMicroUsd,
-      ]);
       await emitOutbox(
         c,
-        {
-          ownerId: r.owner_id,
-          aggregateType: 'call',
-          aggregateId: r.id,
-          type: 'call.notify',
-          payload: { variant: r.state === 'dialing' || r.state === 'ringing' ? 'outcome_unknown' : 'ended', reason: 'transport_error' },
-        },
+        { ownerId: r.owner_id, aggregateType: 'call', aggregateId: r.id, type: 'call.notify', payload: { variant, reason: 'transport_error' } },
         now,
       );
       await writeAudit(c, {
@@ -490,7 +557,7 @@ export async function recoverOrphanedCalls(d: {
         resourceType: 'call',
         resourceId: r.id,
         allowed: true,
-        reasonCode: `recovered_from_${r.state}`,
+        reasonCode: `recovered_from_${r.state}_${variant}`,
       });
     });
     recovered++;

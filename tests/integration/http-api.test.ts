@@ -274,10 +274,10 @@ describe('crash recovery (A11/A13): orphaned calls are reconciled, never rediale
     await recover(ad);
     expect(await stateOf(id)).toEqual({ state: 'failed', end_reason: 'transport_error' });
   });
-  it('was connected when we died with no handle => failed closed (cannot prove it ended), via ending', async () => {
+  it('was connected when we died with no handle => outcome_unknown (cannot prove it ended, so it keeps the account occupied)', async () => {
     const id = await orphan('active', 'p-2');
     await recover();
-    expect((await stateOf(id)).state).toBe('failed');
+    expect((await stateOf(id)).state).toBe('outcome_unknown');
   });
   it('preflight (intent recorded, never dialed) => cancelled; and recovery is idempotent', async () => {
     const id = await orphan('preflight', null);
