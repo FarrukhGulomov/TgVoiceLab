@@ -526,6 +526,36 @@ describe('tools', () => {
     h.finish();
   });
 
+  it('the caller speaking after the end was requested cancels the hang-up (the conversation is not over)', async () => {
+    const h = fakeHandle();
+    let release!: () => void;
+    (h.handle as { drained?: () => Promise<void> }).drained = () => new Promise<void>((r) => (release = r));
+    const link = new FakeLink();
+    const lines: string[] = [];
+    let hungUp = 0;
+    const b = new RealtimeCallBridge(h.handle, link, {
+      log: (l) => lines.push(l),
+      playoutGraceMs: 1,
+      onTool: () => ({ result: { ok: true }, respond: false, afterPlayout: () => void hungUp++ }),
+    });
+    b.start();
+    link.toolCall!({ id: 'c1', name: 'end_call', args: {} });
+    await flush();
+    link.speech!(); // the caller says something before the farewell finished playing
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(hungUp).toBe(0);
+    expect(lines.some((l) => l.includes('hang-up cancelled'))).toBe(true);
+    // a later, uninterrupted end request still works
+    link.toolCall!({ id: 'c2', name: 'end_call', args: {} });
+    await flush();
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(hungUp).toBe(1);
+    b.stop();
+    h.finish();
+  });
+
   it('a tool that throws, or an unknown tool, tells the model it failed (never a made-up success)', async () => {
     const h = fakeHandle();
     const link = new FakeLink();

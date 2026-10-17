@@ -190,6 +190,8 @@ Recorded from the operator's runs on 2026-10-16. Raw evidence files stay local (
 
 | F-20 | Gemini re-run without `GEMINI_GOOGLE_SEARCH` / `GEMINI_LANGUAGE_CODE` (debug on): `setupComplete` at 1.5 s, then a natural Uzbek conversation (transcripts correct, general-knowledge answer "Toshkent", Uzbek speech no longer drifted to other languages after the prompt fix). The silent run of F-19 is therefore caused by one of the two removed options (not bisected). The call did not end on "goodbye": models cannot hang up, only the application can. Added an `end_call` tool (both providers): the model says goodbye, calls the tool, the application lets the already-queued audio play out (`CallHandle.drained()`), then hangs up. | operator-run call; `end_call` re-run needed |
 
+| F-21 | Gemini call with `end_call`: the tool call arrived and the call ended with `completed` (hang-up 0.7 s after the tool call). Two defects: the model called `end_call` too early (right after answering a question, before any goodbye), and when the caller spoke ("yaxshi") the output flush made `drained()` resolve, so the call was hung up mid-reply. Fixed: caller speech after the end request cancels the hang-up (the model may ask again); `end_call` description restricted to an explicit goodbye. Calendar request correctly refused ("I cannot manage calendars"). | operator-run call; fix unit-tested, re-run needed |
+
 Open: `LIVE_TEST_REPEAT=10` (G0-D), busy/no-answer/privacy-restricted/connectivity-loss (G0-E), and a target-host canary (G0-F). The workaround depends on undocumented behaviour of a third-party native library; the adapter must pin the exact version and keep a regression test.
 
 ## 9b. Operator-run AI voice test (`pnpm live:ai-call`)

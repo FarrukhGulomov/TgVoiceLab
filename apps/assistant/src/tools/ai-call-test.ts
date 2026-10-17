@@ -70,7 +70,7 @@ const TOOLS: ToolDeclaration[] = [
   {
     name: 'end_call',
     description:
-      "Qo'ng'iroqni tugatadi. Suhbat yakunlanganda (odam xayrlashdi yoki boshqa savoli yo'q) AVVAL xayrlashuv gapini ayt, KEYIN shu vositani chaqir.",
+      "Qo'ng'iroqni tugatadi. FAQAT odam aniq xayrlashganda ('xayr', 'sog' bo'ling', 'boshqa savolim yo'q') chaqir: avval qisqa xayrlash, KEYIN shu vositani chaqir. Suhbat o'rtasida yoki o'z javobingdan keyin hech qachon chaqirma.",
     parameters: { type: 'object', properties: { reason: { type: 'string', description: 'Qisqa sabab' } }, required: [] },
   },
 ];

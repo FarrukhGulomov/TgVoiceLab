@@ -78,6 +78,8 @@ export class RealtimeCallBridge {
   readonly playoutGraceMs: number;
   readonly onTool: BridgeOptions['onTool'];
   #stopped = false;
+  #pendingAction = false;
+  #actionToken = 0; // bumped by caller speech: a pending after-playout action (hang up) is cancelled when the caller is still talking
   #up: StreamingResampler;
   #down: StreamingResampler;
   #assembler = new FrameAssembler(FRAME_BYTES);
@@ -125,6 +127,11 @@ export class RealtimeCallBridge {
     this.link.onSpeechStarted(() => {
       if (this.#stopped) return;
       this.stats.bargeIns++;
+      if (this.#pendingAction) {
+        this.log('the caller spoke after the end of the call was requested: hang-up cancelled');
+        this.#pendingAction = false;
+      }
+      this.#actionToken++;
       this.#epoch++;
       this.#assembler.clear();
       this.#down = new StreamingResampler(this.link.outputRateHz, CALL_RATE);
@@ -148,10 +155,14 @@ export class RealtimeCallBridge {
         this.log(`tool ${call.name}(${JSON.stringify(call.args)})`);
         this.link.sendToolResult(call, out.result, { respond: out.respond ?? true });
         if (out.afterPlayout) {
+          const token = ++this.#actionToken;
+          this.#pendingAction = true;
           await this.#outChain; // everything the model already said is in the call's output buffer...
           await this.handle.drained?.().catch(() => undefined); // ...now let it actually play
           await new Promise((r) => setTimeout(r, this.playoutGraceMs));
-          if (!this.#stopped) await out.afterPlayout();
+          if (token !== this.#actionToken || this.#stopped) return; // the caller spoke (or the call ended) while we waited
+          this.#pendingAction = false;
+          await out.afterPlayout();
         }
       })().catch((e: unknown) => this.stats.errors.push(`tool: ${String((e as Error)?.message ?? e)}`));
     });
