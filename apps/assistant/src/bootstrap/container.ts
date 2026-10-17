@@ -65,6 +65,7 @@ export function buildContainer(d: ContainerDeps) {
     evidenceArtifact: null,
     buildFingerprint: 'none',
     productionCallingAllowed: false,
+    ownerCallingAllowed: false,
     thirdPartyConsentMechanismProven: false,
     reasons: ['no evidence'],
   });

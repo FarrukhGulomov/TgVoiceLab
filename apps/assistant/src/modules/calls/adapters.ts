@@ -27,18 +27,22 @@ export class EvidenceGatedCallAdapter implements TelegramCallAdapter {
   constructor(
     private readonly inner: TelegramCallAdapter,
     private readonly derive: () => DerivedCapabilities,
+    /** Calls addressed to this numeric id are owner calls (owner-only gate); every other recipient needs the full gate. */
+    private readonly ownerTelegramId: string | null = null,
   ) {}
   async capabilities(): Promise<CallAdapterCapabilities> {
     const d = this.derive();
-    const { productionCallingAllowed: _p, thirdPartyConsentMechanismProven: _t, reasons: _r, ...caps } = d;
+    const { productionCallingAllowed: _p, ownerCallingAllowed: _o, thirdPartyConsentMechanismProven: _t, reasons: _r, ...caps } = d;
     void _p;
+    void _o;
     void _t;
     void _r;
     return caps;
   }
   async dial(plan: ApprovedCallPlan, signal: AbortSignal): Promise<CallHandle> {
     const d = this.derive();
-    if (!d.productionCallingAllowed || !d.privateOutbound || !d.pcmSend || !d.pcmReceive)
+    const allowed = plan.recipientTelegramId === this.ownerTelegramId ? d.ownerCallingAllowed : d.productionCallingAllowed;
+    if (!allowed || !d.privateOutbound || !d.pcmSend || !d.pcmReceive)
       throw new CapabilityUnavailableError(`calling not verified for this build: ${d.reasons.join('; ') || 'no evidence'}`);
     return this.inner.dial(plan, signal);
   }

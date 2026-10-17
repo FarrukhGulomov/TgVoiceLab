@@ -102,6 +102,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls') {
       buildFingerprint: cfg.BUILD_FINGERPRINT,
     }),
     () => deriveCapabilities(cfg.CALL_FEASIBILITY_EVIDENCE_PATH, cfg.BUILD_FINGERPRINT),
+    cfg.OWNER_TELEGRAM_USER_ID ?? null,
   );
   log.warn('CALL_ADAPTER=ntgcalls: adapter loaded; dialing stays refused until the evidence artifact validates for this build');
 } else if (cfg.CALL_ADAPTER === 'fake') {
@@ -233,7 +234,15 @@ const server = await buildServer({
 });
 await server.listen({ host: cfg.HTTP_HOST, port: cfg.HTTP_PORT });
 log.info(
-  { host: cfg.HTTP_HOST, port: cfg.HTTP_PORT, mode: derive().productionCallingAllowed ? 'calling-evidence-present' : 'degraded-text-only' },
+  {
+    host: cfg.HTTP_HOST,
+    port: cfg.HTTP_PORT,
+    mode: derive().productionCallingAllowed
+      ? 'calling-evidence-present'
+      : derive().ownerCallingAllowed
+        ? 'owner-calling-evidence-present'
+        : 'degraded-text-only',
+  },
   'assistant started',
 );
 

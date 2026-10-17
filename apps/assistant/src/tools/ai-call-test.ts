@@ -14,6 +14,10 @@
  *   gemini: GEMINI_API_KEY  GEMINI_LIVE_MODEL  [GEMINI_VOICE]  [GEMINI_TEXT_MODE=realtime|client_content]  [GEMINI_GOOGLE_SEARCH=on]  [GEMINI_DEBUG=on]  [GEMINI_LANGUAGE_CODE=uz-UZ]
  */
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createInterface } from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 import { Api, TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import type { ApprovedCallPlan, CallEvent } from '@tgvl/contracts';
@@ -25,6 +29,8 @@ import { OpenAiRealtimeLink } from '../infrastructure/openai/realtime.js';
 import { GeminiLiveLink } from '../infrastructure/gemini/live.js';
 import { resolveSecret } from '../infrastructure/crypto/secrets.js';
 import { loadConfig } from '../bootstrap/config.js';
+import { computeBuildFingerprint } from '../modules/calls/capability-evidence.js';
+import type { RunRecord } from '../modules/calls/production-evidence.js';
 import { Db } from '../infrastructure/db/db.js';
 import { DataCrypto } from '../infrastructure/crypto/data-crypto.js';
 import { Envelope, parseKeyRing } from '../infrastructure/crypto/envelope.js';
@@ -202,6 +208,8 @@ const bridge = new RealtimeCallBridge(handle, link, {
   },
 });
 let ended: CallEvent | null = null;
+let connectedAt: number | null = null;
+let endedAt = Date.now();
 let hangupTimer: NodeJS.Timeout | undefined;
 const hangup = async (why: 'duration_limit' | 'cancelled' | 'completed') => {
   console.log(`${t()} hanging up (${why})`);
@@ -216,16 +224,51 @@ for await (const ev of handle.events) {
   if (ev.type === 'heartbeat') continue;
   console.log(`${t()} event: ${ev.type}${ev.reason ? ` (${ev.reason})` : ''}`);
   if (ev.type === 'connected') {
+    connectedAt = Date.now();
     bridge.start(GREETING);
     hangupTimer = setTimeout(() => void hangup('duration_limit'), maxSeconds * 1000);
   }
   if (ev.type === 'ended' || ev.type === 'error') {
     ended = ev;
+    endedAt = Date.now();
     break;
   }
 }
 clearTimeout(hangupTimer);
 bridge.stop();
+// ---- run record: the raw material for the production evidence artifact (`pnpm evidence:production`) -------------------------
+{
+  let heard: RunRecord['operatorHeardAiClearly'] = 'skipped';
+  if (process.stdin.isTTY && connectedAt !== null) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const ans = (await rl.question("Telefondagi odam AI ovozini aniq eshitdimi? To'liq so'z yozing: yes / no : ")).trim().toLowerCase();
+    rl.close();
+    heard = ans === 'yes' ? 'yes' : 'no'; // anything but a full "yes" is a no: the attestation must be deliberate
+  }
+  const root = fileURLToPath(new URL('../../../../', import.meta.url));
+  const record: RunRecord = {
+    schemaVersion: 1,
+    kind: 'live',
+    producedBy: 'production-adapter',
+    recordedAt: new Date().toISOString(),
+    buildFingerprint: computeBuildFingerprint(root),
+    provider,
+    recipientIsOwner: briefingMode, // only briefing mode proves the recipient equals the configured owner
+    connected: connectedAt !== null,
+    durationSeconds: connectedAt === null ? 0 : Math.round((endedAt - connectedAt) / 1000),
+    endedReason: ended?.reason ?? null,
+    callFramesIn: bridge.stats.callFramesIn,
+    nonSilentFramesIn: bridge.stats.nonSilentFramesIn,
+    callFramesOut: bridge.stats.callFramesOut,
+    bridgeErrors: bridge.stats.errors.length,
+    operatorHeardAiClearly: heard,
+  };
+  const dir = join(root, 'experiments/telegram-calls/evidence');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `PA-${record.recordedAt.replace(/[:.]/g, '-')}.local.json`);
+  writeFileSync(file, JSON.stringify(record, null, 2));
+  console.log(`run record: ${file}`);
+}
 console.log(JSON.stringify({ endedReason: ended?.reason ?? null, stats: bridge.stats }, null, 2));
 await client.disconnect();
 await closeDb();

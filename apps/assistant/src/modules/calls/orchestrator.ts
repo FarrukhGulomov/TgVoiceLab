@@ -165,6 +165,7 @@ export class CallOrchestrator {
         pcmSend: caps.pcmSend,
         pcmReceive: caps.pcmReceive,
         productionCallingAllowed: caps.productionCallingAllowed,
+        ownerCallingAllowed: caps.ownerCallingAllowed,
         thirdPartyConsentMechanismProven: caps.thirdPartyConsentMechanismProven,
         // deriveCapabilities() yields evidenceArtifact=null whenever evidence is missing/invalid/bound to a different build.
         buildFingerprintMatches: caps.evidenceArtifact !== null,

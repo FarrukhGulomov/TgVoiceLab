@@ -38,7 +38,8 @@
     "db:replay-tombstones": "pnpm --filter @tgvl/assistant run db:replay-tombstones",
     "keys:rotate": "pnpm --filter @tgvl/assistant run keys:rotate",
     "verify": "pnpm run lint && pnpm run format && pnpm run typecheck && pnpm run build && pnpm run test:all",
-    "live:ai-call": "pnpm --filter @tgvl/assistant run live:ai-call"
+    "live:ai-call": "pnpm --filter @tgvl/assistant run live:ai-call",
+    "evidence:production": "pnpm --filter @tgvl/assistant run evidence:production"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",

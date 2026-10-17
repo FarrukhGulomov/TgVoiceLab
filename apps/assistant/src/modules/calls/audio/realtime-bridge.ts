@@ -45,6 +45,19 @@ export interface RealtimeLink {
   close(): void;
 }
 
+/** Root-mean-square level of s16le samples. */
+export function rmsS16(b: Uint8Array): number {
+  const n = Math.floor(b.length / 2);
+  if (!n) return 0;
+  const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const x = v.getInt16(i * 2, true);
+    sum += x * x;
+  }
+  return Math.sqrt(sum / n);
+}
+
 const CALL_RATE = 48_000;
 const FRAME_BYTES = (CALL_RATE / 100) * 2; // 10 ms
 
@@ -60,6 +73,8 @@ export interface BridgeOptions {
 
 export interface BridgeStats {
   callFramesIn: number;
+  /** Incoming 10 ms frames with real signal (RMS above a small floor): proof that audio from the person arrives, not just silence. */
+  nonSilentFramesIn: number;
   modelAudioChunks: number;
   callFramesOut: number;
   bargeIns: number;
@@ -72,7 +87,7 @@ export interface BridgeStats {
  * and the in-flight response is cancelled, so the assistant stops talking over the person.
  */
 export class RealtimeCallBridge {
-  readonly stats: BridgeStats = { callFramesIn: 0, modelAudioChunks: 0, callFramesOut: 0, bargeIns: 0, errors: [] };
+  readonly stats: BridgeStats = { callFramesIn: 0, nonSilentFramesIn: 0, modelAudioChunks: 0, callFramesOut: 0, bargeIns: 0, errors: [] };
   readonly log: (line: string) => void;
   readonly silenceMs: number;
   readonly playoutGraceMs: number;
@@ -180,6 +195,7 @@ export class RealtimeCallBridge {
       for await (const f of this.handle.incomingAudio) {
         if (this.#stopped) break;
         this.stats.callFramesIn++;
+        if (rmsS16(f.samples) > 300) this.stats.nonSilentFramesIn++;
         this.link.sendAudio(this.#up.process(f.samples));
       }
     })()

@@ -58,6 +58,7 @@ function baseline(over: Partial<DialPolicyInput> = {}, planOver: Partial<Approve
       pcmSend: true,
       pcmReceive: true,
       productionCallingAllowed: true,
+      ownerCallingAllowed: true,
       thirdPartyConsentMechanismProven: true,
       buildFingerprintMatches: true,
     },
@@ -167,5 +168,21 @@ describe('call state machine edges', () => {
     await expect(transitionCall({ query: async () => ({ rows: [], rowCount: 0 }) as never }, 'o', 'c', 'declined', { now: NOW })).rejects.toThrow(
       /requires an end reason/,
     );
+  });
+});
+
+describe('dial policy: owner-only calling gate', () => {
+  const ownerOnly = (b: DialPolicyInput) => ({ ...b.capability, ownerCallingAllowed: true, productionCallingAllowed: false });
+  it('an owner call is allowed with the owner gate alone', () => {
+    const b = baseline({ kind: 'owner_call', contact: null, permission: null }, { expiresAt: '2026-10-16T00:00:00.000Z' });
+    expect(evaluateDialPolicy({ ...b, capability: ownerOnly(b) }).allowed).toBe(true);
+  });
+  it('an owner call is denied without the owner gate even when everything else is in order', () => {
+    const b = baseline({ kind: 'owner_call', contact: null, permission: null }, { expiresAt: '2026-10-16T00:00:00.000Z' });
+    expect(evaluateDialPolicy({ ...b, capability: { ...b.capability, ownerCallingAllowed: false } }).reasonCode).toBe('calling_not_verified');
+  });
+  it('a CONTACT call is still denied with only the owner gate: it needs all six gates', () => {
+    const b = baseline();
+    expect(evaluateDialPolicy({ ...b, capability: ownerOnly(b) }).reasonCode).toBe('calling_not_verified');
   });
 });

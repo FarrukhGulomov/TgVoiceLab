@@ -17,3 +17,5 @@ procedures are written so they are correct the day a production adapter exists, 
 | Key rotation                        | [key-rotation.md](key-rotation.md)                     |
 | Delete someone's data               | [data-deletion.md](data-deletion.md)                   |
 | Deploy and roll back                | [deploy-rollback.md](deploy-rollback.md)               |
+
+| Enable calls to the owner | [owner-calling.md](owner-calling.md) |

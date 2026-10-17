@@ -151,6 +151,8 @@ describe('F18 — configuration describes what actually runs', () => {
         evidenceArtifact: 'TEST-ONLY',
         buildFingerprint: 'test',
         productionCallingAllowed: true,
+        ownerCallingAllowed: true,
+        ownerCallingAllowed: true,
         thirdPartyConsentMechanismProven: true,
         reasons: [],
       }),

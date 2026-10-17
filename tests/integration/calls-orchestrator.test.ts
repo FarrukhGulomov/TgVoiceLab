@@ -20,6 +20,7 @@ const ALL_PASS: DerivedCapabilities = {
   evidenceArtifact: 'TEST-ONLY',
   buildFingerprint: 'test',
   productionCallingAllowed: true,
+  ownerCallingAllowed: true,
   thirdPartyConsentMechanismProven: true,
   reasons: [],
 };
@@ -210,7 +211,7 @@ describe('A04 — denials place no call and consume nothing', () => {
     await w.app.close();
   });
   it('real calling not verified for this build (no evidence) — even with everything else perfect', async () => {
-    const w = await world({ caps: { ...ALL_PASS, productionCallingAllowed: false, reasons: ['G0-B: BLOCKED_EXTERNAL'] } });
+    const w = await world({ caps: { ...ALL_PASS, productionCallingAllowed: false, ownerCallingAllowed: false, reasons: ['G0-B: BLOCKED_EXTERNAL'] } });
     const req = await w.request();
     await expectDenied(w, req.callRequestId, 'calling_not_verified');
     await w.app.close();

@@ -153,6 +153,7 @@ describe('A16 — honest capability reporting while real calling is unverified',
       pcmSend: false,
       pcmReceive: false,
       productionCallingAllowed: false,
+      ownerCallingAllowed: false,
     });
     expect(c.calling.blockedBecause.join(' ')).toMatch(/no feasibility evidence/);
     expect((await call_('GET', '/health/ready')).json().data.status).toBe('ready');

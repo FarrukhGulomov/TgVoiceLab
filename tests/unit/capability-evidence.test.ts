@@ -98,3 +98,58 @@ describe('adapters fail closed', () => {
     await expect(partial.dial(plan, new AbortController().signal)).rejects.toMatchObject({ code: 'capability_unavailable' });
   });
 });
+
+describe('owner-only calling gate (G0-A..C + G0-D5)', () => {
+  const plan = {} as ApprovedCallPlan;
+  const ownerGates = (over: Record<string, unknown> = {}) => ({ 'G0-A': gate(), 'G0-B': gate(), 'G0-C': gate(), 'G0-D5': gate(), ...over });
+  const owner = (gates: Record<string, unknown>) => deriveCapabilities('/x', FP, read(artifact({ gates, localConsentRecognizer: undefined })));
+
+  it('A, B, C and the 5-minute call (all live PASS, this build) allow calls to the OWNER only', () => {
+    const c = owner(ownerGates());
+    expect(c).toMatchObject({
+      privateOutbound: true,
+      pcmSend: true,
+      pcmReceive: true,
+      ownerCallingAllowed: true,
+      productionCallingAllowed: false,
+      thirdPartyConsentMechanismProven: false,
+    });
+    expect(c.reasons.join(' ')).toMatch(/G0-D: not recorded/);
+  });
+  it('the full six gates imply owner calling too', () => {
+    expect(deriveCapabilities('/x', FP, read(artifact()))).toMatchObject({ ownerCallingAllowed: true, productionCallingAllowed: true });
+  });
+  it('without the 5-minute call, or with any weaker gate, owner calling stays off', () => {
+    expect(owner({ 'G0-A': gate(), 'G0-B': gate(), 'G0-C': gate() }).ownerCallingAllowed).toBe(false);
+    expect(owner(ownerGates({ 'G0-D5': gate('FAIL') })).ownerCallingAllowed).toBe(false);
+    expect(owner(ownerGates({ 'G0-D5': gate('BLOCKED_EXTERNAL') })).ownerCallingAllowed).toBe(false);
+    expect(owner(ownerGates({ 'G0-C': gate('FAIL') })).ownerCallingAllowed).toBe(false);
+    expect(owner(ownerGates({ 'G0-B': gate('FAIL') })).ownerCallingAllowed).toBe(false);
+    expect(owner(ownerGates({ 'G0-A': gate('BLOCKED_EXTERNAL') })).ownerCallingAllowed).toBe(false);
+  });
+  it('mock / synthetic evidence never counts, for any of the owner gates', () => {
+    for (const k of ['mock', 'synthetic'] as const)
+      for (const id of ['G0-A', 'G0-B', 'G0-C', 'G0-D5']) expect(owner(ownerGates({ [id]: gate('PASS', k) })).ownerCallingAllowed).toBe(false);
+  });
+  it('spike-produced evidence and evidence for another build never enable owner calling', () => {
+    expect(deriveCapabilities('/x', FP, read(artifact({ producedBy: 'spike', gates: ownerGates() }))).ownerCallingAllowed).toBe(false);
+    expect(deriveCapabilities('/x', 'c'.repeat(64), read(artifact({ gates: ownerGates() }))).ownerCallingAllowed).toBe(false);
+    expect(deriveCapabilities(null, FP).ownerCallingAllowed).toBe(false);
+  });
+  it('EvidenceGatedCallAdapter: the owner-only evidence lets the OWNER be dialed and refuses anyone else', async () => {
+    const derive = () => deriveCapabilities('/x', FP, read(artifact({ gates: ownerGates(), localConsentRecognizer: undefined })));
+    const inner = new FakeCallAdapter();
+    const gated = new EvidenceGatedCallAdapter(inner, derive, '777000111');
+    await gated.dial({ ...plan, recipientTelegramId: '777000111' }, new AbortController().signal);
+    expect(inner.dials).toHaveLength(1);
+    await expect(gated.dial({ ...plan, recipientTelegramId: '555000222' }, new AbortController().signal)).rejects.toMatchObject({
+      code: 'capability_unavailable',
+    });
+    expect(inner.dials).toHaveLength(1);
+    // without the owner id configured nobody counts as the owner
+    const strict = new EvidenceGatedCallAdapter(new FakeCallAdapter(), derive);
+    await expect(strict.dial({ ...plan, recipientTelegramId: '777000111' }, new AbortController().signal)).rejects.toMatchObject({
+      code: 'capability_unavailable',
+    });
+  });
+});

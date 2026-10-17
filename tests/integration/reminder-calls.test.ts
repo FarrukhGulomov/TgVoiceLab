@@ -16,6 +16,7 @@ const ALL_PASS: DerivedCapabilities = {
   evidenceArtifact: 'TEST-ONLY',
   buildFingerprint: 'test',
   productionCallingAllowed: true,
+  ownerCallingAllowed: true,
   thirdPartyConsentMechanismProven: false,
   reasons: [],
 };

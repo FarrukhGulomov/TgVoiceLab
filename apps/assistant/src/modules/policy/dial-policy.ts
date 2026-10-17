@@ -32,6 +32,8 @@ export interface DialPolicyInput {
     pcmSend: boolean;
     pcmReceive: boolean;
     productionCallingAllowed: boolean;
+    /** Calls TO THE OWNER (G0-A..C + G0-D5, or the full set). Contact calls need `productionCallingAllowed`. */
+    ownerCallingAllowed: boolean;
     thirdPartyConsentMechanismProven: boolean;
     buildFingerprintMatches: boolean;
   };
@@ -89,7 +91,7 @@ export function evaluateDialPolicy(i: DialPolicyInput): PolicyDecision {
     !i.capability.privateOutbound ||
     !i.capability.pcmSend ||
     !i.capability.pcmReceive ||
-    !i.capability.productionCallingAllowed
+    !(i.kind === 'owner_call' ? i.capability.ownerCallingAllowed : i.capability.productionCallingAllowed)
   )
     return deny('calling_not_verified');
   if (!i.accountHealthy) return deny('account_unhealthy');

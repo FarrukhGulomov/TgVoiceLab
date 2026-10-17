@@ -406,7 +406,7 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
     const caps = deriveCapabilities(d.runtime.evidencePath, d.runtime.buildFingerprint);
     const ks = ownerId ? await app.operations.isKillSwitchOn(app.db, ownerId) : true;
     // Calling needs ALL of: configuration (CALLS_ENABLED), evidence gates, kill switch off, and a real adapter.
-    const callingAvailable = caps.productionCallingAllowed && app.callsEnabled && !ks && d.runtime.callAdapter !== 'disabled';
+    const callingAvailable = (caps.ownerCallingAllowed || caps.productionCallingAllowed) && app.callsEnabled && !ks && d.runtime.callAdapter !== 'disabled';
     return {
       mode: callingAvailable ? 'calling_enabled' : 'degraded_text_only',
       calling: {
@@ -419,6 +419,7 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
         pcmReceive: caps.pcmReceive,
         thirdPartyConsentMechanismProven: caps.thirdPartyConsentMechanismProven,
         productionCallingAllowed: caps.productionCallingAllowed,
+        ownerCallingAllowed: caps.ownerCallingAllowed,
         evidenceArtifact: caps.evidenceArtifact,
         buildFingerprint: caps.buildFingerprint,
         blockedBecause: caps.reasons,

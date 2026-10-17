@@ -627,3 +627,19 @@ describe('tools', () => {
     });
   });
 });
+
+describe('inbound audio evidence', () => {
+  it('counts non-silent incoming frames separately from silence', async () => {
+    const h = fakeHandle();
+    const link = new FakeLink();
+    const b = new RealtimeCallBridge(h.handle, link);
+    b.start();
+    for (let i = 0; i < 5; i++) h.push(new Uint8Array(FRAME)); // digital silence
+    for (let i = 0; i < 3; i++) h.push(tone(FRAME, 8000)); // real signal
+    await flush();
+    expect(b.stats.callFramesIn).toBe(8);
+    expect(b.stats.nonSilentFramesIn).toBe(3);
+    b.stop();
+    h.finish();
+  });
+});
