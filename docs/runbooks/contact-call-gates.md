@@ -22,6 +22,10 @@ or `pnpm-lock.yaml` changes the fingerprint and old run records stop counting.
 Duplicate provider events and process crashes cannot be provoked safely on a live account; they are covered by automated tests and are listed
 in the G0-E evidence as `synthetic:` references (never as live).
 
+## Shortcut for the remaining E scenarios
+
+`GATE_SCENARIO=e_suite pnpm live:gate-calls` runs busy, no_answer, privacy and connectivity_loss one after another with the instructions for each (decline is run separately). Then `pnpm attest:target-host` and `pnpm evidence:production`.
+
 ## After it passes
 
 Restart the service. Contact calls still go through the dial policy (owner's explicit command, owner-attested consent, kill switch,

@@ -7,7 +7,8 @@
  *
  *   LIVE_TEST_OPT_IN=yes  LIVE_TEST_RECIPIENT_ID=<test account numeric id>  LIVE_TEST_RECIPIENT_CONSENT=yes
  *   LIVE_TEST_WINDOW_START / LIVE_TEST_WINDOW_END  (ISO instants, at most 2 h apart)
- *   GATE_SCENARIO=short_batch | decline | busy | no_answer | privacy | connectivity_loss
+ *   GATE_SCENARIO=short_batch | decline | busy | no_answer | privacy | connectivity_loss | e_suite
+ *                (e_suite = busy, no_answer, privacy, connectivity_loss one after another, with the instructions for each)
  *   GATE_HOLD_SECONDS=20 (short_batch: how long each call is held; 15..120)   GATE_PAUSE_SECONDS=20 (between batch calls)
  *   LIVE_TEST_HOST_IS_TARGET=yes (this run is on the intended deployment host)
  *
@@ -44,8 +45,12 @@ const need = (k: string) => {
 };
 const SCENARIOS = ['short_batch', 'decline', 'busy', 'no_answer', 'privacy', 'connectivity_loss'] as const;
 type Scenario = (typeof SCENARIOS)[number];
-const scenario = env.GATE_SCENARIO as Scenario;
-if (!SCENARIOS.includes(scenario)) problems.push(`GATE_SCENARIO must be one of ${SCENARIOS.join(' | ')}`);
+// GATE_SCENARIO=e_suite runs the four failure scenarios still missing after decline, one after another (busy, no_answer, privacy, connectivity_loss).
+const E_SUITE: Scenario[] = ['busy', 'no_answer', 'privacy', 'connectivity_loss'];
+const requested = env.GATE_SCENARIO ?? '';
+if (requested !== 'e_suite' && !SCENARIOS.includes(requested as Scenario))
+  problems.push(`GATE_SCENARIO must be one of ${[...SCENARIOS, 'e_suite'].join(' | ')}`);
+let scenario = (requested === 'e_suite' ? E_SUITE[0] : requested) as Scenario;
 if (env.LIVE_TEST_OPT_IN !== 'yes') problems.push('LIVE_TEST_OPT_IN=yes (explicit opt-in to place real calls)');
 if (env.LIVE_TEST_RECIPIENT_CONSENT !== 'yes') problems.push('LIVE_TEST_RECIPIENT_CONSENT=yes (the test account owner knows the calls are coming)');
 const recipientId = env.LIVE_TEST_RECIPIENT_ID ?? '';
@@ -228,13 +233,22 @@ if (scenario === 'short_batch') {
     if (i < batch.size) await new Promise((r) => setTimeout(r, pauseSeconds * 1000));
   }
 } else {
-  console.log(`\nSCENARIO ${scenario}: ${INSTRUCTION[scenario]}`);
-  await ask('Press Enter when you are ready for ONE call... ');
-  const o = await oneCall();
-  const did = await ask(`Did you really do this: "${INSTRUCTION[scenario]}"? Type the full word yes / no : `);
-  const file = write(o, { operatorConfirmedAction: did === 'yes' ? 'yes' : 'no' });
-  console.log(`result: connected=${o.connected} endedReason=${o.endedReason} dialRejected=${o.dialRejected} error=${o.error}\nrun record: ${file}`);
-  console.log('Run `pnpm evidence:production` to see whether this satisfied the scenario (the judgement is made there, not here).');
+  const list = requested === 'e_suite' ? E_SUITE : [scenario];
+  for (const [n, sc] of list.entries()) {
+    scenario = sc;
+    console.log(`\n[${n + 1}/${list.length}] SCENARIO ${scenario}: ${INSTRUCTION[scenario]}`);
+    await ask('Press Enter when you are ready for ONE call... ');
+    const o = await oneCall();
+    const did = await ask(`Did you really do this: "${INSTRUCTION[scenario]}"? Type the full word yes / no : `);
+    const file = write(o, { operatorConfirmedAction: did === 'yes' ? 'yes' : 'no' });
+    console.log(`result: connected=${o.connected} endedReason=${o.endedReason} dialRejected=${o.dialRejected} error=${o.error}\nrun record: ${file}`);
+    if (n < list.length - 1) {
+      console.log('Next scenario in 20 s (no redial, Telegram needs a short pause)...');
+      await new Promise((r) => setTimeout(r, 20_000));
+    }
+  }
+  console.log('Run `pnpm evidence:production` to see whether this satisfied the scenarios (the judgement is made there, not here).');
+  if (scenario === 'privacy' || requested === 'e_suite') console.log('REMINDER: set Telegram > Privacy > Calls back to "Everybody" on the test account.');
 }
 rl.close();
 await client.disconnect();
