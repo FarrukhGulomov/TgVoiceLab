@@ -10,6 +10,7 @@
  *   LIVE_TEST_MAX_SECONDS (default 120, max 600)
  *   AI_CALL_MODE=chat (default) | briefing   (briefing: the AI reads the owner's real tasks from DATABASE_URL and can complete/move them; the recipient MUST be the owner)
  *   LIVE_TEST_RECIPIENT_KIND=test_account   (the recipient is the second test account standing in for a contact; counts for G0-D/E/F)
+ *   LIVE_TEST_NO_END_CALL=yes               (gate runs: the AI cannot end the call; only LIVE_TEST_MAX_SECONDS does)
  *   LIVE_TEST_HOST_IS_TARGET=yes            (this run is on the intended deployment host/container; needed once for G0-F)
  *   AI_VOICE_PROVIDER=openai (default) | gemini
  *   openai: OPENAI_API_KEY  OPENAI_REALTIME_MODEL  [OPENAI_VOICE]  [OPENAI_REALTIME_DIALECT=ga|beta]  [OPENAI_TRANSCRIPTION_MODEL]
@@ -94,9 +95,13 @@ const CHAT_TOOLS: ToolDeclaration[] = [
 const CHAT_GREETING =
   "Qo'ng'iroqqa hozir javob berildi. Faqat shu gapni ayt, keyin jim bo'l va tingla: «Salom! Men sizning shaxsiy AI yordamchingizman. Bu sinov qo'ng'irog'i.» Boshqa narsa qo'shma.";
 
+// Gate runs: the model must not end the call itself (a misheard word once ended a 5-minute run at 2 minutes). Only the time cap ends it.
+const noEndCall = env.LIVE_TEST_NO_END_CALL === 'yes';
 const briefingMode = env.AI_CALL_MODE === 'briefing';
-let INSTRUCTIONS = CHAT_INSTRUCTIONS;
-let TOOLS = CHAT_TOOLS;
+let INSTRUCTIONS = noEndCall
+  ? `${CHAT_INSTRUCTIONS} Qo'ng'iroqni hech qachon o'zing tugatma va xayrlashma: suhbat vaqt tugaguncha davom etadi. Odam jim bo'lsa yoki tushunarsiz gapirsa, qisqa savol ber yoki mavzu taklif qil.`
+  : CHAT_INSTRUCTIONS;
+let TOOLS = noEndCall ? [] : CHAT_TOOLS;
 let GREETING = CHAT_GREETING;
 let ownerTools: OwnerCallTools | null = null;
 let onEndCall: () => void | Promise<void> = () => undefined;
