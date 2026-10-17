@@ -93,9 +93,11 @@ const clean = (s: string) =>
  * Deterministic interpreter for en/uz. Anything it cannot place confidently becomes `clarify` or `unknown` — it never
  * guesses an action. Russian is not covered by the rules adapter (returns unknown); use an LLM adapter for broader input.
  */
-const BY_CALL_SRC = "qo'ng'iroq\\s+(?:qilib|bilan|orqali)|telefon\\s+qilib|\\b(?:call|phone|ring)\\s+me\\b|\\bby\\s+(?:call|phone)\\b";
-const BY_CALL = new RegExp(BY_CALL_SRC);
-const BY_CALL_G = new RegExp(BY_CALL_SRC, 'gi');
+// Spoken/typed variants of "qo'ng'iroq" the owner actually writes (qungiroq, qongiroq, qungriqo, ...), plus "ovozli call(da)".
+const UZ_CALL = "(?:qo'?ng'?iroq|qo'?ng'?roq|qu?ng'?iroq|qong'?iroq|qung'?riqo|zvonok)";
+const BY_CALL_SRC = `\\b${UZ_CALL}\\s*(?:qilib|qiling|qil|bilan|orqali)(?![\\p{L}'])|\\bovozli\\s+(?:call|${UZ_CALL})\\w*|\\bcall\\s+qil(?:ib|ing)?(?![\\p{L}'])|telefon\\s+qilib|\\b(?:call|phone|ring)\\s+me\\b|\\bby\\s+(?:call|phone)\\b`;
+const BY_CALL = new RegExp(BY_CALL_SRC, 'u');
+const BY_CALL_G = new RegExp(BY_CALL_SRC, 'giu');
 
 export class RulesInterpreter implements TextInterpreterPort {
   /**
@@ -152,10 +154,10 @@ export class RulesInterpreter implements TextInterpreterPort {
       const w0 = extractWhen(text, ctx);
       const body = w0.rest;
       const uz = /^(\S+?)(?:ga|ka|qa)\s+(.*?)qo'ng'iroq\s+qil(?:ib|ing)?(?![\p{L}'])[:,]?\s*(.*)$/iu.exec(body);
-      const en = /^(?:please\s+)?call\s+(?!me\b)(\S+)(?:\s+(.*))?$/i.exec(body);
+      const en = /^(?:please\s+)?call\s+(?!me\b|qil)(\S+)(?:\s+(.*))?$/i.exec(body);
       const NOT_NAMES = /^(?:men|me|sen|sizga?|menga|senga|unga|bizga|ularga|ertaga|bugun|indinga|kecha|hozir|kimga|nimaga|bunga|shunga)$/i;
       const who = uz ? body.split(/\s+/)[0]! : en ? en[1]! : '';
-      if ((uz || en) && !NOT_NAMES.test(who)) {
+      if ((uz || en) && !NOT_NAMES.test(who) && !/\beslat/.test(low)) {
         if (w0.invalid) return { kind: 'clarify', question: t(ctx.locale, 'unknown') };
         const amb = clarifyWhen(w0, ctx);
         if (amb) return amb;
@@ -227,7 +229,7 @@ export class RulesInterpreter implements TextInterpreterPort {
     }
 
     // create reminder
-    if (/\bremind\b|\breminder\b|\beslat/.test(low)) {
+    if (/\bremind\b|\breminder\b|\beslat/.test(low) || (BY_CALL.test(low) && /\b(?:ayt|xabar\s+ber)\w*/.test(low))) {
       // "remind me BY CALL" / "qo'ng'iroq qilib eslat": the owner's explicit wish to be rung. The phrase is not part of the title.
       const byCall = BY_CALL.test(low);
       const w = extractWhen(byCall ? text.replace(BY_CALL_G, ' ') : text, ctx);
@@ -236,7 +238,9 @@ export class RulesInterpreter implements TextInterpreterPort {
         .replace(/\b(?:please\s+)?remind\s+me\b/i, ' ')
         .replace(/\breminder\s*[:-]?/i, ' ')
         .replace(/(\S+?)ni\s+eslat\w*(?:ib\s+qo'y)?\w*/i, '$1')
-        .replace(/\beslat\w*(?:ib\s+qo'y)?\w*/i, ' ');
+        .replace(/\beslat\w*(?:ib\s+qo'y)?\w*/i, ' ')
+        .replace(/\b(?:menga|manga)\b/i, ' ')
+        .replace(/\b(?:ayt(?:ing)?|xabar\s+ber(?:ing)?)\b/i, ' ');
       title = clean(title);
       const base = title
         ? {

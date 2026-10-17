@@ -62,3 +62,23 @@ describe('call a contact', () => {
     expect(await run("don't call me", 'en')).toEqual({ kind: 'stop_calling' });
   });
 });
+
+describe('owner phrasing seen live (voice-call reminders, relative minutes)', () => {
+  const NOW2 = new Date('2026-10-17T07:44:26Z'); // 12:44 Samarkand
+  const go = (text: string) => interp.interpret(text, { receivedAt: NOW2, timezone: 'Asia/Samarkand', locale: 'uz' });
+  it.each([
+    'Soat 12:45 da call qil menga dorini eslat ovozli callda',
+    'soat 12:45 da dori ichishimni qungiroq qilib eslat',
+    'soat 12:45 da dori ichishimni qungiroq qilib ayt',
+  ])('%s -> call reminder at 12:45', async (text) => {
+    expect(await go(text)).toMatchObject({ kind: 'create_reminder', at: { date: '2026-10-17', time: '12:45' }, byCall: true });
+  });
+  it('1 daqiqadan sung qungiroq qilib dori ichishni eslat -> 12:45 by call', async () => {
+    const r = await go('1 daqiqadan sung qungiroq qilib dori ichishni eslat');
+    expect(r).toMatchObject({ kind: 'create_reminder', at: { date: '2026-10-17', time: '12:45' }, byCall: true });
+    expect((r as { title: string }).title).toBe('dori ichish');
+  });
+  it('"remind me to call mom" and "qo\'ng\'iroq qilishni eslat" never ring the owner', async () => {
+    expect(await go("ertaga 10:00 da onamga qo'ng'iroq qilishni eslat")).not.toHaveProperty('byCall');
+  });
+});

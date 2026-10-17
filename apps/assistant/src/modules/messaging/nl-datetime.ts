@@ -138,8 +138,8 @@ export function extractWhen(input: string, ctx: ExtractCtx): ParsedWhen {
   }
 
   // ---- relative offsets: "in 2 hours", "30 daqiqadan keyin" ---------------------------------------------------
-  const rel = take(text, /\b(?:in\s+)?(\d{1,4})\s*(minutes?|mins?|hours?|hrs?|h|daqiqadan|daqiqa|soatdan|soat)(?:\s+keyin)?\b/i);
-  const isRel = rel.m && (/\bin\s+\d/i.test(rel.m[0]) || /keyin/i.test(rel.m[0]));
+  const rel = take(text, /\b(?:in\s+)?(\d{1,4})\s*(minutes?|mins?|hours?|hrs?|h|daqiqadan|daqiqa|soatdan|soat)(?:\s+(?:keyin|so'ng|song|sung))?\b/i);
+  const isRel = rel.m && (/\bin\s+\d/i.test(rel.m[0]) || /keyin|so'ng|song|sung/i.test(rel.m[0]));
   if (rel.m && isRel) {
     const n = +rel.m[1]!;
     const unit = rel.m[2]!.toLowerCase();
