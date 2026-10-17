@@ -53,7 +53,7 @@ export class GramjsMessaging implements MessagingPort {
     watermarks: WatermarkStore;
   }): Promise<void> {
     await this.client.connect();
-    if (!(await this.client.isUserAuthorized())) throw new Error('Telegram session is not authorized; run `pnpm setup:account` locally');
+    if (!(await this.client.isUserAuthorized())) throw new Error('Telegram session is not authorized; run `pnpm spike:login` locally to create a new session');
     const me = (await this.client.getMe()) as Api.User;
     if (me.id.toString() !== a.expectedAssistantId) {
       await this.client.disconnect();
