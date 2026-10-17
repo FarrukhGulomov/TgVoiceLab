@@ -16,6 +16,7 @@ import type { IncomingMessage, IntakeService } from '../../modules/messaging/int
 import { convertMessage } from './convert.js';
 import { RecoveryRunner, type HistoryMessage, type WatermarkStore } from './recovery.js';
 import { startLane, type Lane } from '../../bootstrap/worker.js';
+import { GramjsCallTransport, type CallProtocol } from './gramjs-call-transport.js';
 import { classifyTelegramSendError } from '../../modules/messaging/delivery-errors.js';
 
 export interface GramjsOptions {
@@ -33,6 +34,20 @@ export class GramjsMessaging implements MessagingPort {
   private started = false;
   constructor(private readonly o: GramjsOptions) {
     this.client = new TelegramClient(new StringSession(o.sessionSecret), o.apiId, o.apiHash, { connectionRetries: 5, useWSS: false });
+  }
+
+  private selfId: string | null = null;
+
+  /** Call signaling shares this ONE client: a second client on the same session would be kicked by Telegram. Usable after `start()`. */
+  callTransport(protocol: CallProtocol): GramjsCallTransport {
+    return new GramjsCallTransport(
+      this.client,
+      () => {
+        if (!this.selfId) throw new Error('the Telegram gateway has not verified the assistant account yet');
+        return this.selfId;
+      },
+      protocol,
+    );
   }
 
   private recovery: RecoveryRunner<HistoryMessage & { msg: Api.Message }> | null = null;
@@ -59,6 +74,7 @@ export class GramjsMessaging implements MessagingPort {
       await this.client.disconnect();
       throw new Error(`logged-in account id ${me.id.toString()} does not match the configured assistant account; refusing to run`);
     }
+    this.selfId = me.id.toString();
     await a.markActive();
 
     // Gap recovery (audit F15): GramJS does not persist update state in a StringSession, so the owner chat is re-scanned from a

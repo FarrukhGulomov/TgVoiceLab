@@ -16,7 +16,7 @@ import { resolveSecret } from './infrastructure/crypto/secrets.js';
 import { systemClock } from './application/clock.js';
 import { DisabledMessaging } from './infrastructure/telegram/disabled-messaging.js';
 import { FakeCallAdapter, FakeMessaging } from './testing/fakes.js';
-import { DisabledCallAdapter } from './modules/calls/adapters.js';
+import { DisabledCallAdapter, EvidenceGatedCallAdapter } from './modules/calls/adapters.js';
 import { deriveCapabilities } from './modules/calls/capability-evidence.js';
 import { ensureDailyBudget } from './modules/operations/operations.service.js';
 import { buildServer } from './http/server.js';
@@ -88,10 +88,22 @@ if (cfg.MESSAGING_ADAPTER === 'telegram') {
 
 let callAdapter: TelegramCallAdapter;
 if (cfg.CALL_ADAPTER === 'ntgcalls') {
-  log.fatal(
-    'CALL_ADAPTER=ntgcalls: the production call adapter is NOT implemented in this build. Phase 0 live gates must pass first (see docs/research/telegram-private-calls.md).',
+  if (!gateway) {
+    log.fatal('CALL_ADAPTER=ntgcalls requires MESSAGING_ADAPTER=telegram: calls share the one Telegram client that owns the assistant session');
+    process.exit(1);
+  }
+  const { NtgcallsCallAdapter } = await import('./modules/calls/ntgcalls/adapter.js');
+  const { createNtgcallsMedia, ntgcallsProtocol } = await import('./infrastructure/telegram/ntgcalls-media.js');
+  // Even a real adapter is wrapped: the evidence artifact (bound to this build, produced by this adapter) decides whether it may dial.
+  callAdapter = new EvidenceGatedCallAdapter(
+    new NtgcallsCallAdapter({
+      transport: gateway.callTransport(ntgcallsProtocol()),
+      media: createNtgcallsMedia,
+      buildFingerprint: cfg.BUILD_FINGERPRINT,
+    }),
+    () => deriveCapabilities(cfg.CALL_FEASIBILITY_EVIDENCE_PATH, cfg.BUILD_FINGERPRINT),
   );
-  process.exit(1);
+  log.warn('CALL_ADAPTER=ntgcalls: adapter loaded; dialing stays refused until the evidence artifact validates for this build');
 } else if (cfg.CALL_ADAPTER === 'fake') {
   log.warn('CALL_ADAPTER=fake: no real calls are possible (development only)');
   callAdapter = new FakeCallAdapter();
