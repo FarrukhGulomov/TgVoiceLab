@@ -140,6 +140,17 @@ export class RulesInterpreter implements TextInterpreterPort {
     {
       const add = /^(?:(?:add|new)\s+contact|kontakt\s+qo'sh(?:ing)?)\s*:?\s+(.+?)\s+(\d{5,19})\s*$/i.exec(text);
       if (add) return { kind: 'add_contact', name: clean(add[1]!), telegramUserId: add[2]! };
+      // No numeric id needed: a @username or a +phone is resolved through Telegram; a bare name asks how to identify the person.
+      const addBy = /^(?:(?:add|new)\s+contact|kontakt\s+qo'sh(?:ing)?)\s*:?\s+(?:(.+?)\s+)?(@[A-Za-z][A-Za-z0-9_]{3,31}|\+\d[\d\s-]{7,16}\d)\s*$/i.exec(text);
+      if (addBy) {
+        const id = addBy[2]!;
+        return {
+          kind: 'lookup_contact',
+          name: clean(addBy[1] ?? ''),
+          ...(id.startsWith('@') ? { username: id.slice(1) } : { phone: id.replace(/[\s-]/g, '') }),
+        };
+      }
+      if (/^(?:(?:add|new)\s+contact|kontakt\s+qo'sh(?:ing)?)\s*:?\s+\S.*$/i.test(text)) return { kind: 'clarify', question: t(ctx.locale, 'contact_how') };
       const del = /^(?:(?:remove|delete)\s+contact|kontakt(?:ni)?\s+(?:o'chir|olib\s+tashla)\w*)\s*:?\s+(.+)$/i.exec(text);
       if (del) {
         if (notAnExplicitCommand(text, low)) return { kind: 'clarify', question: t(ctx.locale, 'not_a_command') };

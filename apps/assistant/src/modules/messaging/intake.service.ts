@@ -4,7 +4,7 @@ import type { Db } from '../../infrastructure/db/db.js';
 import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
 import type { Clock } from '../../application/clock.js';
 import type { ClarificationDraft, Intent, LocalDateTime, TaskRef } from '../../application/intent.js';
-import type { TextInterpreterPort, TranscriptionPort } from '../../application/ports.js';
+import type { PeerResolverPort, TextInterpreterPort, TranscriptionPort } from '../../application/ports.js';
 import { DomainError } from '../../application/errors.js';
 import { authenticateOwnerMessage, type Principal } from '../identity/identity.js';
 import { emitOutbox } from '../outbox/outbox.js';
@@ -45,6 +45,8 @@ export interface IncomingMessage {
     download?: () => Promise<Uint8Array>;
   };
   forwarded?: boolean;
+  /** A Telegram contact card the owner shared: its numeric id identifies the person without any lookup. */
+  contactCard?: { userId: string; name: string };
 }
 
 export type IntakeResult =
@@ -79,6 +81,8 @@ export class IntakeService {
         terminateLiveContactCalls(ownerId: string, contactId: string): Promise<number>;
       };
       contacts?: ContactService;
+      /** Resolves @username / +phone to a numeric id (Telegram-backed). Absent in tests and when messaging is disabled. */
+      peers?: PeerResolverPort;
       /** Present only when calling is enabled in this deployment; without it a call to a contact is refused with an honest message. */
       contactCalls?: ContactCallService;
     },
@@ -135,6 +139,16 @@ export class IntakeService {
 
     const ictx = { receivedAt: m.receivedAt, timezone: p.timezone, locale: p.locale };
     let intent: Intent | null = rejection ? null : await this.d.interpreter.interpret(text, ictx);
+    if (!rejection && m.contactCard && !m.forwarded) intent = { kind: 'add_contact', name: m.contactCard.name, telegramUserId: m.contactCard.userId };
+    else if (intent?.kind === 'lookup_contact') {
+      const q = intent;
+      const hit = this.d.peers
+        ? await this.d.peers.resolve({ ...(q.username ? { username: q.username } : {}), ...(q.phone ? { phone: q.phone } : {}) }).catch(() => null)
+        : null;
+      intent = hit
+        ? { kind: 'add_contact', name: q.name || hit.displayName, telegramUserId: hit.telegramUserId, resolvedAs: hit.displayName }
+        : { kind: 'clarify', question: t(p.locale, 'contact_not_found', { who: q.username ? `@${q.username}` : (q.phone ?? '') }) };
+    }
     // A pending clarification (audit F16) is consulted ONLY when the message is not itself a concrete command, so "done 2" or
     // "add task ..." can never be mistaken for the answer. An expired or absent draft changes nothing.
     let draft: ClarificationDraft | null = null;
@@ -355,8 +369,13 @@ export class IntakeService {
         const contacts = this.d.contacts;
         if (!contacts) return t(loc, 'unknown');
         await contacts.addVouched(c, p.ownerId, { telegramUserId: intent.telegramUserId, displayName: intent.name }, this.d.clock.now());
-        return t(loc, 'contact_added', { name: intent.name.trim(), id: intent.telegramUserId });
+        return t(loc, 'contact_added', {
+          name: intent.name.trim(),
+          id: intent.resolvedAs ? `${intent.telegramUserId}, Telegram: ${intent.resolvedAs}` : intent.telegramUserId,
+        });
       }
+      case 'lookup_contact':
+        return t(loc, 'unknown'); // resolved to add_contact (or a clarification) before execution; never reaches here
       case 'remove_contact': {
         const contacts = this.d.contacts;
         if (!contacts) return t(loc, 'unknown');

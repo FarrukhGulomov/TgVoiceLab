@@ -26,6 +26,8 @@ import { dispatchOutboxOnce, type OutboxHandler } from '../modules/outbox/outbox
 export type LaneName = 'jobs' | 'calls' | 'outbox';
 
 export interface ContainerDeps {
+  /** @username / phone resolver (Telegram gateway). */
+  peers?: import('../application/ports.js').PeerResolverPort;
   db: Db;
   crypto: DataCrypto;
   clock: Clock;
@@ -99,6 +101,7 @@ export function buildContainer(d: ContainerDeps) {
     transcription: d.transcription,
     ownerCalls: operations,
     contacts,
+    ...(d.peers ? { peers: d.peers } : {}),
     ...(contactCalls ? { contactCalls } : {}),
     ...(d.voiceDownloadTimeoutMs ? { voiceDownloadTimeoutMs: d.voiceDownloadTimeoutMs } : {}),
     ...(d.voiceMaxConcurrentDownloads ? { voiceMaxConcurrentDownloads: d.voiceMaxConcurrentDownloads } : {}),

@@ -43,7 +43,8 @@ export type Intent =
   | { kind: 'reschedule_reminder'; ref: TaskRef; at: LocalDateTime }
   | { kind: 'cancel_reminder'; ref: TaskRef }
   | { kind: 'list_reminders' }
-  | { kind: 'add_contact'; name: string; telegramUserId: string }
+  | { kind: 'add_contact'; name: string; telegramUserId: string; resolvedAs?: string }
+  | { kind: 'lookup_contact'; name: string; username?: string; phone?: string }
   | { kind: 'remove_contact'; name: string }
   | { kind: 'list_contacts' }
   /** Ring a contact on the owner's behalf. `contact` is the name as spoken/typed (resolved against the owner's contacts, never guessed). */

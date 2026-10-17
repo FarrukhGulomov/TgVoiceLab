@@ -41,5 +41,11 @@ export function convertMessage(
       },
     };
   }
+  // A shared contact card carries the numeric Telegram id: the owner never has to look ids up.
+  const media = msg.media as { className?: string; userId?: { toString(): string }; firstName?: string; lastName?: string } | undefined;
+  if (media?.className === 'MessageMediaContact' && media.userId && media.userId.toString() !== '0') {
+    const name = [media.firstName, media.lastName].filter(Boolean).join(' ').trim();
+    return { ...base, text: msg.message, contactCard: { userId: media.userId.toString(), name: name || 'Contact' } };
+  }
   return { ...base, text: msg.message };
 }

@@ -97,3 +97,12 @@ describe('live phrasing 2', () => {
     expect(await go('soat 13:01 ga qungiroq qil va dori ichishni eslat', '2026-10-17T08:00:30Z')).toMatchObject({ title: 'dori ichish', byCall: true });
   });
 });
+
+describe('adding a contact without a numeric id', () => {
+  it('@username and +phone become lookups; a bare name explains how', async () => {
+    expect(await run("kontakt qo'sh Javlon @javlon_k")).toEqual({ kind: 'lookup_contact', name: 'Javlon', username: 'javlon_k' });
+    expect(await run('add contact Ofiya +998 90 123 45 67')).toEqual({ kind: 'lookup_contact', name: 'Ofiya', phone: '+998901234567' });
+    expect(await run("kontakt qo'sh @javlon_k")).toEqual({ kind: 'lookup_contact', name: '', username: 'javlon_k' });
+    expect((await run("kontakt qo'sh Javlon")).kind).toBe('clarify');
+  });
+});

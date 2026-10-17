@@ -178,6 +178,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
 
 const app = buildContainer({
   ...(sessionRunner ? { sessionRunner } : {}),
+  ...(gateway ? { peers: gateway } : {}),
   db,
   crypto,
   clock: systemClock,

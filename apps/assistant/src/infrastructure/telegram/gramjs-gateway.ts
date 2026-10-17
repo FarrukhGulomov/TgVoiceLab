@@ -11,7 +11,7 @@ import { Api, TelegramClient } from 'telegram';
 import { NewMessage, type NewMessageEvent } from 'telegram/events/index.js';
 import { StringSession } from 'telegram/sessions/index.js';
 import type { Logger } from '../observability/logger.js';
-import type { MessagingPort, OutboundMessage } from '../../application/ports.js';
+import type { MessagingPort, OutboundMessage, PeerResolverPort } from '../../application/ports.js';
 import type { IncomingMessage, IntakeService } from '../../modules/messaging/intake.service.js';
 import { convertMessage } from './convert.js';
 import { RecoveryRunner, type HistoryMessage, type WatermarkStore } from './recovery.js';
@@ -29,7 +29,7 @@ export interface GramjsOptions {
 
 const RECOVERY_WINDOW_MS = 24 * 3600_000; // never act on instructions older than this after an outage
 
-export class GramjsMessaging implements MessagingPort {
+export class GramjsMessaging implements MessagingPort, PeerResolverPort {
   private readonly client: TelegramClient;
   private started = false;
   constructor(private readonly o: GramjsOptions) {
@@ -133,6 +133,26 @@ export class GramjsMessaging implements MessagingPort {
 
   private convert(msg: Api.Message, accountId: string, isPrivate: boolean): IncomingMessage | null {
     return convertMessage(msg, accountId, isPrivate, (m) => this.client.downloadMedia(m) as Promise<Buffer | undefined>);
+  }
+
+  /** @username or phone -> numeric user id. Only real, non-deleted, non-bot users resolve; a phone lookup adds the person to the assistant account's contacts (Telegram requires it). */
+  async resolve(q: { username?: string; phone?: string }): Promise<{ telegramUserId: string; displayName: string } | null> {
+    if (!this.started) throw new Error('Telegram gateway not started');
+    let user: Api.User | undefined;
+    if (q.username) {
+      const r = await this.client.invoke(new Api.contacts.ResolveUsername({ username: q.username }));
+      user = r.users.find((u): u is Api.User => u.className === 'User');
+    } else if (q.phone) {
+      const r = await this.client.invoke(
+        new Api.contacts.ImportContacts({
+          contacts: [new Api.InputPhoneContact({ clientId: bigInt(Date.now()), phone: q.phone, firstName: 'Contact', lastName: '' })],
+        }),
+      );
+      user = r.users.find((u): u is Api.User => u.className === 'User');
+    }
+    if (!user || user.deleted || user.bot || user.self) return null;
+    const displayName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || (user.username ? `@${user.username}` : 'Telegram user');
+    return { telegramUserId: user.id.toString(), displayName };
   }
 
   /** Telegram `random_id` derived from the outbox event id: a redelivered send is deduplicated server-side. */

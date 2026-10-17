@@ -16,6 +16,8 @@ const CATALOG = {
     contacts_header: 'Your contacts:',
     contact_unknown: 'I do not have a contact called "{name}". Add one: "add contact {name} 123456789".',
     contact_ambiguous: 'More than one contact matches "{name}": {names}. Please use the full name.',
+    contact_how: 'To add a contact, share the contact card from Telegram here, or write: add contact Javlon @username (or +998901234567).',
+    contact_not_found: 'I could not find a Telegram user for {who}. Check the @username / number, or share the contact card here.',
     contact_self: 'That id is your own account. Calls to you do not need a contact.',
     contact_call_queued:
       'Call to {name} queued for {date} at {time} ({tz}), up to {minutes} min: "{message}". The assistant will introduce itself as your AI assistant and will not record the call. To cancel: "remove contact {name}" or "stop calling me".',
@@ -98,6 +100,8 @@ const CATALOG = {
     contacts_header: 'Kontaktlaringiz:',
     contact_unknown: '«{name}» nomli kontakt topilmadi. Qo‘shish: «kontakt qo‘sh {name} 123456789».',
     contact_ambiguous: '«{name}» ga bir nechta kontakt mos keladi: {names}. To‘liq ismini yozing.',
+    contact_how: "Kontakt qo‘shish uchun Telegramdan kontakt kartasini shu yerga yuboring yoki yozing: kontakt qo'sh Javlon @username (yoki +998901234567).",
+    contact_not_found: '{who} bo‘yicha Telegram foydalanuvchisi topilmadi. @username yoki raqamni tekshiring yoki kontakt kartasini yuboring.',
     contact_self: 'Bu sizning o‘z akkauntingiz ID si. Sizga qo‘ng‘iroq uchun kontakt kerak emas.',
     contact_call_queued:
       '{name} ga qo‘ng‘iroq rejalandi: {date}, soat {time} ({tz}), eng ko‘pi {minutes} daqiqa: «{message}». Assistent o‘zini sizning AI yordamchingiz deb tanishtiradi va suhbatni yozib olmaydi. Bekor qilish: «kontaktni o‘chir {name}» yoki «qo‘ng‘iroq qilma».',
@@ -180,6 +184,8 @@ const CATALOG = {
     contacts_header: 'Ваши контакты:',
     contact_unknown: 'Контакт «{name}» не найден. Добавить: «add contact {name} 123456789».',
     contact_ambiguous: 'Под «{name}» подходит несколько контактов: {names}. Напишите полное имя.',
+    contact_how: 'Чтобы добавить контакт, перешлите сюда карточку контакта из Telegram или напишите: add contact Javlon @username (или +998901234567).',
+    contact_not_found: 'Пользователь Telegram для {who} не найден. Проверьте @username / номер или отправьте карточку контакта.',
     contact_self: 'Это id вашего собственного аккаунта. Для звонка вам контакт не нужен.',
     contact_call_queued:
       'Звонок {name} запланирован на {date} в {time} ({tz}), до {minutes} мин: «{message}». Ассистент представится вашим ИИ-ассистентом и не будет записывать разговор. Отмена: «remove contact {name}» или «не звони мне».',

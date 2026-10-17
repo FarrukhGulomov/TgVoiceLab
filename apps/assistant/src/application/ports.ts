@@ -27,3 +27,8 @@ export interface Transcript {
 export interface TranscriptionPort {
   transcribe(audio: { bytes: Uint8Array; mime: string; durationSeconds: number }): Promise<Transcript>;
 }
+
+/** Resolves a Telegram @username or phone number to a numeric user id, so the owner never has to look up ids. Network-backed. */
+export interface PeerResolverPort {
+  resolve(q: { username?: string; phone?: string }): Promise<{ telegramUserId: string; displayName: string } | null>;
+}
