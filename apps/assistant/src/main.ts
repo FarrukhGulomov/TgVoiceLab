@@ -246,6 +246,31 @@ log.info(
   'assistant started',
 );
 
+// Say plainly WHY calling is on or off. "degraded-text-only" alone does not tell the owner which condition is missing.
+{
+  const caps = derive();
+  const problems: string[] = [];
+  if (!cfg.CALLS_ENABLED) problems.push('CALLS_ENABLED is not true');
+  if (cfg.CALL_ADAPTER !== 'ntgcalls') problems.push(`CALL_ADAPTER is "${cfg.CALL_ADAPTER}" (needs ntgcalls)`);
+  if (!cfg.CALL_FEASIBILITY_EVIDENCE_PATH) problems.push('CALL_FEASIBILITY_EVIDENCE_PATH is not set');
+  if (!caps.ownerCallingAllowed) problems.push(...caps.reasons.filter((r) => !/^G0-[DEF]: not recorded/.test(r)));
+  if (!cfg.AI_VOICE_PROVIDER) problems.push('AI_VOICE_PROVIDER is not set (a call would have nobody to talk)');
+  const state = problems.length ? 'owner calls are OFF' : 'owner calls are ON (the durable kill switch is still checked on every dial: GET /v1/capabilities)';
+  (problems.length ? log.warn : log.info).call(
+    log,
+    {
+      callsEnabled: cfg.CALLS_ENABLED,
+      callAdapter: cfg.CALL_ADAPTER,
+      voiceProvider: cfg.AI_VOICE_PROVIDER ?? null,
+      ownerCallingAllowed: caps.ownerCallingAllowed,
+      evidenceBoundToThisBuild: caps.evidenceArtifact !== null,
+      buildFingerprint: cfg.BUILD_FINGERPRINT.slice(0, 12),
+      because: problems,
+    },
+    state,
+  );
+}
+
 // ---- worker loop --------------------------------------------------------------------------------------------------------
 // Independent, non-overlapping lanes: a long call can never delay reminders or text delivery (audit F08).
 let stopping = false;
