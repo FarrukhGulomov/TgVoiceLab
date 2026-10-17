@@ -52,7 +52,7 @@ async function world(
   const app = boot(t.url, clock, new FakeMessaging(), 'w', {
     callAdapter: adapter,
     deriveCapabilities: () => opts.caps ?? ALL_PASS,
-    ringTimeoutMs: opts.ringTimeoutMs ?? 200,
+    ringTimeoutMs: opts.ringTimeoutMs ?? 3000,
     ...(opts.sessionRunner ? { sessionRunner: opts.sessionRunner } : {}),
   });
   if (opts.killOff !== false) await app.operations.setKillSwitch(o.ownerId, false, 'test');
