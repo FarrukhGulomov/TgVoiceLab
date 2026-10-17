@@ -100,8 +100,17 @@ export class CallOrchestrator {
       if (e instanceof PlanIntegrityError) throw new PolicyDenied('plan_hash_mismatch'); // tampered storage is a hash mismatch: no dial
       throw e;
     }
+    // One connection runs one query at a time: issue these in order (pg deprecates overlapping queries on a client) instead of racing them.
+    let tail: Promise<unknown> = Promise.resolve();
+    const s = {
+      query: ((...args: unknown[]) => {
+        const run = tail.then(() => (q.query as (...a: unknown[]) => Promise<unknown>)(...args));
+        tail = run.catch(() => undefined);
+        return run;
+      }) as typeof q.query,
+    };
     const [own, auth, contact, perm, ks, acct] = await Promise.all([
-      q.query<{
+      s.query<{
         id: string;
         telegram_user_id: string;
         disabled: boolean;
@@ -110,11 +119,11 @@ export class CallOrchestrator {
         call_opt_out: boolean;
         policy_version: number;
       }>('SELECT id, telegram_user_id, disabled, timezone, quiet_hours, call_opt_out, policy_version FROM owners WHERE id=$1', [ownerId]),
-      q.query<{ id: string; owner_id: string; state: string; expires_at: Date; plan_hash: string }>(
+      s.query<{ id: string; owner_id: string; state: string; expires_at: Date; plan_hash: string }>(
         'SELECT id, owner_id, state, expires_at, plan_hash FROM authorizations WHERE id=$1',
         [req.rows[0].authorization_id],
       ),
-      q.query<{
+      s.query<{
         id: string;
         telegram_user_id: string;
         verified_at: Date | null;
@@ -125,7 +134,7 @@ export class CallOrchestrator {
         req.rows[0].contact_id,
         ownerId,
       ]),
-      q.query<{
+      s.query<{
         version: number;
         allow_call: boolean;
         topic_scopes: string[];
@@ -136,8 +145,8 @@ export class CallOrchestrator {
         'SELECT version, allow_call, topic_scopes, allowed_hours, expires_at, revoked_at FROM contact_permissions WHERE contact_id=$1 AND owner_id=$2 ORDER BY version DESC LIMIT 1',
         [req.rows[0].contact_id, ownerId],
       ),
-      q.query<{ calling_kill_switch: boolean }>('SELECT calling_kill_switch FROM operation_settings WHERE owner_id=$1', [ownerId]),
-      q.query<{ id: string; status: string }>(`SELECT id, status FROM telegram_accounts WHERE owner_id=$1 ORDER BY created_at LIMIT 1`, [ownerId]),
+      s.query<{ calling_kill_switch: boolean }>('SELECT calling_kill_switch FROM operation_settings WHERE owner_id=$1', [ownerId]),
+      s.query<{ id: string; status: string }>(`SELECT id, status FROM telegram_accounts WHERE owner_id=$1 ORDER BY created_at LIMIT 1`, [ownerId]),
     ]);
     const o0 = own.rows[0];
     if (!o0) return null;
