@@ -11,6 +11,7 @@ import { DisabledCallAdapter } from '../modules/calls/adapters.js';
 import type { DerivedCapabilities } from '../modules/calls/capability-evidence.js';
 import { IntakeService } from '../modules/messaging/intake.service.js';
 import { RulesInterpreter } from '../modules/messaging/rules-interpreter.js';
+import { DisabledInterpreter } from '../modules/messaging/disabled-interpreter.js';
 import { TaskService } from '../modules/tasks/tasks.service.js';
 import { ReminderService } from '../modules/scheduling/reminders.service.js';
 import { reminderFireHandler } from '../modules/scheduling/reminder-jobs.js';
@@ -31,6 +32,10 @@ export interface ContainerDeps {
   deriveCapabilities?: () => DerivedCapabilities;
   sessionRunner?: CallSessionRunner;
   callBudgetMicroUsd?: number;
+  /** CALLS_ENABLED. Defaults to false (fail closed). */
+  callsEnabled?: boolean;
+  /** TEXT_AI_ADAPTER=disabled: no text is interpreted. Ignored when an explicit `interpreter` is supplied. */
+  textAiDisabled?: boolean;
   /** Daily cap (micro-USD); the day's budget row is created lazily so budgets survive midnights without a restart. */
   dailyCapMicroUsd?: number;
   callTimeouts?: { dialMs?: number; eventIdleMs?: number; hangupMs?: number };
@@ -75,6 +80,7 @@ export function buildContainer(d: ContainerDeps) {
     registry,
     ...(d.sessionRunner ? { sessionRunner: d.sessionRunner } : {}),
     callBudgetMicroUsd: callBudget,
+    callsEnabled: d.callsEnabled ?? false,
     ...(d.ringTimeoutMs ? { ringTimeoutMs: d.ringTimeoutMs } : {}),
     ...(d.dailyCapMicroUsd ? { dailyCapMicroUsd: d.dailyCapMicroUsd } : {}),
     ...(d.callTimeouts ? { timeouts: d.callTimeouts } : {}),
@@ -85,7 +91,7 @@ export function buildContainer(d: ContainerDeps) {
     clock: d.clock,
     tasks,
     reminders,
-    interpreter: d.interpreter ?? new RulesInterpreter(),
+    interpreter: d.interpreter ?? (d.textAiDisabled ? new DisabledInterpreter() : new RulesInterpreter()),
     transcription: d.transcription,
     ownerCalls: operations,
     ...(d.voiceDownloadTimeoutMs ? { voiceDownloadTimeoutMs: d.voiceDownloadTimeoutMs } : {}),
@@ -139,6 +145,9 @@ export function buildContainer(d: ContainerDeps) {
     registry,
     orchestrator,
     derive,
+    /** What was actually instantiated (the capability report reads these, not the raw configuration). */
+    callsEnabled: d.callsEnabled ?? false,
+    interpreterAdapter: d.interpreter ? 'custom' : d.textAiDisabled ? 'disabled' : 'rules',
     jobHandlers,
     outboxHandlers,
     /** Run once at startup, before taking work: reconcile calls orphaned by a crash. Never redials. */

@@ -1,6 +1,7 @@
+import { ValidationError } from '../../application/errors.js';
 import { DateTime, FixedOffsetZone, IANAZone } from 'luxon';
 
-export class InvalidTimezoneError extends Error {
+export class InvalidTimezoneError extends ValidationError {
   constructor(tz: string) {
     super(`unknown IANA timezone: ${tz}`);
     this.name = 'InvalidTimezoneError';

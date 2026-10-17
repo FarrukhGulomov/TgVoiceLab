@@ -9,6 +9,7 @@ import { runIdempotent } from '../modules/idempotency/idempotency.js';
 import { enqueueJob } from '../modules/jobs/jobs.js';
 import { writeAudit } from '../modules/audit/audit.js';
 import { deriveCapabilities } from '../modules/calls/capability-evidence.js';
+import { FailedAuthLimiter } from './failed-auth.js';
 
 export interface ServerDeps {
   app: Container;
@@ -19,6 +20,8 @@ export interface ServerDeps {
     messagingAdapter: string;
     interpreterAdapter: string;
     callAdapter: string;
+    /** CALLS_ENABLED as configured: calling is only available when this is true AND the evidence gates pass. */
+    callsEnabled?: boolean;
     evidencePath: string | null;
     buildFingerprint: string;
     transcription: boolean;
@@ -39,7 +42,17 @@ const digest = (s: string) => createHash('sha256').update(s).digest();
 
 export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
   const { app, log } = d;
-  const srv = Fastify({ logger: false, bodyLimit: 256 * 1024, genReqId: () => randomUUID() });
+  // Deadlines bound slow or stalled clients; the private admin API never needs long-lived connections.
+  const srv = Fastify({
+    logger: false,
+    bodyLimit: 256 * 1024,
+    genReqId: () => randomUUID(),
+    connectionTimeout: 15_000,
+    requestTimeout: 30_000,
+    keepAliveTimeout: 5_000,
+    maxParamLength: 200,
+  });
+  const failedAuth = new FailedAuthLimiter();
   const tokenDigests = d.adminTokens.map(digest);
 
   const ok = <T>(req: FastifyRequest, rep: FastifyReply, data: T, status = 200) => rep.status(status).send({ requestId: req.id, data });
@@ -75,9 +88,23 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
     const supplied = m ? digest(m[1]!) : null;
     const good = supplied ? tokenDigests.some((t) => timingSafeEqual(t, supplied)) : false;
     if (!good) {
-      await writeAudit(app.db, { actorType: 'unknown', action: 'admin_api', allowed: false, reasonCode: 'bad_token', correlationId: req.id }).catch(
-        () => undefined,
-      );
+      const act = failedAuth.onFailure(app.clock.now().getTime());
+      if (act.flushSuppressed)
+        await writeAudit(app.db, {
+          actorType: 'unknown',
+          action: 'admin_api',
+          allowed: false,
+          reasonCode: 'bad_token_suppressed',
+          metadata: { count: act.flushSuppressed },
+        }).catch(() => undefined);
+      if (act.audit)
+        await writeAudit(app.db, { actorType: 'unknown', action: 'admin_api', allowed: false, reasonCode: 'bad_token', correlationId: req.id }).catch(
+          () => undefined,
+        );
+      if (act.throttle) {
+        rep.header('retry-after', '60');
+        return fail(req, rep, 429, 'rate_limited', 'too many failed authentication attempts', true);
+      }
       return fail(req, rep, 401, 'unauthenticated', 'missing or invalid bearer token');
     }
   });
@@ -376,11 +403,13 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
   const capabilities = async (ownerId: string | null) => {
     const caps = deriveCapabilities(d.runtime.evidencePath, d.runtime.buildFingerprint);
     const ks = ownerId ? await app.operations.isKillSwitchOn(app.db, ownerId) : true;
-    const callingAvailable = caps.productionCallingAllowed && !ks && d.runtime.callAdapter !== 'disabled';
+    // Calling needs ALL of: configuration (CALLS_ENABLED), evidence gates, kill switch off, and a real adapter.
+    const callingAvailable = caps.productionCallingAllowed && app.callsEnabled && !ks && d.runtime.callAdapter !== 'disabled';
     return {
       mode: callingAvailable ? 'calling_enabled' : 'degraded_text_only',
       calling: {
         available: callingAvailable,
+        callsEnabled: app.callsEnabled,
         killSwitchOn: ks,
         adapter: d.runtime.callAdapter,
         privateOutbound: caps.privateOutbound,
@@ -393,7 +422,7 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
         blockedBecause: caps.reasons,
       },
       messaging: { adapter: d.runtime.messagingAdapter },
-      interpreter: { adapter: d.runtime.interpreterAdapter },
+      interpreter: { adapter: app.interpreterAdapter }, // what was instantiated, not what the environment asked for
       voiceNotes: { transcription: d.runtime.transcription },
     };
   };

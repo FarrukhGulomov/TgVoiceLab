@@ -14,6 +14,7 @@ import type { Logger } from '../observability/logger.js';
 import type { MessagingPort, OutboundMessage } from '../../application/ports.js';
 import type { IncomingMessage, IntakeService } from '../../modules/messaging/intake.service.js';
 import { convertMessage } from './convert.js';
+import { classifyTelegramSendError } from '../../modules/messaging/delivery-errors.js';
 
 export interface GramjsOptions {
   apiId: number;
@@ -92,9 +93,11 @@ export class GramjsMessaging implements MessagingPort {
     if (!this.started) throw new Error('Telegram gateway not started');
     const peer = await this.client.getInputEntity(bigInt(m.toTelegramUserId));
     const rid = createHash('sha256').update(m.idempotencyKey).digest().subarray(0, 8).readBigInt64BE(0);
-    const res = await this.client.invoke(
-      new Api.messages.SendMessage({ peer, message: m.text, randomId: bigInt(rid.toString()), silent: m.silent ?? false, noWebpage: true }),
-    );
+    const res = await this.client
+      .invoke(new Api.messages.SendMessage({ peer, message: m.text, randomId: bigInt(rid.toString()), silent: m.silent ?? false, noWebpage: true }))
+      .catch((e: unknown) => {
+        throw classifyTelegramSendError(e); // deterministic rejections become PermanentDeliveryError, the rest stay retryable
+      });
     const id = (res as { id?: number }).id ?? ((res as { updates?: Array<{ id?: number }> }).updates ?? []).find((u) => typeof u.id === 'number')?.id;
     return { providerMessageId: String(id ?? 'unknown') };
   }

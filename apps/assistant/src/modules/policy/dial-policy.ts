@@ -15,6 +15,8 @@ export interface DialPolicyInput {
   plan: ApprovedCallPlan;
   /** Lifecycle status of the call request being dialed; only `queued` is dialable (cancellation must stick, audit F12). */
   requestStatus: string;
+  /** CALLS_ENABLED as configured. Calling needs this AND the evidence gates; neither substitutes for the other. */
+  callingEnabled: boolean;
   authorization: { id: string; ownerId: string; state: string; expiresAt: Date; planHash: string } | null;
   contact: { id: string; telegramUserId: string; verifiedAt: Date | null; timezone: string | null } | null;
   permission: {
@@ -53,6 +55,7 @@ export type DialDenial =
   | 'plan_hash_mismatch'
   | 'plan_expired'
   | 'request_not_dialable'
+  | 'calls_disabled'
   | 'recipient_missing'
   | 'recipient_unverified'
   | 'recipient_mismatch'
@@ -80,6 +83,7 @@ export function evaluateDialPolicy(i: DialPolicyInput): PolicyDecision {
   if (i.owner.disabled) return deny('owner_disabled');
   if (!i.owner.verified) return deny('owner_unverified');
   if (i.killSwitchOn) return deny('kill_switch_on');
+  if (!i.callingEnabled) return deny('calls_disabled');
   if (
     !i.capability.buildFingerprintMatches ||
     !i.capability.privateOutbound ||

@@ -42,6 +42,7 @@ function baseline(over: Partial<DialPolicyInput> = {}, planOver: Partial<Approve
     },
     plan,
     requestStatus: 'queued',
+    callingEnabled: true,
     authorization: { id: U(3), ownerId: U(2), state: 'approved', expiresAt: new Date(plan.expiresAt), planHash: plan.planHash },
     contact: { id: U(9), telegramUserId: '555000111', verifiedAt: new Date('2026-10-01T00:00:00Z'), timezone: 'Asia/Samarkand' },
     permission: {
@@ -112,6 +113,7 @@ describe('dial policy (spec §9.1)', () => {
     ['outside_allowed_hours', () => ({ ...baseline({ now: new Date('2026-10-15T14:00:00Z') }, { expiresAt: '2026-10-16T00:00:00.000Z' }) })], // 19:00 local, outside 09:00-18:00
     ['consent_mechanism_unproven', (b) => ({ capability: { ...b.capability, thirdPartyConsentMechanismProven: false } })],
     ['request_not_dialable', () => ({ requestStatus: 'cancelled' })],
+    ['calls_disabled', () => ({ callingEnabled: false })],
     ['budget_not_reserved', () => ({ budgetReserved: false })],
   ];
   it.each(cases.map((c, i) => [c[0], i] as const))('denies: %s (case %i)', (code, idx) => {

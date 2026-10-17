@@ -5,6 +5,7 @@ import type { MessagingPort } from '../../application/ports.js';
 import type { OutboxHandler } from '../outbox/outbox.js';
 import { t, type Locale, type MessageKey } from './i18n.js';
 import type { Recurrence } from '../scheduling/recurrence.js';
+import { chunkText } from './chunk.js';
 
 interface OwnerRow {
   telegram_user_id: string;
@@ -52,7 +53,23 @@ const REASONS: Record<string, string> = {
 
 /** Outbox -> Telegram. Idempotent on the outbox event id (used as the provider dedupe key). */
 export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging: MessagingPort }): Record<string, OutboxHandler> {
-  const { db, crypto, messaging } = deps;
+  const { db, crypto } = deps;
+  // Every send goes through the central length limit: long text becomes "(i/N)" chunks with stable per-chunk idempotency keys, so a
+  // retry after a partial failure re-sends the same keys and the provider suppresses the ones already delivered.
+  const messaging: MessagingPort = {
+    async sendMessage(m) {
+      const parts = chunkText(m.text);
+      let last = { providerMessageId: 'none' };
+      for (let i = 0; i < parts.length; i++) {
+        last = await deps.messaging.sendMessage({
+          ...m,
+          text: parts.length > 1 ? `(${i + 1}/${parts.length})\n${parts[i]}` : parts[i]!,
+          idempotencyKey: parts.length > 1 ? `${m.idempotencyKey}:${i}` : m.idempotencyKey,
+        });
+      }
+      return last;
+    },
+  };
 
   const loadOwner = async (ownerId: string): Promise<OwnerRow> =>
     (await db.query<OwnerRow>('SELECT telegram_user_id, locale, timezone FROM owners WHERE id=$1', [ownerId])).rows[0]!;

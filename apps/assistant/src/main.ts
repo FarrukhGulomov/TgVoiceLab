@@ -2,6 +2,7 @@ import { readdirSync } from 'node:fs';
 import { DateTime } from 'luxon';
 import { loadConfig } from './bootstrap/config.js';
 import { buildContainer } from './bootstrap/container.js';
+import { verifyConfiguredOwner } from './bootstrap/owner-check.js';
 import { drainWorker, startLane } from './bootstrap/worker.js';
 import { leastPrivilegeViolations } from './infrastructure/db/role-check.js';
 import { sealLegacyPlaintext } from './modules/retention/seal-legacy.js';
@@ -108,11 +109,22 @@ const app = buildContainer({
   messaging,
   callAdapter,
   deriveCapabilities: derive,
+  callsEnabled: cfg.CALLS_ENABLED,
+  textAiDisabled: cfg.TEXT_AI_ADAPTER === 'disabled',
   workerId: `worker-${process.pid}`,
   ...(cfg.DAILY_AI_BUDGET_USD ? { dailyCapMicroUsd: Math.round(cfg.DAILY_AI_BUDGET_USD * 1_000_000) } : {}),
 });
 
-const owner = (await db.query<{ id: string; timezone: string }>('SELECT id, timezone FROM owners ORDER BY created_at LIMIT 1')).rows[0];
+// The configured owner must match the database BEFORE any adapter or worker starts (audit F18).
+const owners = (
+  await db.query<{ id: string; timezone: string; telegram_user_id: string }>('SELECT id, timezone, telegram_user_id FROM owners ORDER BY created_at')
+).rows;
+const ownerProblem = verifyConfiguredOwner({ production: cfg.NODE_ENV === 'production', configured: cfg.OWNER_TELEGRAM_USER_ID, owners });
+if (ownerProblem) {
+  log.fatal(ownerProblem);
+  process.exit(1);
+}
+const owner = owners[0];
 if (owner && cfg.DAILY_AI_BUDGET_USD) {
   await ensureDailyBudget(db, owner.id, DateTime.now().setZone(owner.timezone).toFormat('yyyy-LL-dd'), Math.round(cfg.DAILY_AI_BUDGET_USD * 1_000_000));
 }

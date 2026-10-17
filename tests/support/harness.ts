@@ -18,5 +18,6 @@ export function boot(
 ) {
   const db = new Db(url, undefined, 6);
   const crypto = new DataCrypto(new Envelope(parseKeyRing(TEST_KEYRING)));
-  return { ...buildContainer({ db, crypto, clock, messaging, workerId, ...extra }), messaging, close: () => db.close() };
+  // Tests exercise the call control plane, so calling is switched ON by default here; production defaults to OFF (fail closed).
+  return { ...buildContainer({ db, crypto, clock, messaging, workerId, callsEnabled: true, ...extra }), messaging, close: () => db.close() };
 }

@@ -122,7 +122,8 @@ export async function dispatchOutboxOnce(
       if (res.rowCount === 1) out.delivered++;
       else out.lost++;
     } catch (err) {
-      const dead = row.attempts >= maxAttempts;
+      const permanent = (err as { permanent?: boolean })?.permanent === true;
+      const dead = permanent || row.attempts >= maxAttempts; // a deterministic provider rejection is never retried
       const res = await db.query(
         `UPDATE outbox SET delivery_state=$4, next_attempt_at=$5, last_error=$6, lease_owner=NULL, lease_expires_at=NULL
          WHERE event_id=$1 AND fencing_token=$2 AND lease_owner=$3 AND delivery_state='pending'`,

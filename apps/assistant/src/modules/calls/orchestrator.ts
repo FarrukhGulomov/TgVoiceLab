@@ -44,6 +44,8 @@ export interface OrchestratorDeps {
   sessionRunner?: CallSessionRunner;
   /** Reserved against the daily cap before connecting (micro-USD). */
   callBudgetMicroUsd: number;
+  /** CALLS_ENABLED. Fail closed: when false no call is ever dialed, whatever the evidence says. */
+  callsEnabled: boolean;
   /** Daily cap (micro-USD). When set, each local day's budget row is created lazily and atomically before the first reservation. */
   dailyCapMicroUsd?: number;
   ringTimeoutMs?: number;
@@ -145,6 +147,7 @@ export class CallOrchestrator {
       owner: { id: o0.id, disabled: o0.disabled, timezone: o0.timezone, quietHours: o0.quiet_hours, callOptOut: o0.call_opt_out, verified: true },
       plan,
       requestStatus: req.rows[0].status,
+      callingEnabled: this.d.callsEnabled,
       authorization: a ? { id: a.id, ownerId: a.owner_id, state: a.state, expiresAt: a.expires_at, planHash: a.plan_hash } : null,
       contact: c ? { id: c.id, telegramUserId: c.telegram_user_id, verifiedAt: c.verified_at, timezone: c.timezone } : null,
       permission: p
