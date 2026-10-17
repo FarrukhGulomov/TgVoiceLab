@@ -29,6 +29,12 @@ describe('GeminiTranscription', () => {
       json: async () => ({ error: { status: 'INVALID_ARGUMENT', message: 'model does not support generateContent' } }),
     })) as unknown as typeof fetch;
     await expect(mk(bad).transcribe(audio)).rejects.toThrow('HTTP 400 (INVALID_ARGUMENT: model does not support generateContent)');
-    await expect(mk(answer('not json')).transcribe(audio)).rejects.toThrow('not JSON');
+    // plain text (dedicated transcription models) and fenced JSON are both accepted; the request carries no JSON-mode flag
+    expect(await mk(answer('ertaga soat 10 da dori ichishni eslat')).transcribe(audio)).toEqual({
+      text: 'ertaga soat 10 da dori ichishni eslat',
+      confidence: 0.75,
+    });
+    expect((await mk(answer('```json\n{"text":"salom","confident":true}\n```')).transcribe(audio)).text).toBe('salom');
+    expect(JSON.stringify(answer.last)).not.toContain('responseMimeType');
   });
 });
