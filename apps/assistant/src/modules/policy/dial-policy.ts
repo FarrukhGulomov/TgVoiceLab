@@ -106,8 +106,10 @@ export function evaluateDialPolicy(i: DialPolicyInput): PolicyDecision {
   if (new Date(i.plan.expiresAt).getTime() <= t) return deny('plan_expired');
   if (i.requestStatus !== 'queued') return deny('request_not_dialable');
 
+  // "Stop calling me" is a durable owner switch for EVERY call the assistant would place (owner and contact calls alike).
+  if (i.owner.callOptOut) return deny('owner_opted_out');
+
   if (i.kind === 'owner_call') {
-    if (i.owner.callOptOut) return deny('owner_opted_out');
     if (inQuietHours(i.now, i.owner.timezone, i.owner.quietHours)) return deny('quiet_hours');
   } else {
     if (!i.capability.thirdPartyConsentMechanismProven) return deny('consent_mechanism_unproven');

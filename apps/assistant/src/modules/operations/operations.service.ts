@@ -103,14 +103,14 @@ export class OperationsService {
     return terminated;
   }
 
-  /** Owner opt-out ("stop calling me") scope: calls TO the owner. DB part (callable in the caller's transaction)... */
-  async cancelOwnerCallIntents(q: Queryable, ownerId: string): Promise<number> {
-    return this.cancelDialIntents(q, ownerId, undefined, true);
+  /** Owner opt-out ("stop calling me") scope: EVERY call the assistant would place. DB part (callable in the caller's transaction)... */
+  async cancelAllCallIntents(q: Queryable, ownerId: string): Promise<number> {
+    return this.cancelDialIntents(q, ownerId);
   }
 
   /** ...and the live part, which runs after commit. */
-  terminateLiveOwnerCalls(ownerId: string): Promise<number> {
-    return this.terminateLive(ownerId, undefined, 'cancelled', 'owner_call');
+  terminateAllLiveCalls(ownerId: string): Promise<number> {
+    return this.terminateLive(ownerId, undefined, 'cancelled');
   }
 
   /**

@@ -270,8 +270,8 @@ describe('F13 — budget lifecycle', () => {
   });
 });
 
-describe('F14 — owner opt-out stops owner calls (scope: calls TO the owner)', () => {
-  it('cancels queued owner calls, ends a live owner call, leaves contact calls alone, and blocks future owner calls', async () => {
+describe('F14 — "stop calling me" stops ALL assistant calls (owner and contacts), within seconds', () => {
+  it('cancels every queued call, ends a live owner call, and blocks future owner AND contact calls', async () => {
     const w = await world({ script: { kind: 'silent_after_connect' }, extra: { sessionRunner: HOLD }, explicitBudget: true });
     // 1) a live OWNER call and a queued second owner call
     const live = await w.ownerRequest();
@@ -292,23 +292,26 @@ describe('F14 — owner opt-out stops owner calls (scope: calls TO the owner)', 
     });
     expect(reply).toEqual({ status: 'handled', intent: 'stop_calling' });
     await w.app.tick();
-    expect(w.app.messaging.sent.some((m) => /calls to your contacts/i.test(m.text))).toBe(true); // the reply states the scope
+    expect(w.app.messaging.sent.some((m) => /all calls are stopped/i.test(m.text))).toBe(true); // the reply states the scope
     // 3) effects
     expect(w.adapter.ended.map((e) => e.reason)).toEqual(['cancelled']); // the live owner call was ended
     expect((await t.db.query('SELECT status FROM call_requests WHERE id=$1', [queued.callRequestId])).rows[0].status).toBe('cancelled');
     await dialing;
     const after = await w.ownerRequest();
     expect(await w.app.orchestrator.dial(o.ownerId, after.callRequestId)).toMatchObject({ status: 'rejected', reason: 'owner_opted_out' });
-    // contact calls are a different scope: the queued contact request and its authorization are untouched
-    const stillQueued = await t.db.query('SELECT status FROM call_requests WHERE id=$1', [contactReq.callRequestId]);
-    expect(stillQueued.rows[0].status).toBe('queued');
-    expect((await t.db.query('SELECT state FROM authorizations WHERE id=$1', [contactReq.authorizationId])).rows[0].state).toBe('approved');
+    // contact calls are covered too: the queued contact request is cancelled and its authorization revoked
+    const contactRow = await t.db.query('SELECT status FROM call_requests WHERE id=$1', [contactReq.callRequestId]);
+    expect(contactRow.rows[0].status).toBe('cancelled');
+    expect((await t.db.query('SELECT state FROM authorizations WHERE id=$1', [contactReq.authorizationId])).rows[0].state).toBe('revoked');
+    const contactAfter = await w.request();
+    expect(await w.app.orchestrator.dial(o.ownerId, contactAfter.callRequestId)).toMatchObject({ status: 'rejected', reason: 'owner_opted_out' });
     await w.app.close();
   });
-  it('a live CONTACT call is not terminated by the owner opt-out', async () => {
+  it('a live CONTACT call is ended by the opt-out too, and promptly', async () => {
     const w = await world({ script: { kind: 'silent_after_connect' }, extra: { sessionRunner: HOLD }, explicitBudget: true });
     const dialing = w.app.orchestrator.dial(o.ownerId, (await w.request()).callRequestId).catch(() => undefined);
     await until(async () => (await w.callState())?.state === 'connected', 'call state connected');
+    const started = Date.now();
     await w.app.intake.handle({
       accountId: o.accountId,
       updateKey: 'msg:optout-2',
@@ -318,8 +321,8 @@ describe('F14 — owner opt-out stops owner calls (scope: calls TO the owner)', 
       receivedAt: new Date(NOW),
       text: "don't call me",
     });
-    expect(w.adapter.ended).toHaveLength(0);
-    for (const c of w.app.registry.list(o.ownerId)) await c.end('cancelled');
+    expect(w.adapter.ended.map((e) => e.reason)).toEqual(['cancelled']);
+    expect(Date.now() - started).toBeLessThan(2000); // stopping is not a timer: it happens within the command itself
     await dialing;
     await w.app.close();
   });

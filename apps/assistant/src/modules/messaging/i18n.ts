@@ -32,7 +32,7 @@ const CATALOG = {
       'I did not change anything. To change an item, send a plain command such as "done 1" or "cancel reminder 2" (without "not", a question or quotes).',
     help: 'I can add tasks, set reminders (one-off or repeating), list them, move them, and mark them done. Calls are currently unavailable.',
     calls_stopped:
-      'Understood. I will not call you, and I cancelled any call to you that was queued or in progress. Calls to your contacts that you explicitly approved are a separate matter and are not affected; tell me if you want those stopped too. (Calls are currently unavailable anyway.)',
+      'Understood. All calls are stopped: I will not call you or your contacts, and I cancelled every call that was queued or in progress. (Calls are currently unavailable anyway.)',
     denied: 'This assistant only takes instructions from its owner.',
     ask_time: 'What time on {date}?',
     ask_task_title: 'What should the task be called?',
@@ -85,7 +85,7 @@ const CATALOG = {
       'Hech narsani o‘zgartirmadim. O‘zgartirish uchun aniq buyruq yuboring, masalan «bajarildi 1» yoki «eslatma 2 ni bekor qil» (inkor, savol yoki qo‘shtirnoqsiz).',
     help: 'Men vazifa qo‘shaman, eslatma (bir martalik yoki takroriy) o‘rnataman, ularni ko‘rsataman, ko‘chiraman va bajarilgan deb belgilayman. Qo‘ng‘iroqlar hozircha mavjud emas.',
     calls_stopped:
-      'Tushunarli. Sizga qo‘ng‘iroq qilmayman, navbatdagi yoki davom etayotgan qo‘ng‘iroqlarni bekor qildim. Siz alohida tasdiqlagan kontaktlaringizga qo‘ng‘iroqlar bunga kirmaydi; ularni ham to‘xtatishni xohlasangiz, ayting. (Hozircha qo‘ng‘iroqlar baribir mavjud emas.)',
+      'Tushunarli. Barcha qo‘ng‘iroqlar to‘xtatildi: sizga ham, kontaktlaringizga ham qo‘ng‘iroq qilmayman, navbatdagi va davom etayotgan barcha qo‘ng‘iroqlarni bekor qildim. (Hozircha qo‘ng‘iroqlar baribir mavjud emas.)',
     denied: 'Bu yordamchi faqat o‘z egasining ko‘rsatmalarini qabul qiladi.',
     ask_time: '{date} kuni soat nechada?',
     ask_task_title: 'Vazifa nima deb nomlansin?',
@@ -137,7 +137,7 @@ const CATALOG = {
       'Я ничего не менял. Чтобы изменить пункт, отправьте простую команду, например «готово 1» или «отмени напоминание 2» (без отрицания, вопроса и кавычек).',
     help: 'Я добавляю задачи, ставлю напоминания (разовые и повторяющиеся), показываю, переношу и отмечаю выполненными. Звонки сейчас недоступны.',
     calls_stopped:
-      'Понял. Звонить вам не буду, а запланированные и текущие звонки вам отменил. Звонки вашим контактам, которые вы отдельно одобрили, это другое и не затронуты; скажите, если нужно остановить и их. (Звонки сейчас всё равно недоступны.)',
+      'Понял. Все звонки остановлены: я не буду звонить ни вам, ни вашим контактам, а все запланированные и текущие звонки отменил. (Звонки сейчас всё равно недоступны.)',
     denied: 'Этот ассистент принимает указания только от своего владельца.',
     ask_time: 'Во сколько {date}?',
     ask_task_title: 'Как назвать задачу?',

@@ -13,3 +13,13 @@
 4. A live call the supervisor lost: `POST /v1/calls/<callId>/cancel` (idempotent), or [kill-switch.md](kill-switch.md).
 5. After a process crash the service reconciles orphaned calls at startup (`recoverOrphanedCalls`): the provider **confirming** the end ⇒ `failed`/`ended`; anything else (active, unknown) ⇒ `outcome_unknown` for every in-flight state; never redials. The same rule applies while running: a call whose end is not proven (no terminal event and no provider confirmation after a bounded hangup) is persisted as `outcome_unknown`.
 6. An `outcome_unknown` call also keeps its **budget reservation** until you resolve it; resolving settles it exactly once.
+
+## Re-enabling calls after "stop calling me"
+
+The owner's "stop calling me" sets `owners.call_opt_out = true`, which denies **every** call (owner and contact) with `owner_opted_out` until it is cleared. There is no chat command for this yet. Only on the owner's explicit request, an operator with the migrator/bootstrap role runs:
+
+```sql
+UPDATE owners SET call_opt_out = false WHERE id = '<owner uuid>';
+```
+
+Requests cancelled by the opt-out stay cancelled and their authorizations stay revoked; new calls need a fresh request and approval.

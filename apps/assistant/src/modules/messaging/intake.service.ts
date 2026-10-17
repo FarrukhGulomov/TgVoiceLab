@@ -67,12 +67,12 @@ export class IntakeService {
       voiceDownloadTimeoutMs?: number;
       voiceMaxConcurrentDownloads?: number;
       /**
-       * Owner opt-out scope: calls TO the owner. `cancelOwnerCallIntents` runs inside the intake transaction; `terminateLiveOwnerCalls`
-       * runs after it commits (audit F14).
+       * Owner opt-out scope: ALL assistant calls (owner and contact). `cancelAllCallIntents` runs inside the intake transaction;
+       * `terminateAllLiveCalls` runs after it commits (audit F14, scope decided by the owner).
        */
       ownerCalls?: {
-        cancelOwnerCallIntents(q: pg.PoolClient, ownerId: string): Promise<number>;
-        terminateLiveOwnerCalls(ownerId: string): Promise<number>;
+        cancelAllCallIntents(q: pg.PoolClient, ownerId: string): Promise<number>;
+        terminateAllLiveCalls(ownerId: string): Promise<number>;
       };
     },
   ) {
@@ -331,15 +331,15 @@ export class IntakeService {
         // The owner row update takes the lock a concurrent dial transaction also needs, so the two serialize (no handover gap).
         await c.query('UPDATE owners SET call_opt_out=true WHERE id=$1', [p.ownerId]);
         const owner = this.d.ownerCalls;
-        const cancelled = owner ? await owner.cancelOwnerCallIntents(c, p.ownerId) : 0;
-        if (owner) afterCommit.push(() => owner.terminateLiveOwnerCalls(p.ownerId));
+        const cancelled = owner ? await owner.cancelAllCallIntents(c, p.ownerId) : 0;
+        if (owner) afterCommit.push(() => owner.terminateAllLiveCalls(p.ownerId));
         await writeAudit(c, {
           ownerId: p.ownerId,
           actorType: 'owner',
           action: 'owner.call_opt_out',
           allowed: true,
           reasonCode: 'ok',
-          metadata: { scope: 'owner_calls', cancelledRequests: cancelled },
+          metadata: { scope: 'all_calls', cancelledRequests: cancelled },
         });
         return t(loc, 'calls_stopped');
       }

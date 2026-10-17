@@ -132,6 +132,9 @@ describe('dial policy (spec §9.1)', () => {
     expect(evaluateDialPolicy(b).allowed).toBe(true);
     expect(evaluateDialPolicy({ ...b, owner: { ...b.owner, callOptOut: true } }).reasonCode).toBe('owner_opted_out');
     expect(evaluateDialPolicy({ ...b, now: new Date('2026-10-15T18:30:00Z') }).reasonCode).toBe('quiet_hours'); // 23:30 local
+    // the opt-out is not specific to owner calls: contact calls are denied by it as well
+    const contact = baseline();
+    expect(evaluateDialPolicy({ ...contact, owner: { ...contact.owner, callOptOut: true } }).reasonCode).toBe('owner_opted_out');
   });
 
   it('kill switch outranks everything else', () => {
