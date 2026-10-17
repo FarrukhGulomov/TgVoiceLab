@@ -177,7 +177,15 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   log.warn({ provider: cfg.AI_VOICE_PROVIDER }, 'owner-call conversation layer loaded; calls still require CALLS_ENABLED and valid evidence');
 }
 
+let transcription: import('./application/ports.js').TranscriptionPort | undefined;
+if (cfg.GEMINI_API_KEY && cfg.GEMINI_TRANSCRIPTION_MODEL) {
+  const { GeminiTranscription } = await import('./infrastructure/gemini/transcribe.js');
+  transcription = new GeminiTranscription({ apiKey: cfg.GEMINI_API_KEY, model: cfg.GEMINI_TRANSCRIPTION_MODEL });
+  log.warn('voice notes are transcribed by Gemini (not live verified); on the free tier Google may use the audio to improve its products');
+}
+
 const app = buildContainer({
+  ...(transcription ? { transcription } : {}),
   ...(sessionRunner ? { sessionRunner } : {}),
   ...(gateway ? { peers: gateway } : {}),
   db,
@@ -247,7 +255,7 @@ const server = await buildServer({
     callAdapter: cfg.CALL_ADAPTER,
     evidencePath: cfg.CALL_FEASIBILITY_EVIDENCE_PATH ?? null,
     buildFingerprint: cfg.BUILD_FINGERPRINT,
-    transcription: false,
+    transcription: !!transcription,
     callsEnabled: cfg.CALLS_ENABLED,
     messagingStatus: () => (gateway ? gateway.status() : { adapter: cfg.MESSAGING_ADAPTER }),
   },

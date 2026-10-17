@@ -64,6 +64,18 @@ Implemented offline: contact grammar (add/remove/list, `call_contact` in chat an
 (AI disclosure, `submit_report`/`end_call`), sealed report to the owner. **Not verified live**, and dialing a contact still needs all six
 evidence gates (G0-D 10 calls, G0-E variants, G0-F canary) — not recorded yet.
 
+## Live gate progress (build-bound, see docs/runbooks/contact-call-gates.md)
+
+Owner calling: G0-A..C + G0-D5 recorded live. Contact calling (all six gates): G0-D recorded live (10/10 short calls and a 304 s call
+with 4 barge-ins on a test account); G0-E has `decline` only (busy, no_answer, privacy, connectivity_loss missing); G0-F attestation
+missing. Contact calls therefore stay **disabled**. Any change under `infrastructure/telegram`, `modules/calls/ntgcalls` or
+`modules/calls/audio` changes the fingerprint and voids these records.
+
+## Voice notes
+
+`GeminiTranscription` (generateContent, inline audio) turns owner voice notes into text when `GEMINI_API_KEY` and
+`GEMINI_TRANSCRIPTION_MODEL` are set. **Not live verified.** Unsure transcripts are echoed back for confirmation, never acted on.
+
 ## Not verified because of sandbox limits
 
 `core.telegram.org`, `github.com` and `developers.openai.com` were blocked by the egress proxy. Telegram call-protocol facts come from the GramJS TL schema and

@@ -22,6 +22,8 @@ const EnvSchema = z
     GEMINI_API_KEY: opt(z.string()),
     GEMINI_LIVE_MODEL: opt(z.string()),
     GEMINI_VOICE: opt(z.string()),
+    /** Model for voice-note transcription (Gemini generateContent). Never defaulted; with GEMINI_API_KEY it turns voice notes on. */
+    GEMINI_TRANSCRIPTION_MODEL: opt(z.string()),
     /** Which AI voice provider talks on calls. Models are never defaulted. */
     AI_VOICE_PROVIDER: z.enum(['openai', 'gemini']).optional(),
     OPENAI_REALTIME_DIALECT: z.enum(['ga', 'beta']).default('ga'),
