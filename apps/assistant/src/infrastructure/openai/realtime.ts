@@ -60,7 +60,8 @@ export function sessionUpdate(o: Pick<RealtimeOptions, 'voice' | 'instructions' 
 }
 
 export class OpenAiRealtimeLink implements RealtimeLink {
-  readonly sampleRateHz: number;
+  readonly inputRateHz: number;
+  readonly outputRateHz: number;
   #ws: WebSocket;
   #open = false;
   #queue: string[] = [];
@@ -73,7 +74,7 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   #lastItemId: string | null = null;
 
   constructor(o: RealtimeOptions) {
-    this.sampleRateHz = o.sampleRateHz ?? 24_000;
+    this.inputRateHz = this.outputRateHz = o.sampleRateHz ?? 24_000;
     const url = `${o.baseUrl ?? 'wss://api.openai.com/v1/realtime'}?model=${encodeURIComponent(o.model)}`;
     const headers: Record<string, string> = { Authorization: `Bearer ${o.apiKey}` };
     if (o.dialect === 'beta') headers['OpenAI-Beta'] = 'realtime=v1';

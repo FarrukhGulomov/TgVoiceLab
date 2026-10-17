@@ -1,9 +1,10 @@
 import type { CallHandle } from '@tgvl/contracts';
 import { FrameAssembler, StreamingResampler } from './resampler.js';
 
-/** The AI voice session as the bridge sees it (OpenAI Realtime in production; a fake in tests). Audio is s16le mono at `sampleRateHz`. */
+/** The AI voice session as the bridge sees it (OpenAI Realtime in production; a fake in tests). Audio is s16le mono; the model's input and output rates may differ (e.g. 16 kHz in / 24 kHz out). */
 export interface RealtimeLink {
-  readonly sampleRateHz: number;
+  readonly inputRateHz: number;
+  readonly outputRateHz: number;
   sendAudio(pcm: Uint8Array): void;
   /** Ask the model to speak now (e.g. the greeting). */
   respond(instructions?: string): void;
@@ -52,8 +53,8 @@ export class RealtimeCallBridge {
     private readonly link: RealtimeLink,
     private readonly log: (line: string) => void = () => undefined,
   ) {
-    this.#up = new StreamingResampler(CALL_RATE, link.sampleRateHz);
-    this.#down = new StreamingResampler(link.sampleRateHz, CALL_RATE);
+    this.#up = new StreamingResampler(CALL_RATE, link.inputRateHz);
+    this.#down = new StreamingResampler(link.outputRateHz, CALL_RATE);
   }
 
   start(greeting?: string): void {
@@ -84,7 +85,7 @@ export class RealtimeCallBridge {
       this.stats.bargeIns++;
       this.#epoch++;
       this.#assembler.clear();
-      this.#down = new StreamingResampler(this.link.sampleRateHz, CALL_RATE);
+      this.#down = new StreamingResampler(this.link.outputRateHz, CALL_RATE);
       void this.handle.flushOutput().catch(() => undefined);
       this.link.interrupt(this.#playedFrames * 10);
       this.#playedFrames = 0;

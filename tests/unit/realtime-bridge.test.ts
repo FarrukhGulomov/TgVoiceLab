@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest';
 import type { CallHandle, PcmFrame } from '@tgvl/contracts';
 import { RealtimeCallBridge, type RealtimeLink } from '../../apps/assistant/src/modules/calls/audio/realtime-bridge.js';
 import { OpenAiRealtimeLink, sessionUpdate } from '../../apps/assistant/src/infrastructure/openai/realtime.js';
+import { GeminiLiveLink, geminiSetup } from '../../apps/assistant/src/infrastructure/gemini/live.js';
 
 const FRAME = 960;
 const flush = () => new Promise((r) => setTimeout(r, 5));
 
 class FakeLink implements RealtimeLink {
-  sampleRateHz = 24000;
+  inputRateHz = 24000;
+  outputRateHz = 24000;
   sent: Uint8Array[] = [];
   responses: Array<string | undefined> = [];
   interrupts: number[] = [];
@@ -294,5 +296,124 @@ describe('OpenAiRealtimeLink', () => {
     sock.emit('close', 1000);
     expect(errs).toEqual([]);
     expect(sock.closed).toBe(true);
+  });
+});
+
+describe('RealtimeCallBridge with different input and output rates', () => {
+  it('resamples 48k -> 16k for the model and 24k -> 48k back (Gemini-style rates)', async () => {
+    const h = fakeHandle();
+    const link = new FakeLink();
+    link.inputRateHz = 16000;
+    link.outputRateHz = 24000;
+    const b = new RealtimeCallBridge(h.handle, link);
+    b.start();
+    for (let i = 0; i < 30; i++) h.push(tone(FRAME));
+    await flush();
+    const total = link.sent.reduce((a, p) => a + p.length, 0);
+    expect(Math.abs(total - (30 * FRAME) / 3)).toBeLessThanOrEqual(200); // 48k -> 16k is a third of the bytes
+    link.audio!(tone(4800)); // 100 ms at 24 kHz
+    await flush();
+    expect(h.sent.length).toBeGreaterThanOrEqual(8); // 24k -> 48k doubles it: ~10 frames of 10 ms out
+    b.stop();
+    h.finish();
+  });
+});
+
+const openGemini = (o: Partial<ConstructorParameters<typeof GeminiLiveLink>[0]> = {}) => {
+  const sock = new FakeSocket();
+  let seenUrl = '';
+  const link = new GeminiLiveLink({
+    apiKey: 'KEY123',
+    model: 'some-live-model',
+    instructions: 'be brief',
+    socketFactory: (u) => {
+      seenUrl = u;
+      return sock as never;
+    },
+    ...o,
+  });
+  const msg = (x: object) => sock.emit('message', Buffer.from(JSON.stringify(x)));
+  return { link, sock, msg, url: () => seenUrl };
+};
+
+describe('GeminiLiveLink', () => {
+  it('sends setup first (model prefixed, audio out, instructions, transcription), and holds audio and text until setupComplete', () => {
+    const { link, sock, msg, url } = openGemini({ voice: 'v1' });
+    link.respond('say hi');
+    link.sendAudio(new Uint8Array([1, 2]));
+    sock.emit('open');
+    expect(url()).toContain('?key=KEY123');
+    const setup = JSON.parse(sock.sent[0]!);
+    expect(setup.setup).toMatchObject({
+      model: 'models/some-live-model',
+      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'v1' } } } },
+      systemInstruction: { parts: [{ text: 'be brief' }] },
+    });
+    expect(setup.setup.inputAudioTranscription).toEqual({});
+    expect(sock.sent).toHaveLength(1); // nothing else before setupComplete
+    msg({ setupComplete: {} });
+    expect(JSON.parse(sock.sent[1]!)).toEqual({ realtimeInput: { text: 'say hi' } });
+    expect(JSON.parse(sock.sent[2]!)).toEqual({ realtimeInput: { audio: { data: 'AQI=', mimeType: 'audio/pcm;rate=16000' } } });
+  });
+
+  it('never double-prefixes the model and can send the greeting as a clientContent turn for older models', () => {
+    expect((geminiSetup({ model: 'models/x', instructions: 'i' }) as { setup: { model: string } }).setup.model).toBe('models/x');
+    const { link, sock, msg } = openGemini({ textMode: 'client_content' });
+    sock.emit('open');
+    msg({ setupComplete: {} });
+    link.respond('hi');
+    expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ clientContent: { turns: [{ role: 'user', parts: [{ text: 'hi' }] }], turnComplete: true } });
+  });
+
+  it('decodes audio parts, reports response start once per turn, barge-in via interrupted, and groups transcripts per turn', () => {
+    const { link, sock, msg } = openGemini();
+    sock.emit('open');
+    msg({ setupComplete: {} });
+    const events: string[] = [];
+    const audio: number[][] = [];
+    link.onAudio((p) => audio.push([...p]));
+    link.onResponseStart(() => events.push('start'));
+    link.onSpeechStarted(() => events.push('interrupted'));
+    link.onTranscript((w, t) => events.push(`${w}:${t}`));
+    msg({ serverContent: { inputTranscription: { text: 'Salom ' } } });
+    msg({
+      serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=24000', data: 'AQI=' } }] }, outputTranscription: { text: 'Assalomu ' } },
+    });
+    msg({
+      serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=24000', data: 'AwQ=' } }] }, outputTranscription: { text: 'alaykum' } },
+    });
+    msg({ serverContent: { turnComplete: true } });
+    msg({ serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=24000', data: 'BQ==' } }] } } });
+    msg({ serverContent: { interrupted: true } });
+    expect(audio).toEqual([[1, 2], [3, 4], [5]]);
+    expect(events).toEqual(['start', 'caller:Salom', 'assistant:Assalomu alaykum', 'start', 'interrupted']);
+  });
+
+  it('refuses audio in an unexpected format instead of playing garbage, and surfaces server errors and unexpected closes verbatim (key redacted)', () => {
+    const { link, sock, msg } = openGemini();
+    const errs: string[] = [];
+    link.onError((m) => errs.push(m));
+    const audio: number[][] = [];
+    link.onAudio((p) => audio.push([...p]));
+    sock.emit('open');
+    msg({ setupComplete: {} });
+    msg({ serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=16000', data: 'AQI=' } }] } } });
+    msg({ error: { code: 400, message: 'bad request' } });
+    sock.emit('close', 1007, Buffer.from('Invalid value at setup (KEY123)'));
+    expect(audio).toEqual([]);
+    expect(errs).toEqual([
+      'unexpected audio format audio/pcm;rate=16000 (expected 24000 Hz PCM)',
+      '400: bad request',
+      'websocket closed (1007) Invalid value at setup (***)',
+    ]);
+  });
+
+  it('a close we initiated is not an error', () => {
+    const { link, sock } = openGemini();
+    const errs: string[] = [];
+    link.onError((m) => errs.push(m));
+    link.close();
+    sock.emit('close', 1000, Buffer.from(''));
+    expect(errs).toEqual([]);
   });
 });

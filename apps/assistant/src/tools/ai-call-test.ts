@@ -8,7 +8,9 @@
  *   LIVE_TEST_OPT_IN=yes  LIVE_TEST_RECIPIENT_ID=<numeric id>  LIVE_TEST_RECIPIENT_CONSENT=yes
  *   LIVE_TEST_WINDOW_START / LIVE_TEST_WINDOW_END  (ISO instants, at most 2 h apart)
  *   LIVE_TEST_MAX_SECONDS (default 120, max 600)
- *   OPENAI_API_KEY  OPENAI_REALTIME_MODEL  [OPENAI_VOICE]  [OPENAI_REALTIME_DIALECT=ga|beta]  [OPENAI_TRANSCRIPTION_MODEL]
+ *   AI_VOICE_PROVIDER=openai (default) | gemini
+ *   openai: OPENAI_API_KEY  OPENAI_REALTIME_MODEL  [OPENAI_VOICE]  [OPENAI_REALTIME_DIALECT=ga|beta]  [OPENAI_TRANSCRIPTION_MODEL]
+ *   gemini: GEMINI_API_KEY  GEMINI_LIVE_MODEL  [GEMINI_VOICE]  [GEMINI_TEXT_MODE=realtime|client_content]
  */
 import { randomUUID } from 'node:crypto';
 import { Api, TelegramClient } from 'telegram';
@@ -19,6 +21,7 @@ import { RealtimeCallBridge } from '../modules/calls/audio/realtime-bridge.js';
 import { GramjsCallTransport } from '../infrastructure/telegram/gramjs-call-transport.js';
 import { createNtgcallsMedia, ntgcallsProtocol } from '../infrastructure/telegram/ntgcalls-media.js';
 import { OpenAiRealtimeLink } from '../infrastructure/openai/realtime.js';
+import { GeminiLiveLink } from '../infrastructure/gemini/live.js';
 import { resolveSecret } from '../infrastructure/crypto/secrets.js';
 
 const env = process.env;
@@ -43,8 +46,10 @@ if (!Number.isInteger(maxSeconds) || maxSeconds < 20 || maxSeconds > 600) proble
 const apiId = Number(need('TELEGRAM_API_ID'));
 const apiHash = need('TELEGRAM_API_HASH');
 const sessionRef = need('TELEGRAM_SESSION_SECRET_REF');
-const apiKey = need('OPENAI_API_KEY');
-const model = need('OPENAI_REALTIME_MODEL');
+const provider = env.AI_VOICE_PROVIDER === 'gemini' ? 'gemini' : 'openai';
+if (env.AI_VOICE_PROVIDER && !['openai', 'gemini'].includes(env.AI_VOICE_PROVIDER)) problems.push('AI_VOICE_PROVIDER must be openai or gemini');
+const apiKey = need(provider === 'gemini' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY');
+const model = need(provider === 'gemini' ? 'GEMINI_LIVE_MODEL' : 'OPENAI_REALTIME_MODEL');
 const dialect = env.OPENAI_REALTIME_DIALECT === 'beta' ? 'beta' : 'ga';
 if (problems.length) {
   console.error(`BLOCKED_EXTERNAL — the AI call test did not run (that is NOT a pass):\n${problems.map((p) => `  - ${p}`).join('\n')}`);
@@ -74,7 +79,9 @@ if (me.id.toString() === recipientId) {
   console.error('LIVE_TEST_RECIPIENT_ID is the assistant account itself');
   process.exit(2);
 }
-console.log(`assistant ${me.id.toString()} -> ${recipientId}; up to ${maxSeconds}s; model=${model} dialect=${dialect}`);
+console.log(
+  `assistant ${me.id.toString()} -> ${recipientId}; up to ${maxSeconds}s; provider=${provider} model=${model}${provider === 'openai' ? ` dialect=${dialect}` : ''}`,
+);
 
 const adapter = new NtgcallsCallAdapter({
   transport: new GramjsCallTransport(client, () => me.id.toString(), ntgcallsProtocol()),
@@ -104,14 +111,23 @@ const ac = new AbortController();
 const handle = await adapter.dial(plan, ac.signal);
 console.log(`${t()} dialing... answer the call on your phone`);
 
-const link = new OpenAiRealtimeLink({
-  apiKey,
-  model,
-  voice: env.OPENAI_VOICE,
-  instructions: INSTRUCTIONS,
-  dialect,
-  transcriptionModel: env.OPENAI_TRANSCRIPTION_MODEL,
-});
+const link =
+  provider === 'gemini'
+    ? new GeminiLiveLink({
+        apiKey,
+        model,
+        voice: env.GEMINI_VOICE,
+        instructions: INSTRUCTIONS,
+        textMode: env.GEMINI_TEXT_MODE === 'client_content' ? 'client_content' : 'realtime',
+      })
+    : new OpenAiRealtimeLink({
+        apiKey,
+        model,
+        voice: env.OPENAI_VOICE,
+        instructions: INSTRUCTIONS,
+        dialect,
+        transcriptionModel: env.OPENAI_TRANSCRIPTION_MODEL,
+      });
 const bridge = new RealtimeCallBridge(handle, link, (line) => console.log(`${t()} ${line}`));
 let ended: CallEvent | null = null;
 let hangupTimer: NodeJS.Timeout | undefined;

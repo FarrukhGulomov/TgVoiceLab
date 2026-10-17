@@ -19,6 +19,9 @@ const EnvSchema = z
     OPENAI_TEXT_MODEL: opt(z.string()),
     OPENAI_REALTIME_MODEL: opt(z.string()),
     OPENAI_VOICE: opt(z.string()),
+    GEMINI_API_KEY: opt(z.string()),
+    GEMINI_LIVE_MODEL: opt(z.string()),
+    GEMINI_VOICE: opt(z.string()),
     DATA_ENCRYPTION_KEY_REF: opt(z.string()),
     ADMIN_TOKEN_SECRET_REF: opt(z.string()),
     /** Escape hatch for single-login development databases. Never set in production deployments (audit F11). */
