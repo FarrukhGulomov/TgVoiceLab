@@ -70,7 +70,21 @@ export const OWNER_CALL_TOOL_DECLARATIONS: ToolDeclaration[] = [
       "Egasi tasdiqlagan kontaktga (ro'yxatdagi ism bo'yicha) uning nomidan qo'ng'iroq qilishni navbatga qo'yadi. AVVAL egasidan ism va nima deyilishini so'rab, ovoz chiqarib tasdiqlat. name — kontakt ismi; message — kontaktga nima yetkazilishi yoki nima haqida gaplashilishi; date (YYYY-MM-DD) va time (HH:mm) ixtiyoriy (bo'lmasa darrov). Natijaga qarab egasiga haqiqatni ayt.",
     parameters: {
       type: 'object',
-      properties: { name: { type: 'string' }, message: { type: 'string' }, date: { type: 'string' }, time: { type: 'string' } },
+      properties: {
+        name: { type: 'string' },
+        message: { type: 'string' },
+        date: { type: 'string' },
+        time: { type: 'string' },
+        meeting_slots: {
+          type: 'array',
+          description: "Uchrashuv taklif qilinsa: egasi aytgan aniq vaqtlar (AI faqat shulardan biriga rozi bo'la oladi)",
+          items: {
+            type: 'object',
+            properties: { date: { type: 'string', description: 'YYYY-MM-DD' }, time: { type: 'string', description: 'HH:mm' } },
+            required: ['date', 'time'],
+          },
+        },
+      },
       required: ['name', 'message'],
     },
   },
@@ -211,11 +225,23 @@ export class OwnerCallTools {
           const name = String(call.args.name ?? '');
           const message = String(call.args.message ?? '');
           const due = this.#optionalDue(call.args);
+          const slots = (Array.isArray(call.args.meeting_slots) ? call.args.meeting_slots : []).slice(0, 5).map((x) => {
+            const o = x as Record<string, unknown>;
+            const d = this.#optionalDue({ date: o.date, time: o.time ?? DEFAULT_DUE_TIME });
+            if (!d) throw new ValidationError('each meeting slot needs a date');
+            return d.utc;
+          });
           const out = await this.d.db.tx(async (c) => {
             const r = await contacts.resolveByName(c, this.d.ownerId, name);
             if (r.kind === 'none') return { ok: false as const, error: `'${name}' nomli kontakt yo'q` };
             if (r.kind === 'many') return { ok: false as const, error: `bir nechta mos kontakt: ${r.names.join(', ')}; qaysi biri?` };
-            const res = await contactCalls.request(c, this.d.ownerId, { contactId: r.contact.id, message, dueAt: due?.utc, language: 'uz' });
+            const res = await contactCalls.request(c, this.d.ownerId, {
+              contactId: r.contact.id,
+              message,
+              dueAt: due?.utc,
+              language: 'uz',
+              ...(slots.length ? { slots } : {}),
+            });
             if (!res.ok)
               return { ok: false as const, error: res.reason === 'empty_message' ? 'nima deyilishi aniq emas' : "bu kontaktga qo'ng'iroq ruxsati yo'q" };
             await writeAudit(c, {

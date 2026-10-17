@@ -162,8 +162,14 @@ export class RulesInterpreter implements TextInterpreterPort {
       // "Javlonga ertaga 10:00 da qo'ng'iroq qilib hisobot tayyorligini ayt"  /  "call Javlon tomorrow at 10:00 and tell him the report is ready".
       // Date/time words are taken out FIRST, so "ertaga" is never mistaken for a name. Only the imperative/converb forms (qil, qilib, qiling,
       // call) count: "qilaman", "qilishni eslat", "remind me to call" are statements or reminders and never ring anyone.
-      const w0 = extractWhen(text, ctx);
-      const body = w0.rest;
+      // A meeting proposal lists times AFTER the call phrase ("... qo'ng'iroq qilib uchrashuv taklif qil: 15:00 yoki 17:00"). Those are offered
+      // slots, not the time of the call, so only the part BEFORE the call phrase is searched for the call's own date and time.
+      const callAt = normalizeApostrophes(text).search(new RegExp(`${UZ_CALL}\\s+qil|\\bcall\\s+\\S+\\s`, 'iu'));
+      const meetingTalk = callAt >= 0 && /uchrashuv|учраш|meeting|meet\b|ko'rish/i.test(normalizeApostrophes(text).slice(callAt));
+      const head = meetingTalk ? text.slice(0, callAt) : text;
+      const tail = meetingTalk ? text.slice(callAt) : '';
+      const w0 = extractWhen(head, ctx);
+      const body = meetingTalk ? `${w0.rest} ${tail}`.trim() : w0.rest;
       const uz = new RegExp(`^(\\S+?)(?:\\s+degan\\s+kontakt\\w*|(?:ga|ka|qa))\\s+(.*?)${UZ_CALL}\\s+qil(?:ib|ing)?(?![\\p{L}'])[:,]?\\s*(.*)$`, 'iu').exec(
         body,
       );
@@ -179,8 +185,25 @@ export class RulesInterpreter implements TextInterpreterPort {
           said.replace(/^\s*(?:and\s+)?(?:tell|ask|remind|say\s+to)\s+(?:him|her|them)\s*(?:that|to)?\s*/i, '').replace(/^\s*(?:and|va)\s+/i, ''),
         );
         if (!message) return { kind: 'clarify', question: t(ctx.locale, 'ask_call_message', { name: who }) };
-        if (w0.date && !w0.time) return { kind: 'clarify', question: t(ctx.locale, 'ask_time', { date: w0.date }) };
-        return { kind: 'call_contact', contact: who, message, ...(w0.date && w0.time ? { at: { date: w0.date, time: w0.time } } : {}) };
+        if (w0.date && !w0.time && !meetingTalk) return { kind: 'clarify', question: t(ctx.locale, 'ask_time', { date: w0.date }) };
+        // A meeting proposal: "... uchrashuv taklif qil: 15:00 yoki 17:00". The offered times (on the call's date, else today) are the ONLY
+        // times the AI may agree to on the owner's behalf.
+        const slots: Array<{ date: string; time: string }> = [];
+        if (meetingTalk) {
+          // The date comes from date WORDS in the tail ("ertaga ...") only; bare times would otherwise default to today.
+          const day = extractWhen(tail.replace(/\b(?:[01]?\d|2[0-3])[:.][0-5]\d\b/g, ' '), ctx).date ?? w0.date ?? today(ctx);
+          for (const m of tail.matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g)) {
+            const time = `${m[1]!.padStart(2, '0')}:${m[2]}`;
+            if (!slots.some((x) => x.time === time)) slots.push({ date: day, time });
+          }
+        }
+        return {
+          kind: 'call_contact',
+          contact: who,
+          message,
+          ...(w0.date && w0.time ? { at: { date: w0.date, time: w0.time } } : {}),
+          ...(slots.length ? { slots: slots.slice(0, 5) } : {}),
+        };
       }
     }
 

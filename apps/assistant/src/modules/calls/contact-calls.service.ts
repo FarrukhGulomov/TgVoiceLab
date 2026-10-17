@@ -13,6 +13,8 @@ export const DEFAULT_FORBIDDEN_COMMITMENTS = [
 ] as const;
 
 export const CONTACT_CALL_MAX_SECONDS = 300;
+/** Entries of a plan's `allowedContext` that carry the owner-approved meeting times (UTC ISO instants). */
+export const MEETING_SLOT_PREFIX = 'slot:';
 const PLAN_VALID_AFTER_DUE_MS = 30 * 60_000;
 
 export type RequestContactCallResult =
@@ -31,7 +33,13 @@ export class ContactCallService {
   async request(
     c: pg.PoolClient,
     ownerId: string,
-    a: { contactId: string; message: string; dueAt?: Date | undefined; language: 'uz' | 'en' | 'ru' },
+    a: {
+      contactId: string;
+      message: string;
+      dueAt?: Date | undefined;
+      language: 'uz' | 'en' | 'ru';
+      /** Meeting times the owner offers (the AI may confirm only one of these). */ slots?: Date[];
+    },
   ): Promise<RequestContactCallResult> {
     const message = a.message.trim().slice(0, 500);
     if (message.length < 3) return { ok: false, reason: 'empty_message' };
@@ -56,7 +64,13 @@ export class ContactCallService {
         topic: 'general',
         purpose: message,
         questions: [],
-        allowedContext: [message],
+        allowedContext: [
+          message,
+          ...(a.slots ?? [])
+            .filter((d) => d.getTime() > now.getTime())
+            .slice(0, 5)
+            .map((d) => `${MEETING_SLOT_PREFIX}${d.toISOString()}`),
+        ],
         forbiddenCommitments: [...DEFAULT_FORBIDDEN_COMMITMENTS],
         language: a.language,
         maxDurationSeconds: CONTACT_CALL_MAX_SECONDS,

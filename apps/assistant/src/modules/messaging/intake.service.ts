@@ -416,7 +416,14 @@ export class IntakeService {
         if (r.kind === 'many') return t(loc, 'contact_ambiguous', { name: intent.contact, names: r.names.join(', ') });
         if (!this.d.contactCalls) return t(loc, 'contact_call_unavailable', { name: r.contact.displayName });
         const due = intent.at ? this.local(intent.at, p.timezone) : null;
-        const res = await this.d.contactCalls.request(c, p.ownerId, { contactId: r.contact.id, message: intent.message, dueAt: due?.utc, language: loc });
+        const slots = (intent.slots ?? []).map((x) => this.local(x, p.timezone).utc);
+        const res = await this.d.contactCalls.request(c, p.ownerId, {
+          contactId: r.contact.id,
+          message: intent.message,
+          dueAt: due?.utc,
+          language: loc,
+          ...(slots.length ? { slots } : {}),
+        });
         if (!res.ok)
           return res.reason === 'empty_message'
             ? t(loc, 'ask_call_message', { name: r.contact.displayName })

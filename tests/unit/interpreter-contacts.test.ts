@@ -115,3 +115,20 @@ describe('call a contact and ask something that sounds like a reminder', () => {
     expect(await run('soat 13:01 da menga qungiroq qilib dorini eslat')).toMatchObject({ kind: 'create_reminder', byCall: true });
   });
 });
+
+describe('meeting proposals', () => {
+  it('"... uchrashuv taklif qil: 15:00 yoki 17:00" carries the offered times as slots', async () => {
+    expect(await run("Javlonga ertaga 10:00 da qo'ng'iroq qilib uchrashuv taklif qil: 15:00 yoki 17:00")).toMatchObject({
+      kind: 'call_contact',
+      contact: 'Javlonga',
+      at: { date: '2026-10-18', time: '10:00' },
+      slots: [
+        { date: '2026-10-18', time: '15:00' },
+        { date: '2026-10-18', time: '17:00' },
+      ],
+    });
+  });
+  it('without a meeting word, times in the message are just text', async () => {
+    expect(await run("Javlonga qo'ng'iroq qilib soat 5 da kelishini ayt")).not.toHaveProperty('slots');
+  });
+});

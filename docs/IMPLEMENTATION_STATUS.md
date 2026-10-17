@@ -71,6 +71,15 @@ with 4 barge-ins on a test account); G0-E has `decline` only (busy, no_answer, p
 missing. Contact calls therefore stay **disabled**. Any change under `infrastructure/telegram`, `modules/calls/ntgcalls` or
 `modules/calls/audio` changes the fingerprint and voids these records.
 
+## Meetings through contact calls
+
+The owner can offer meeting times ("Javlonga qo'ng'iroq qilib uchrashuv taklif qil: 15:00 yoki 17:00", or `meeting_slots` in the voice
+tool `call_contact`). The offered times are sealed in the approved plan (`allowedContext`, `slot:` entries). On the call the AI may confirm
+ONLY one of them (`submit_report` outcome `meeting_agreed` + `agreed_slot`; any other value is refused); anything else is reported as
+`meeting_countered` with the contact's own words and commits nothing; `callback_requested` tells the owner the contact asked to be called.
+After an agreement the system creates the owner's task ("Uchrashuv: <contact>", due at the slot) and the report states what was really
+committed. Offline-tested only; contact calls remain gated by the six evidence gates.
+
 ## Voice notes
 
 `GeminiTranscription` (generateContent, inline audio) turns owner voice notes into text when `GEMINI_API_KEY` and

@@ -106,6 +106,7 @@ async function setup() {
   });
   ref.inner = new ContactCallRunner({
     db: app.db,
+    tasks: app.tasks,
     makeLink: ({ instructions, tools }) => {
       const link = new FakeLink();
       links.push({ link, instructions, tools });
@@ -201,6 +202,57 @@ describe('calls to owner-vouched contacts', () => {
     s.clock.set('2026-10-16T06:00:00Z');
     await s.app.tick();
     expect(s.adapter.dials).toHaveLength(0);
+    await s.app.close();
+  });
+});
+
+async function meetingCall(s: Awaited<ReturnType<typeof setup>>) {
+  await s.say("kontakt qo'sh Javlon 555000111");
+  await s.say("Javlonga qo'ng'iroq qilib uchrashuv taklif qil: 15:00 yoki 17:00");
+  const dialing = s.app.tick();
+  for (let i = 0; i < 100 && s.links.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+  return { dialing, link: s.links[0]!.link, instructions: s.links[0]!.instructions };
+}
+const finish = async (s: Awaited<ReturnType<typeof setup>>, link: FakeLink, dialing: Promise<unknown>) => {
+  await new Promise((r) => setTimeout(r, 50));
+  link.toolCb!({ id: 'e', name: 'end_call', args: {} });
+  for (let i = 0; i < 100 && s.texts().every((x) => !x.includes('Call report')); i++) {
+    await new Promise((r) => setTimeout(r, 30));
+    await s.app.tick();
+  }
+  await dialing;
+  return s.texts().find((x) => x.includes('Call report')) ?? '';
+};
+
+describe('meeting arrangement through a contact call', () => {
+  it('the owner offers times; the AI may confirm only one of them, and the system then creates the owner task from committed state', async () => {
+    const s = await setup();
+    const { dialing, link, instructions } = await meetingCall(s);
+    expect(instructions).toContain('1. ');
+    expect(instructions).toContain('15:00');
+    expect(instructions).toContain('17:00');
+    link.toolCb!({ id: 'r', name: 'submit_report', args: { outcome: 'meeting_agreed', summary: 'Javlon 17:00 ga rozi.', agreed_slot: 2 } });
+    const report = await finish(s, link, dialing);
+    expect(report).toContain('Javlon 17:00 ga rozi.');
+    expect(report).toContain("Vazifa qo'shildi");
+    const tasks = await s.app.tasks.list(s.app.db, o.ownerId, { limit: 10 });
+    expect(tasks.map((x) => x.title)).toEqual(['Uchrashuv: Javlon']);
+    expect(tasks[0]!.dueAt).toMatch(/^2026-10-15T12:00/); // 17:00 Samarkand
+    await s.app.close();
+  });
+
+  it('a time the owner did not offer is refused; a counter-proposal commits nothing and is reported as such', async () => {
+    const s = await setup();
+    const { dialing, link } = await meetingCall(s);
+    link.toolCb!({ id: 'a', name: 'submit_report', args: { outcome: 'meeting_agreed', summary: 'x yaxshi', agreed_slot: 5 } });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(link.results.find((x) => x.id === 'a')!.result).toMatchObject({ ok: false });
+    link.toolCb!({ id: 'b', name: 'submit_report', args: { outcome: 'meeting_countered', summary: 'Javlon band ekan.', contact_proposal: 'ertaga 11:00' } });
+    const report = await finish(s, link, dialing);
+    expect(report).toContain('boshqa vaqt taklif qildi');
+    expect(report).toContain('ertaga 11:00');
+    expect(report).toContain('Hech narsa kelishilmadi');
+    expect(await s.app.tasks.list(s.app.db, o.ownerId, { limit: 10 })).toHaveLength(0);
     await s.app.close();
   });
 });

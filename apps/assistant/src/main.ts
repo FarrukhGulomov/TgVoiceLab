@@ -165,6 +165,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const { ContactCallRunner, RoutingCallRunner } = await import('./modules/calls/conversation/contact-call-runner.js');
   const contactRunner = new ContactCallRunner({
     db,
+    tasks: new TaskService(crypto),
     makeLink,
     costUsdPerMinute: cfg.AI_VOICE_COST_USD_PER_MINUTE,
     log: (line) => log.debug({ call: true }, line.slice(0, 200)),
