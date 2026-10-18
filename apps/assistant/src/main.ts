@@ -164,7 +164,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     contacts: new ContactService(crypto),
     contactCalls: cfg.CALLS_ENABLED ? new ContactCallService(new AuthorizationService(db, systemClock, crypto), systemClock) : undefined,
     costUsdPerMinute: cfg.AI_VOICE_COST_USD_PER_MINUTE,
-    log: (line) => log.debug({ call: true }, line.slice(0, 200)), // transcripts are never persisted or logged above debug level
+    log: (line) => (/^(realtime error|error): /.test(line) ? log.warn : log.debug).call(log, { call: true }, line.slice(0, 300)), // provider errors must be visible; transcripts stay at debug // transcripts are never persisted or logged above debug level
     makeLink,
   });
   const { ContactCallRunner, RoutingCallRunner } = await import('./modules/calls/conversation/contact-call-runner.js');
@@ -175,7 +175,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     clock: systemClock,
     makeLink,
     costUsdPerMinute: cfg.AI_VOICE_COST_USD_PER_MINUTE,
-    log: (line) => log.debug({ call: true }, line.slice(0, 200)),
+    log: (line) => (/^(realtime error|error): /.test(line) ? log.warn : log.debug).call(log, { call: true }, line.slice(0, 300)), // provider errors must be visible; transcripts stay at debug
     onDone: (d) =>
       (d.errors.length || !('callFramesOut' in d.stats) || d.stats.callFramesOut === 0 ? log.warn : log.info).call(
         log,
