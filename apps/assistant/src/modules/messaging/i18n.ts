@@ -84,7 +84,7 @@ const CATALOG = {
     fallback_clarify: 'Could you rephrase that?',
     call_report: 'Call report — {name} ({outcome}):\n{summary}',
     call_rejected: 'The call to {name} was not placed: {reason}.',
-    call_ended: 'The call to {name} ended ({reason}). No conversation took place — the conversation layer is not enabled in this build.',
+    call_ended: 'The call to {name} ended ({reason}). No conversation took place.',
     call_outcome_unknown:
       'I could not confirm whether the call to {name} was placed. I will NOT retry on my own. Tell me explicitly if you want me to try again.',
   },
@@ -171,7 +171,7 @@ const CATALOG = {
     fallback_clarify: 'Iltimos, boshqacha ifodalab ko‘ring.',
     call_report: 'Qo‘ng‘iroq hisoboti — {name} ({outcome}):\n{summary}',
     call_rejected: '{name} bilan qo‘ng‘iroq amalga oshirilmadi: {reason}.',
-    call_ended: '{name} bilan qo‘ng‘iroq tugadi ({reason}). Suhbat bo‘lmadi — bu versiyada suhbat qatlami yoqilmagan.',
+    call_ended: '{name} bilan qo‘ng‘iroq tugadi ({reason}). Suhbat bo‘lmadi.',
     call_outcome_unknown: '{name} bilan qo‘ng‘iroq qilinganini aniqlay olmadim. O‘zim qayta urinmayman. Qayta urinishimni xohlasangiz, aniq ayting.',
   },
   ru: {
@@ -256,7 +256,7 @@ const CATALOG = {
     fallback_clarify: 'Переформулируйте, пожалуйста.',
     call_report: 'Отчёт о звонке — {name} ({outcome}):\n{summary}',
     call_rejected: 'Звонок {name} не совершён: {reason}.',
-    call_ended: 'Звонок {name} завершён ({reason}). Разговора не было — слой диалога не включён в этой сборке.',
+    call_ended: 'Звонок {name} завершён ({reason}). Разговора не было.',
     call_outcome_unknown: 'Не удалось подтвердить, был ли совершён звонок {name}. Сам повторять не буду. Скажите явно, если хотите, чтобы я попробовал снова.',
   },
 } as const satisfies Record<Locale, Record<string, string>>;
