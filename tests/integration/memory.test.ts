@@ -155,3 +155,12 @@ describe('contact call prompt', () => {
     expect(p).toContain("MA'LUMOT");
   });
 });
+
+describe('call language', () => {
+  it('pins Uzbek and forbids drifting into other languages', () => {
+    const p = buildContactCallInstructions({ ownerName: 'Farruh', contactName: 'Javlon', brief: 'Salom de', forbidden: [], questions: [] });
+    expect(p).toContain("DOIM O'ZBEK TILIDA");
+    expect(p).toContain('hind, nemis');
+    expect(p).toContain('RUS yoki INGLIZ');
+  });
+});

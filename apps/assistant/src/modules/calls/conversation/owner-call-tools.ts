@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon';
+import { VOICE_LANGUAGE_RULE } from './language-rule.js';
 import type { Db } from '../../../infrastructure/db/db.js';
 import type { Clock } from '../../../application/clock.js';
 import { DomainError, NotFoundError, ValidationError, VersionConflictError } from '../../../application/errors.js';
@@ -325,7 +326,8 @@ export function buildOwnerCallInstructions(a: {
         a.reminder.replace(/[«»\n]/g, ' ') +
         '»'
       : "Sen egasining shaxsiy sun'iy intellekt yordamchisisan va unga hozir QO'NG'IROQ qilding (kunlik brifing).",
-    "SUHBAT TILI: O'ZBEK. Egasi o'zbek tilida gapiradi, hatto eshitilishi boshqa tilga o'xshab ketsa ham. Faqat u aniq so'rasa boshqa tilga o't.",
+    VOICE_LANGUAGE_RULE,
+    "Egasi o'zbek tilida gapiradi, hatto eshitilishi boshqa tilga o'xshab ketsa ham.",
     `Hozirgi mahalliy vaqt: ${local.toFormat('cccc, yyyy-LL-dd HH:mm')} (${a.timezone}). Sana va vaqt haqida faqat shu ma'lumotga tayan, o'zingdan o'ylab topma.`,
     a.reminder
       ? "Qo'ng'iroq ko'tarilganda birinchi gapir: o'zingni AI yordamchi deb tanishtir va eslatmani ayt. Keyin egasi nima desa, shunga javob ber (masalan, vazifa qo'shish yoki eslatmani boshqa vaqtga o'rnatish) va u tugatganda xayrlash."
