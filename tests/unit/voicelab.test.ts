@@ -60,7 +60,7 @@ describe('VoiceLabTts', () => {
     expect((seen[0]!.init.headers as Record<string, string>).Authorization).toBe('Bearer vlk_x');
     expect(JSON.parse(String(seen[0]!.init.body))).toEqual({ text: 'Salom', language: 'uz', voice_id: 'v1' });
     await new VoiceLabTts({ apiKey: 'k', voiceId: 'v1', model: 'lison-v1', fetchImpl }).synthesize('Salom', 'uz');
-    expect(JSON.parse(String(seen[1]!.init.body)).model).toBe('lison-v1');
+    expect(JSON.parse(String(seen[1]!.init.body)).model_id).toBe('lison-v1');
   });
   it('a provider error is readable and carries no key', async () => {
     const fetchImpl = (async () => new Response('{"error":{"code":"invalid_api_key"}}', { status: 401 })) as unknown as typeof fetch;

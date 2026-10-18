@@ -43,7 +43,7 @@ const EnvSchema = z
     /** The voice's id from `pnpm voicelab:check` (e.g. the one named Nozima). */
     VOICELAB_VOICE_ID: opt(z.string()),
     VOICELAB_BASE_URL: opt(z.string().url()),
-    /** Sent as `model` only when set (the web studio offers "Lison v1"; the public API reference lists no model field). */
+    /** Sent as `model_id` only when set (the web studio offers "Lison v1"; the id is on docs.voicelab.uz). */
     VOICELAB_TTS_MODEL: opt(z.string()),
     VOICELAB_SPEED: opt(z.coerce.number().min(0.5).max(2)),
     DATA_ENCRYPTION_KEY_REF: opt(z.string()),

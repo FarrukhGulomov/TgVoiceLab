@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 /**
  * VoiceLab (voicelab.uz) text-to-speech over REST: `POST /v1/tts` {text, language, voice_id, speed?} answers with a 24 kHz mono WAV.
  * Source: the vendor's public MCP server (github.com/voicelab-uz/mcp). NOT live verified against the service from the build sandbox
- * (voicelab.uz was unreachable there). `model` is sent only when configured (the web studio offers "Lison v1"; the public API reference
- * lists no model field), so an unknown field shows up as a readable provider error instead of a silent guess.
+ * (voicelab.uz was unreachable there). The live API answered an unknown field with the allowed list: text, language, voice_id, speed, use_cache, model_id. `model_id` is sent only when configured
+ * (the web studio offers "Lison v1"), so a wrong id shows up as a readable provider error instead of a silent guess.
  */
 export interface VoiceLabTtsOptions {
   apiKey: string;
@@ -76,7 +76,7 @@ export class VoiceLabTts implements Synthesizer {
         language,
         voice_id: this.o.voiceId,
         ...(this.o.speed ? { speed: this.o.speed } : {}),
-        ...(this.o.model ? { model: this.o.model } : {}),
+        ...(this.o.model ? { model_id: this.o.model } : {}),
       }),
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
