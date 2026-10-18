@@ -33,6 +33,10 @@ describe('intentFromModel', () => {
     expect(intentFromModel({ kind: 'message_contact', contact: 'Test2' }).kind).toBe('unknown');
     expect(intentFromModel({ kind: 'cancel_pending' })).toEqual({ kind: 'cancel_pending' });
   });
+  it('accepts a conversational reply', () => {
+    expect(intentFromModel({ kind: 'reply', text: ' Salom! ' })).toEqual({ kind: 'reply', text: 'Salom!' });
+    expect(intentFromModel({ kind: 'reply', text: '   ' }).kind).toBe('unknown');
+  });
   it('refuses anything outside the set (no deletes, no stop_calling, no unknown kinds)', () => {
     for (const kind of ['remove_contact', 'stop_calling', 'complete_task', 'drop_database', undefined])
       expect(intentFromModel({ kind, name: 'x' }).kind).toBe('unknown');

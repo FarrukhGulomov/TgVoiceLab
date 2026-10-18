@@ -15,3 +15,10 @@ a short reply such as "roziman" can be tied to that call. It can only propose `c
 `list_tasks`, `list_reminders`, `clarify`; everything else is `unknown`. A proposed call is never placed from the model's guess: it becomes a
 `confirm_call` draft (10 min) and rings only after a plain "ha"/"yes". Not live verified; the text leaves the machine, and on the free tier
 Google may use it to improve its products.
+
+## Update 2026-10-18 (2): conversational mode
+
+The fallback may also answer with `reply` (no state change): greetings, questions, advice, and questions about the owner's own tasks, reminders,
+recent call reports (7 days) and memory, which are passed to the model as read-only data. A reply never executes anything, never clears a
+pending yes/no proposal, and the prompt forbids claiming an action was done. This sends those snippets to Gemini (free tier: may be used by
+Google to improve its products).

@@ -243,7 +243,7 @@ export class IntakeService {
         replyText = await this.execute(c, p, intent!, afterCommit);
         // Draft lifecycle inside the same transaction as the effect: completed or replaced by an explicit command -> gone;
         // a new question -> becomes the (single) draft; an unrelated message leaves a still-valid draft alone.
-        if (completed || (intent!.kind !== 'unknown' && intent!.kind !== 'clarify'))
+        if (completed || (intent!.kind !== 'unknown' && intent!.kind !== 'clarify' && intent!.kind !== 'reply'))
           await c.query('DELETE FROM conversation_drafts WHERE owner_id=$1', [p.ownerId]);
         else if (intent!.kind === 'clarify' && intent!.draft) await this.saveDraft(c, p.ownerId, intent!.draft);
       }
@@ -302,8 +302,39 @@ export class IntakeService {
       const names = new Map(all.map((x) => [contactScope(x.id), x.displayName]));
       memories = (await this.d.memory.list(this.d.db, ownerId, scopes, 20, now)).map((m) => (names.has(m.scope) ? `${names.get(m.scope)}: ${m.text}` : m.text));
     }
+    // Read-only snapshot so the model can answer questions about the owner's own tasks, reminders and calls.
+    const tasks = this.d.tasks
+      ? (await this.d.tasks.list(this.d.db, ownerId, { limit: 15 })).map((x) => `${x.title}${x.dueAt ? ` (muddat: ${x.dueAt})` : ''}`)
+      : [];
+    const rems = (
+      await this.d.db.query<{ title_enc: string; next_occurrence_at: Date | null; timezone: string }>(
+        `SELECT title_enc, next_occurrence_at, timezone FROM reminders WHERE owner_id=$1 AND status='active' ORDER BY next_occurrence_at NULLS LAST LIMIT 10`,
+        [ownerId],
+      )
+    ).rows.map(
+      (x) =>
+        `${this.d.crypto.dec(ownerId, 'reminders.title', x.title_enc)}${
+          x.next_occurrence_at ? ` (${DateTime.fromJSDate(x.next_occurrence_at, { zone: x.timezone }).toFormat('yyyy-LL-dd HH:mm')})` : ''
+        }`,
+    );
+    const calls = (
+      await this.d.db.query<{ narrative_enc: string | null; display_name: string; outcome: string; created_at: Date }>(
+        `SELECT rp.narrative_enc, c.display_name, rp.structured_result->>'outcome' AS outcome, rp.created_at
+           FROM call_reports rp JOIN calls k ON k.id=rp.call_id JOIN call_requests q ON q.id=k.call_request_id JOIN contacts c ON c.id=q.contact_id
+          WHERE rp.owner_id=$1 AND rp.complete AND rp.created_at > $2 ORDER BY rp.created_at DESC LIMIT 6`,
+        [ownerId, new Date(this.d.clock.now().getTime() - 7 * 86_400_000)],
+      )
+    ).rows.map(
+      (x) =>
+        `${x.display_name} (${x.outcome}, ${x.created_at.toISOString().slice(0, 16)}Z): ${
+          x.narrative_enc ? this.d.crypto.dec(ownerId, 'call_reports.narrative', x.narrative_enc).replace(/\s+/g, ' ').slice(0, 300) : ''
+        }`,
+    );
     return {
       contacts,
+      ...(tasks.length ? { tasks } : {}),
+      ...(rems.length ? { reminders: rems } : {}),
+      ...(calls.length ? { calls } : {}),
       ...(memories.length ? { memories } : {}),
       ...(history.length ? { history } : {}),
       ...(pending ? { pending } : {}),
@@ -553,6 +584,8 @@ export class IntakeService {
         await mem.forget(c, p.ownerId, hit.id);
         return t(loc, 'memory_forgotten', { text: hit.text });
       }
+      case 'reply':
+        return intent.text;
       case 'cancel_pending':
         return t(loc, 'proposal_cancelled');
       case 'message_contact': {

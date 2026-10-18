@@ -119,6 +119,27 @@ describe('free-form text fallback', () => {
     await s.app.close();
   });
 
+  it('chat: a conversational reply is sent as is, changes nothing, and the model sees tasks and reminders', async () => {
+    const s = setup(async () => ({ kind: 'reply', text: 'Salom! Bugun sizda bitta vazifa bor.' }));
+    await s.say('add task: hisobot tayyorlash');
+    await s.say('salom, bugun nima bor?');
+    expect((await s.texts()).at(-1)).toBe('Salom! Bugun sizda bitta vazifa bor.');
+    expect(s.seen.at(-1)!.background!.tasks!.join(' ')).toContain('hisobot');
+    expect((await t.db.query('SELECT 1 FROM tasks')).rowCount).toBe(1); // chatting created nothing
+    await s.app.close();
+  });
+
+  it('chatting while a proposal waits keeps the proposal alive', async () => {
+    let n = 0;
+    const s = setup(async () => (++n === 1 ? { kind: 'call_contact', contact: 'Javlon', message: 'Salom' } : { kind: 'reply', text: 'Albatta, gapiring.' }));
+    await s.say("kontakt qo'sh Javlon 555000111");
+    await s.say('men roziman');
+    await s.say('rahmat, bir daqiqa');
+    await s.say('ha');
+    expect((await t.db.query('SELECT 1 FROM call_requests')).rowCount).toBe(1);
+    await s.app.close();
+  });
+
   it('a fallback failure is treated as unknown and nothing happens', async () => {
     const s = setup(async () => {
       throw new Error('boom');

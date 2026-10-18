@@ -79,6 +79,8 @@ export type Intent =
   | { kind: 'remember'; text: string; contact?: string }
   | { kind: 'list_memories' }
   | { kind: 'forget_memory'; ref: TaskRef }
+  /** A conversational answer (no state change): the text AI chats, answers questions about the owner's tasks, calls and memory. */
+  | { kind: 'reply'; text: string }
   | { kind: 'set_owner_name'; name: string }
   | { kind: 'set_briefing'; time: string } // HH:mm, daily
   | { kind: 'cancel_briefing' }
@@ -101,6 +103,11 @@ export interface InterpretContext {
     history?: Array<{ from: 'owner' | 'assistant'; text: string }>;
     /** What the assistant remembers that is relevant (the owner's notes and notes about contacts named in the message). */
     memories?: string[];
+    /** Read-only snapshot for answering questions (the owner's own data). */
+    tasks?: string[];
+    reminders?: string[];
+    /** Recent call reports, newest first: "Contact (outcome, when): summary". */
+    calls?: string[];
     /** What the assistant is waiting for a yes/no on, if anything. */
     pending?: string;
   };

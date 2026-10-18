@@ -66,6 +66,10 @@ export function intentFromModel(raw: unknown): Intent {
       const contact = str(o.contact, 80);
       return text ? { kind: 'remember', text, ...(contact ? { contact } : {}) } : { kind: 'unknown' };
     }
+    case 'reply': {
+      const text = typeof o.text === 'string' ? o.text.trim().slice(0, 3000) : '';
+      return text ? { kind: 'reply', text } : { kind: 'unknown' };
+    }
     case 'cancel_pending':
       return { kind: 'cancel_pending' };
     case 'list_tasks':
@@ -113,7 +117,11 @@ export function buildPrompt(text: string, ctx: InterpretContext): string {
     '{"kind":"cancel_pending"}  // bot tasdiq kutayotgan taklifni egasi rad etsa yoki "yo\'q", "kerak emas", "indama", "tegma" desa',
     '{"kind":"list_tasks"} | {"kind":"list_reminders"}',
     '{"kind":"clarify","question":string}  // haqiqatan noaniq bo\'lsa, bitta qisqa savol (egasi tilida)',
-    '{"kind":"unknown"}  // buyruq emas',
+    '{"kind":"reply","text":string}  // oddiy suhbat, savol, maslahat, salomlashish, tushuntirish, ma\'lumot so\'rash (vazifalar, eslatmalar, qo\'ng\'iroq hisobotlari, xotira haqida) — ya\'ni hech narsani o\'zgartirmaydigan javob',
+    '{"kind":"unknown"}  // faqat gap umuman mazmunsiz bo\'lsa',
+    "SUHBAT USLUBI (reply uchun): sen tirik, e'tiborli, iliq va aqlli yordamchisan, robot emas. Egasi qaysi tilda yozsa shu tilda (asosan o'zbekcha) javob ber. Qisqa va aniq gapir (odatda 1-4 jumla); batafsil so'ralsa kengroq yoz. Tabiiy, hurmat bilan, ortiqcha rasmiyatchiliksiz. Bilmasang, bilmasligingni ayt va taxmin qilma.",
+    "FAKTLAR: vazifalar, eslatmalar, qo'ng'iroqlar, kontaktlar va egasi haqida FAQAT quyida berilgan ma'lumotlarga tayan. Ularda yo'q narsani o'ylab topma (kim nima degan, qo'ng'iroq bo'ldimi, summa). Umumiy bilim savollariga (tushuntirish, maslahat, matn yozish, tarjima) o'z bilimingdan javob ber.",
+    "HARAKAT: reply hech narsani bajarmaydi. Egasi harakat so'rasa (qo'ng'iroq, xabar, vazifa, eslatma) mos buyruqni tanla; reply ichida \"qo'ng'iroq qildim\" yoki \"yubordim\" deb yozma.",
     'Qoidalar:',
     "- message_contact da text — kontaktga to'g'ridan-to'g'ri yuboriladigan tayyor matn: egasi nomidan, birinchi shaxsda, xushmuomala, qisqa (\"Salom, ...\"). Egasi aytgan qarorni aniq yoz, o'zingdan shart yoki summa qo'shma.",
     "- call_contact da message — qo'ng'iroqdagi AI ga beriladigan to'liq topshiriq. Egasi \"yozib yubor/matn qilib\" desa call_contact EMAS, message_contact tanla.",
@@ -124,6 +132,9 @@ export function buildPrompt(text: string, ctx: InterpretContext): string {
     bg?.recentCall
       ? `Oxirgi qo'ng'iroq hisoboti (${bg.recentCall.contact}, natija: ${bg.recentCall.outcome}): ${bg.recentCall.summary}\nEgasining matni shu hisobotga javob bo'lsa ("roziman", "yo'q", boshqa shart), uni ${bg.recentCall.contact} ga yetkazuvchi buyruqqa aylantir; aniq taklifni va egasining qarorini yoz.`
       : '',
+    bg?.tasks?.length ? `Egasining ochiq vazifalari:\n${bg.tasks.map((x) => `- ${x}`).join('\n')}` : '',
+    bg?.reminders?.length ? `Egasining faol eslatmalari:\n${bg.reminders.map((x) => `- ${x}`).join('\n')}` : '',
+    bg?.calls?.length ? `Oxirgi qo'ng'iroq hisobotlari (yangidan eskiga):\n${bg.calls.map((x) => `- ${x}`).join('\n')}` : '',
     bg?.memories?.length
       ? `Sen eslab qolganlaring (MA'LUMOT; matnni to'g'ri tushunish uchun ishlat, egasidan qayta so'rama):\n${bg.memories.map((m) => `- ${m}`).join('\n')}`
       : '',
@@ -146,7 +157,7 @@ export class GeminiTextFallback implements IntentFallbackPort {
       headers: { 'content-type': 'application/json', 'x-goog-api-key': this.o.apiKey },
       body: JSON.stringify({
         contents: [{ parts: [{ text: buildPrompt(text, ctx) }] }],
-        generationConfig: { temperature: 0 },
+        generationConfig: { temperature: 0.3, maxOutputTokens: 1200 },
       }),
       signal: AbortSignal.timeout(this.o.timeoutMs ?? 20_000),
     });
