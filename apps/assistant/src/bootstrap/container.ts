@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '../infrastructure/db/db.js';
 import type { DataCrypto } from '../infrastructure/crypto/data-crypto.js';
 import type { Clock } from '../application/clock.js';
-import type { MessagingPort, TextInterpreterPort, TranscriptionPort } from '../application/ports.js';
+import type { IntentFallbackPort, MessagingPort, TextInterpreterPort, TranscriptionPort } from '../application/ports.js';
 import type { TelegramCallAdapter } from '@tgvl/contracts';
 import { ContactService } from '../modules/contacts/contacts.service.js';
 import { AuthorizationService } from '../modules/calls/authorizations.service.js';
@@ -46,6 +46,9 @@ export interface ContainerDeps {
   callTimeouts?: { dialMs?: number; eventIdleMs?: number; hangupMs?: number };
   ringTimeoutMs?: number;
   interpreter?: TextInterpreterPort;
+  /** Free-form understanding for text the rules did not recognise (Gemini). */
+  textFallback?: IntentFallbackPort;
+  onFallbackError?: (e: Error) => void;
   transcription?: TranscriptionPort;
   voiceDownloadTimeoutMs?: number;
   voiceMaxConcurrentDownloads?: number;
@@ -100,6 +103,8 @@ export function buildContainer(d: ContainerDeps) {
     reminders,
     interpreter: d.interpreter ?? (d.textAiDisabled ? new DisabledInterpreter() : new RulesInterpreter()),
     transcription: d.transcription,
+    ...(d.textFallback ? { fallback: d.textFallback } : {}),
+    ...(d.onFallbackError ? { onFallbackError: d.onFallbackError } : {}),
     ownerCalls: operations,
     contacts,
     ...(d.onVoiceError ? { onVoiceError: d.onVoiceError } : {}),

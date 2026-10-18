@@ -32,7 +32,17 @@ export interface ReminderDraft {
   /** For `ambiguous_time`: the hour the owner wrote (1-12), to be resolved to morning or evening. */
   ambiguousHour?: number;
 }
-export type ClarificationDraft = ReminderDraft;
+/**
+ * A call the text AI proposed from free-form wording. Nothing rings until the owner confirms ("ha"); the draft carries exactly what
+ * would be said, so the confirmation is for a concrete action, not for the model's guess.
+ */
+export interface CallConfirmDraft {
+  kind: 'confirm_call';
+  contact: string;
+  message: string;
+  slots?: LocalDateTime[];
+}
+export type ClarificationDraft = ReminderDraft | CallConfirmDraft;
 
 export type Intent =
   | { kind: 'create_task'; title: string; due?: LocalDateTime }
@@ -68,4 +78,10 @@ export interface InterpretContext {
   receivedAt: Date;
   timezone: string;
   locale: 'uz' | 'en' | 'ru';
+  /** Only for the free-form fallback: what the model may use to understand a short reply such as "roziman". */
+  background?: {
+    contacts: string[];
+    /** The latest call report (within a few hours), so "I agree" can be tied to the call it answers. */
+    recentCall?: { contact: string; outcome: string; summary: string };
+  };
 }

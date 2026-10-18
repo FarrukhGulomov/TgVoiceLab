@@ -85,6 +85,11 @@ ONLY one of them (`submit_report` outcome `meeting_agreed` + `agreed_slot`; any 
 After an agreement the system creates the owner's task ("Uchrashuv: <contact>", due at the slot) and the report states what was really
 committed. Live-verified for `meeting_agreed` and `meeting_countered` (see above); contact calls stay gated by the six evidence gates.
 
+## Free-form text (ADR 0005 update)
+
+`GeminiTextFallback` understands text the rules do not recognise (also transcribed voice notes), using contacts and the latest call report as
+context. A call it proposes asks for "ha" first. Offline-tested with fakes; **not live verified**.
+
 ## Voice notes
 
 `GeminiTranscription` (generateContent, inline audio) turns owner voice notes into text when `GEMINI_API_KEY` and

@@ -3,8 +3,8 @@ import type pg from 'pg';
 import type { Db } from '../../infrastructure/db/db.js';
 import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
 import type { Clock } from '../../application/clock.js';
-import type { ClarificationDraft, Intent, LocalDateTime, TaskRef } from '../../application/intent.js';
-import type { PeerResolverPort, TextInterpreterPort, TranscriptionPort } from '../../application/ports.js';
+import type { ClarificationDraft, Intent, InterpretContext, LocalDateTime, TaskRef } from '../../application/intent.js';
+import type { IntentFallbackPort, PeerResolverPort, TextInterpreterPort, TranscriptionPort } from '../../application/ports.js';
 import { DomainError } from '../../application/errors.js';
 import { authenticateOwnerMessage, type Principal } from '../identity/identity.js';
 import { emitOutbox } from '../outbox/outbox.js';
@@ -67,6 +67,10 @@ export class IntakeService {
       tasks: TaskService;
       reminders: ReminderService;
       interpreter: TextInterpreterPort;
+      /** Free-form understanding for text the rules did not recognise. Absent = such text stays "unknown". */
+      fallback?: IntentFallbackPort;
+      /** Called with the failure (never the text) when the fallback could not answer. */
+      onFallbackError?: (e: Error) => void;
       transcription?: TranscriptionPort | undefined;
       voiceDownloadTimeoutMs?: number;
       voiceMaxConcurrentDownloads?: number;
@@ -167,6 +171,29 @@ export class IntakeService {
       }
     }
 
+    // Still not understood: ask the free-form fallback. It sees the contact names and the latest call report so a short reply
+    // ("roziman") can be tied to that call. A call it proposes is never placed from a guess: it becomes a question first.
+    if (!rejection && !completed && intent?.kind === 'unknown' && this.d.fallback && text.trim()) {
+      try {
+        const proposed = await this.d.fallback.propose(text, { ...ictx, background: await this.background(p.ownerId) });
+        if (proposed.kind === 'call_contact') {
+          const draft2: ClarificationDraft = {
+            kind: 'confirm_call',
+            contact: proposed.contact,
+            message: proposed.message,
+            ...(proposed.slots?.length ? { slots: proposed.slots } : {}),
+          };
+          intent = {
+            kind: 'clarify',
+            question: t(p.locale, 'confirm_call', { name: proposed.contact, message: proposed.message.slice(0, 400) }),
+            draft: draft2,
+          };
+        } else intent = proposed;
+      } catch (e) {
+        this.d.onFallbackError?.(e as Error);
+      }
+    }
+
     const afterCommit: Array<() => Promise<unknown>> = [];
     const result = await db.tx(async (c) => {
       // Durable dedupe + effect in ONE transaction: a crash before commit means redelivery reprocesses from scratch; after
@@ -202,6 +229,20 @@ export class IntakeService {
     // External effects (ending a live call) happen only after the transaction committed.
     if (result.status === 'handled') for (const f of afterCommit) await f().catch(() => undefined);
     return result;
+  }
+
+  private async background(ownerId: string): Promise<NonNullable<InterpretContext['background']>> {
+    const contacts = this.d.contacts ? (await this.d.contacts.list(this.d.db, ownerId)).filter((c) => c.active).map((c) => c.displayName) : [];
+    const r = (
+      await this.d.db.query<{ narrative_enc: string | null; display_name: string; outcome: string }>(
+        `SELECT rp.narrative_enc, c.display_name, rp.structured_result->>'outcome' AS outcome
+           FROM call_reports rp JOIN calls k ON k.id=rp.call_id JOIN call_requests q ON q.id=k.call_request_id JOIN contacts c ON c.id=q.contact_id
+          WHERE rp.owner_id=$1 AND rp.complete AND rp.created_at > $2 ORDER BY rp.created_at DESC LIMIT 1`,
+        [ownerId, new Date(this.d.clock.now().getTime() - 6 * 3_600_000)],
+      )
+    ).rows[0];
+    const summary = r?.narrative_enc ? this.d.crypto.dec(ownerId, 'call_reports.narrative', r.narrative_enc) : '';
+    return { contacts, ...(r && summary ? { recentCall: { contact: r.display_name, outcome: r.outcome, summary: summary.slice(0, 800) } } : {}) };
   }
 
   /** TTL for a pending clarification: long enough to answer, short enough that a stale reply cannot create anything. */

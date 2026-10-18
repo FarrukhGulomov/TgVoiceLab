@@ -192,8 +192,19 @@ if (cfg.GEMINI_API_KEY && cfg.GEMINI_TRANSCRIPTION_MODEL) {
   log.warn('voice notes are transcribed by Gemini (not live verified); on the free tier Google may use the audio to improve its products');
 }
 
+let textFallback: import('./application/ports.js').IntentFallbackPort | undefined;
+if (cfg.GEMINI_API_KEY && cfg.GEMINI_TEXT_MODEL && cfg.TEXT_AI_ADAPTER === 'rules') {
+  const { GeminiTextFallback } = await import('./infrastructure/gemini/text.js');
+  textFallback = new GeminiTextFallback({ apiKey: cfg.GEMINI_API_KEY, model: cfg.GEMINI_TEXT_MODEL });
+  log.warn(
+    'free-form text understanding is on (Gemini, not live verified): text the rules do not recognise is sent to Gemini; on the free tier Google may use it to improve its products',
+  );
+}
+
 const app = buildContainer({
   ...(transcription ? { transcription } : {}),
+  ...(textFallback ? { textFallback } : {}),
+  onFallbackError: (e) => log.warn({ err: e.message }, 'free-form text understanding failed; the message was treated as unknown'),
   onVoiceError: (e) => log.warn({ err: e.message }, 'voice note could not be transcribed'),
   ...(sessionRunner ? { sessionRunner } : {}),
   ...(gateway ? { peers: gateway } : {}),
