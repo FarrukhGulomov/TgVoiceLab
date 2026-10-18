@@ -24,6 +24,15 @@ describe('intentFromModel', () => {
       slots: [{ date: '2026-10-19', time: '15:00' }],
     });
   });
+  it('accepts a text to a contact and a cancellation', () => {
+    expect(intentFromModel({ kind: 'message_contact', contact: 'Test2', text: ' Salom ' })).toEqual({
+      kind: 'message_contact',
+      contact: 'Test2',
+      text: 'Salom',
+    });
+    expect(intentFromModel({ kind: 'message_contact', contact: 'Test2' }).kind).toBe('unknown');
+    expect(intentFromModel({ kind: 'cancel_pending' })).toEqual({ kind: 'cancel_pending' });
+  });
   it('refuses anything outside the set (no deletes, no stop_calling, no unknown kinds)', () => {
     for (const kind of ['remove_contact', 'stop_calling', 'complete_task', 'drop_database', undefined])
       expect(intentFromModel({ kind, name: 'x' }).kind).toBe('unknown');

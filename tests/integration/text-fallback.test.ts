@@ -75,6 +75,50 @@ describe('free-form text fallback', () => {
     await s.app.close();
   });
 
+  it('"yuq shartmas indama" cancels a pending proposal without asking the model again', async () => {
+    const s = setup(async () => ({ kind: 'call_contact', contact: 'Javlon', message: 'Salom' }));
+    await s.say("kontakt qo'sh Javlon 555000111");
+    await s.say('men roziman');
+    const asked = s.seen.length;
+    await s.say('yuq shartmas indama');
+    expect(s.seen).toHaveLength(asked);
+    expect((await s.texts()).at(-1)).toContain('cancelled');
+    await s.say('ha'); // the proposal is gone: a late "ha" places nothing
+    expect((await t.db.query('SELECT 1 FROM call_requests')).rowCount).toBe(0);
+    await s.app.close();
+  });
+
+  it("a text to a contact is confirmed first, then sent in the owner's name, and the owner is told", async () => {
+    const s = setup(async () => ({ kind: 'message_contact', contact: 'Javlon', text: "Salom, 3 million so'mga rozi bo'ldim." }));
+    await s.say("kontakt qo'sh Javlon 555000111");
+    await s.say('men roziman faqat buni tekst qilib unga junat');
+    const asked = (await s.texts()).at(-1)!;
+    expect(asked).toContain('text message');
+    expect(asked).toContain('3 million');
+    expect(s.app.messaging.sent.some((m) => m.toTelegramUserId === '555000111')).toBe(false); // nothing leaves before the yes
+    await s.say('ha');
+    await s.app.tick();
+    const toContact = s.app.messaging.sent.filter((m) => m.toTelegramUserId === '555000111');
+    expect(toContact).toHaveLength(1);
+    expect(toContact[0]!.text).toContain('3 million');
+    expect((await s.texts()).some((x) => x.includes('delivered'))).toBe(true);
+    expect((await t.db.query('SELECT 1 FROM call_requests')).rowCount).toBe(0); // a text is not a call
+    await s.app.close();
+  });
+
+  it('the model also sees recent exchanges and the pending proposal', async () => {
+    const s = setup(async () => ({ kind: 'call_contact', contact: 'Javlon', message: 'Salom' }));
+    await s.say("kontakt qo'sh Javlon 555000111");
+    await s.say('men roziman');
+    await s.app.tick();
+    await s.say('boshqa narsa deb yozaman ammo tushunarsiz');
+    const last = s.seen.at(-1)!.background!;
+    expect(last.pending).toContain('Javlon');
+    expect(last.history?.some((h) => h.from === 'owner' && h.text === 'men roziman')).toBe(true);
+    expect(last.history?.some((h) => h.from === 'assistant')).toBe(true);
+    await s.app.close();
+  });
+
   it('a fallback failure is treated as unknown and nothing happens', async () => {
     const s = setup(async () => {
       throw new Error('boom');

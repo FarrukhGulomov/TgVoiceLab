@@ -102,6 +102,11 @@ const BY_CALL_G = new RegExp(BY_CALL_SRC, 'giu');
 /** A short, plain "yes" to a proposed action. Anything longer or more specific is not a confirmation. */
 const YES = /^(?:ha|xa|xo'p|xop|ok|okay|yes|da|ha,?\s*(?:qil|qo'ng'iroq\s+qil)\w*|tasdiqlayman|tasdiqlang|давай|да|ок)[.!\s]*$/iu;
 
+/** A short, plain "no" / "leave it" to a proposed action (typos such as "yuq" included). */
+const NO_WORD =
+  "(?:yo'?q|yuq|yoq|no|nope|nah|net|нет|kerak\\s*emas|kerakmas|shart\\s*emas|shartmas|bekor(?:\\s+qil\\w*)?|cancel|stop|qilma\\w*|indama\\w*|tegma\\w*|bo'?ldi|kerak)";
+const NO = new RegExp(`^${NO_WORD}(?:[\\s,.!;-]+${NO_WORD})*[.!\\s]*$`, 'iu');
+
 export class RulesInterpreter implements TextInterpreterPort {
   /**
    * Finish a pending reminder with the owner's next message. Only a short, time-shaped reply counts ("17:00", "5 pm", "evening");
@@ -110,8 +115,10 @@ export class RulesInterpreter implements TextInterpreterPort {
   async completeDraft(raw: string, draft: ClarificationDraft, ctx: InterpretContext): Promise<Intent | null> {
     const low = normalizeApostrophes(raw).trim().toLowerCase();
     if (!low || low.length > 40) return null;
-    if (draft.kind === 'confirm_call') {
+    if (draft.kind === 'confirm_call' || draft.kind === 'confirm_message') {
+      if (NO.test(low)) return { kind: 'cancel_pending' };
       if (!YES.test(low)) return null;
+      if (draft.kind === 'confirm_message') return { kind: 'message_contact', contact: draft.contact, text: draft.text };
       return { kind: 'call_contact', contact: draft.contact, message: draft.message, ...(draft.slots?.length ? { slots: draft.slots } : {}) };
     }
     let time: string | undefined;

@@ -207,6 +207,30 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
       await messaging.sendMessage({ toTelegramUserId: owner.telegram_user_id, text: t(owner.locale, key, { name, reason }), idempotencyKey: row.eventId });
     },
 
+    // A text the owner confirmed, sent to a contact in the owner's name. The event id is the Telegram random_id, so a retry never
+    // delivers it twice; the owner is told once it went out.
+    'contact.message': async (row) => {
+      const p = row.payload as { contactId: string; textEnc: string };
+      const owner = await loadOwner(row.ownerId);
+      const c = (
+        await db.query<{ telegram_user_id: string; display_name: string }>('SELECT telegram_user_id, display_name FROM contacts WHERE id=$1 AND owner_id=$2', [
+          p.contactId,
+          row.ownerId,
+        ])
+      ).rows[0];
+      if (!c) return; // the contact was removed after the owner confirmed: nothing is sent
+      await messaging.sendMessage({
+        toTelegramUserId: c.telegram_user_id,
+        text: crypto.dec(row.ownerId, 'outbox.contact_message', p.textEnc),
+        idempotencyKey: row.eventId,
+      });
+      await messaging.sendMessage({
+        toTelegramUserId: owner.telegram_user_id,
+        text: t(owner.locale, 'contact_message_sent', { name: c.display_name }),
+        idempotencyKey: `${row.eventId}:ack`,
+      });
+    },
+
     // Direct replies to owner messages (chat intake) travel through the outbox too, so they survive a crash after commit.
     'owner.reply': async (row) => {
       const p = row.payload as { textEnc: string };

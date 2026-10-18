@@ -42,7 +42,13 @@ export interface CallConfirmDraft {
   message: string;
   slots?: LocalDateTime[];
 }
-export type ClarificationDraft = ReminderDraft | CallConfirmDraft;
+/** A text message to a contact that the text AI composed; it is sent only after the owner confirms the exact words. */
+export interface MessageConfirmDraft {
+  kind: 'confirm_message';
+  contact: string;
+  text: string;
+}
+export type ClarificationDraft = ReminderDraft | CallConfirmDraft | MessageConfirmDraft;
 
 export type Intent =
   | { kind: 'create_task'; title: string; due?: LocalDateTime }
@@ -65,6 +71,10 @@ export type Intent =
       at?: LocalDateTime;
       /** Meeting times the owner offers; the AI may confirm only one of these. */ slots?: LocalDateTime[];
     }
+  /** Send a plain Telegram text to a contact in the owner's name (the owner confirmed the exact words). */
+  | { kind: 'message_contact'; contact: string; text: string }
+  /** The owner declined or withdrew the proposal that is waiting for a yes/no. */
+  | { kind: 'cancel_pending' }
   | { kind: 'set_owner_name'; name: string }
   | { kind: 'set_briefing'; time: string } // HH:mm, daily
   | { kind: 'cancel_briefing' }
@@ -83,5 +93,9 @@ export interface InterpretContext {
     contacts: string[];
     /** The latest call report (within a few hours), so "I agree" can be tied to the call it answers. */
     recentCall?: { contact: string; outcome: string; summary: string };
+    /** The last few exchanges, oldest first, so a short reply is read in the light of what was just said. */
+    history?: Array<{ from: 'owner' | 'assistant'; text: string }>;
+    /** What the assistant is waiting for a yes/no on, if anything. */
+    pending?: string;
   };
 }

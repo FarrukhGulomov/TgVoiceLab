@@ -25,6 +25,7 @@ const OUTCOMES = [
   'answered',
   'meeting_agreed',
   'meeting_countered',
+  'counter_offer',
   'callback_requested',
   'no_agreement',
   'declined',
@@ -35,7 +36,7 @@ export const CONTACT_CALL_TOOL_DECLARATIONS: ToolDeclaration[] = [
   {
     name: 'submit_report',
     description:
-      "Suhbat natijasini egasiga yetkazish uchun hisobot. outcome: 'delivered' (xabar yetkazildi), 'answered' (savollarga javob olindi), 'meeting_agreed' (taklif qilingan vaqtlardan biri kelishildi: agreed_slot majburiy), 'meeting_countered' (suhbatdosh boshqa vaqt taklif qildi: contact_proposal ga yoz), 'callback_requested' (suhbatdosh egasi o'zi qo'ng'iroq qilishini so'radi), 'no_agreement', 'declined' (gaplashishni xohlamadi), 'consent_withdrawn' (AI bilan gaplashishni rad etdi). summary — suhbatdosh aytganlarining qisqa, halol bayoni (faqat haqiqatda aytilganini yoz). Tugatishdan oldin bir marta chaqir.",
+      "Suhbat natijasini egasiga yetkazish uchun hisobot. outcome: 'delivered' (xabar yetkazildi), 'answered' (savollarga javob olindi), 'meeting_agreed' (taklif qilingan vaqtlardan biri kelishildi: agreed_slot majburiy), 'meeting_countered' (uchrashuv vaqti bo'yicha suhbatdosh boshqa vaqt taklif qildi: contact_proposal ga yoz), 'counter_offer' (uchrashuv emas, boshqa masala bo'yicha — narx, summa, shart, xizmat — suhbatdosh o'z shartini taklif qildi: contact_proposal ga aynan yoz), 'callback_requested' (suhbatdosh egasi o'zi qo'ng'iroq qilishini so'radi), 'no_agreement', 'declined' (gaplashishni xohlamadi), 'consent_withdrawn' (AI bilan gaplashishni rad etdi). summary — suhbatdosh aytganlarining qisqa, halol bayoni (faqat haqiqatda aytilganini yoz). Tugatishdan oldin bir marta chaqir.",
     parameters: {
       type: 'object',
       properties: {
@@ -82,7 +83,7 @@ export function buildContactCallInstructions(a: ContactCallInstructionsInput): s
       : '',
     "Sen FAQAT yuqoridagi topshiriq doirasida gapirasan. Egasining boshqa ma'lumotlarini (vazifalari, kontaktlari, rejalari, joylashuvi) aytma. Suhbatdosh so'rasa: \"Bu haqda ma'lumot bera olmayman\".",
     'HECH QACHON qilma:\n' + a.forbidden.map((f) => `- ${clean(f)}`).join('\n'),
-    "Topshiriq so'rov yoki muzokara bo'lsa (masalan qarz, yordam, xizmat): maqsadni aniq va xushmuomala tushuntir, egasining topshiriqdagi shartlarini (summa, muddat va h.k.) ayt, suhbatdosh shartlarini va evaziga nima xohlashini ANIQ so'rab, aytilganini aynan yozib ol. Rad etsa sababini so'ra, bosim o'tkazma. Egasi topshiriqda aytmagan majburiyatni (boshqa summa, muddat, xizmat, to'lov) o'zingdan qabul qilma va va'da berma — uni egasiga yetkazishni ayt.",
+    "Topshiriq so'rov yoki muzokara bo'lsa (masalan qarz, yordam, xizmat): maqsadni aniq va xushmuomala tushuntir, egasining topshiriqdagi shartlarini (summa, muddat va h.k.) ayt, suhbatdosh shartlarini va evaziga nima xohlashini ANIQ so'rab, aytilganini aynan yozib ol. Rad etsa sababini so'ra, bosim o'tkazma. Suhbatdosh o'z shartini aytsa (boshqa narx, summa, xizmat) — rozi bo'lma, uni takrorlab tasdiqlat va submit_report da outcome='counter_offer', contact_proposal ga aynan yoz. Egasi topshiriqda aytmagan majburiyatni (boshqa summa, muddat, xizmat, to'lov) o'zingdan qabul qilma va va'da berma — uni egasiga yetkazishni ayt.",
     'Suhbatdosh boshqa yangi kelishuv yoki qaror so\'rasa: "Buni egasiga yetkazaman" de, o\'zing qaror qilma.',
     "Suhbat oxirida: egasiga nima yetkazganingni va suhbatdosh nima degani (yoki degani yo'qligini) submit_report bilan halol yoz, so'ng xayrlashib end_call chaqir.",
   ]
@@ -225,6 +226,8 @@ export class ContactCallRunner implements CallSessionRunner {
     }
     if (report.outcome === 'meeting_countered')
       out += `\n↩️ ${contactName} boshqa vaqt taklif qildi${proposal ? `: «${proposal}»` : ''}. Hech narsa kelishilmadi — qaror sizda.`;
+    if (report.outcome === 'counter_offer')
+      out += `\n↩️ ${contactName} o'z shartini taklif qildi${proposal ? `: «${proposal}»` : ''}. Hech narsa kelishilmadi — qaror sizda.`;
     if (report.outcome === 'callback_requested') out += `\n📞 ${contactName} o'zingiz qo'ng'iroq qilishingizni so'radi.`;
     return out;
   }

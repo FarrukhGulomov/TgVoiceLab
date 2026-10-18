@@ -174,8 +174,15 @@ export class IntakeService {
     // Still not understood: ask the free-form fallback. It sees the contact names and the latest call report so a short reply
     // ("roziman") can be tied to that call. A call it proposes is never placed from a guess: it becomes a question first.
     if (!rejection && !completed && intent?.kind === 'unknown' && this.d.fallback && text.trim()) {
+      const open = draft ?? (await this.loadDraft(p.ownerId));
+      const pending =
+        open?.kind === 'confirm_call'
+          ? t(p.locale, 'confirm_call', { name: open.contact, message: open.message.slice(0, 400) })
+          : open?.kind === 'confirm_message'
+            ? t(p.locale, 'confirm_message', { name: open.contact, message: open.text.slice(0, 600) })
+            : undefined;
       try {
-        const proposed = await this.d.fallback.propose(text, { ...ictx, background: await this.background(p.ownerId) });
+        const proposed = await this.d.fallback.propose(text, { ...ictx, background: await this.background(p.ownerId, pending) });
         if (proposed.kind === 'call_contact') {
           const draft2: ClarificationDraft = {
             kind: 'confirm_call',
@@ -187,6 +194,12 @@ export class IntakeService {
             kind: 'clarify',
             question: t(p.locale, 'confirm_call', { name: proposed.contact, message: proposed.message.slice(0, 400) }),
             draft: draft2,
+          };
+        } else if (proposed.kind === 'message_contact') {
+          intent = {
+            kind: 'clarify',
+            question: t(p.locale, 'confirm_message', { name: proposed.contact, message: proposed.text.slice(0, 600) }),
+            draft: { kind: 'confirm_message', contact: proposed.contact, text: proposed.text },
           };
         } else intent = proposed;
       } catch (e) {
@@ -231,7 +244,7 @@ export class IntakeService {
     return result;
   }
 
-  private async background(ownerId: string): Promise<NonNullable<InterpretContext['background']>> {
+  private async background(ownerId: string, pending?: string): Promise<NonNullable<InterpretContext['background']>> {
     const contacts = this.d.contacts ? (await this.d.contacts.list(this.d.db, ownerId)).filter((c) => c.active).map((c) => c.displayName) : [];
     const r = (
       await this.d.db.query<{ narrative_enc: string | null; display_name: string; outcome: string }>(
@@ -242,7 +255,32 @@ export class IntakeService {
       )
     ).rows[0];
     const summary = r?.narrative_enc ? this.d.crypto.dec(ownerId, 'call_reports.narrative', r.narrative_enc) : '';
-    return { contacts, ...(r && summary ? { recentCall: { contact: r.display_name, outcome: r.outcome, summary: summary.slice(0, 800) } } : {}) };
+    const said = (
+      await this.d.db.query<{ content_enc: string; occurred_at: Date }>(
+        `SELECT content_enc, occurred_at FROM messages WHERE owner_id=$1 AND direction='inbound' AND occurred_at > $2 ORDER BY occurred_at DESC LIMIT 6`,
+        [ownerId, new Date(this.d.clock.now().getTime() - 6 * 3_600_000)],
+      )
+    ).rows.map((x) => ({ at: x.occurred_at.getTime(), from: 'owner' as const, text: this.d.crypto.dec(ownerId, 'messages.content', x.content_enc) }));
+    const replied = (
+      await this.d.db.query<{ payload: { textEnc?: string }; created_at: Date }>(
+        `SELECT payload, created_at FROM outbox WHERE owner_id=$1 AND type='owner.reply' AND created_at > $2 ORDER BY created_at DESC LIMIT 6`,
+        [ownerId, new Date(this.d.clock.now().getTime() - 6 * 3_600_000)],
+      )
+    ).rows.flatMap((x) =>
+      x.payload.textEnc
+        ? [{ at: x.created_at.getTime(), from: 'assistant' as const, text: this.d.crypto.dec(ownerId, 'outbox.reply', x.payload.textEnc) }]
+        : [],
+    );
+    const history = [...said, ...replied]
+      .sort((a, b) => a.at - b.at)
+      .slice(-8)
+      .map(({ from, text }) => ({ from, text: text.slice(0, 400) }));
+    return {
+      contacts,
+      ...(history.length ? { history } : {}),
+      ...(pending ? { pending } : {}),
+      ...(r && summary ? { recentCall: { contact: r.display_name, outcome: r.outcome, summary: summary.slice(0, 800) } } : {}),
+    };
   }
 
   /** TTL for a pending clarification: long enough to answer, short enough that a stale reply cannot create anything. */
@@ -448,6 +486,29 @@ export class IntakeService {
         const name = intent.name.trim().slice(0, 80);
         await c.query('UPDATE owners SET display_name=$2 WHERE id=$1', [p.ownerId, name]);
         return t(loc, 'owner_name_set', { name });
+      }
+      case 'cancel_pending':
+        return t(loc, 'proposal_cancelled');
+      case 'message_contact': {
+        const contacts = this.d.contacts;
+        if (!contacts) return t(loc, 'unknown');
+        const r = await contacts.resolveByName(c, p.ownerId, intent.contact);
+        if (r.kind === 'none') return t(loc, 'contact_unknown', { name: intent.contact });
+        if (r.kind === 'many') return t(loc, 'contact_ambiguous', { name: intent.contact, names: r.names.join(', ') });
+        const text = intent.text.trim().slice(0, 2000);
+        if (!text) return t(loc, 'unknown');
+        await emitOutbox(
+          c,
+          {
+            ownerId: p.ownerId,
+            aggregateType: 'contact',
+            aggregateId: r.contact.id,
+            type: 'contact.message',
+            payload: { contactId: r.contact.id, textEnc: this.d.crypto.enc(p.ownerId, 'outbox.contact_message', text) },
+          },
+          this.d.clock.now(),
+        );
+        return t(loc, 'contact_message_queued', { name: r.contact.displayName });
       }
       case 'call_contact': {
         const contacts = this.d.contacts;
