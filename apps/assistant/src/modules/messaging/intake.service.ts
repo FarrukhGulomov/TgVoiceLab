@@ -12,6 +12,7 @@ import { writeAudit } from '../audit/audit.js';
 import type { TaskService, Task } from '../tasks/tasks.service.js';
 import type { ReminderService } from '../scheduling/reminders.service.js';
 import type { ContactService } from '../contacts/contacts.service.js';
+import { ContactWatchService } from '../contacts/watches.js';
 import { MemoryService, OWNER_SCOPE, contactScope } from '../memory/memory.service.js';
 import { CONTACT_CALL_MAX_SECONDS, type ContactCallService } from '../calls/contact-calls.service.js';
 import { describeInstant, resolveWallClock } from '../scheduling/wallclock.js';
@@ -53,7 +54,10 @@ export interface IncomingMessage {
 export type IntakeResult =
   | { status: 'duplicate' }
   | { status: 'denied'; reason: string }
-  | { status: 'handled'; intent: Intent['kind'] | 'voice_rejected' | 'forwarded_ignored' | 'voice_uncertain' };
+  | { status: 'handled'; intent: Intent['kind'] | 'voice_rejected' | 'forwarded_ignored' | 'voice_uncertain' | 'contact_relayed' };
+
+/** Replies relayed per contact per hour; more are dropped (a contact cannot flood the owner). */
+const RELAY_PER_HOUR = 20;
 
 const SUPPORTED_VOICE_MIME = /^audio\/(?:ogg|opus|mpeg|mp3|mp4|x-m4a|aac|wav|x-wav|webm)(?:\s*;.*)?$/i;
 
@@ -88,6 +92,8 @@ export class IntakeService {
       contacts?: ContactService;
       /** Owner-controlled memory ("eslab qol", "xotira", "unut"); also gives the free-form fallback what it remembers. */
       memory?: MemoryService;
+      /** "Tell me when X replies" watches; a relayed reply consumes a `call` watch. */
+      watches?: ContactWatchService;
       /** Resolves @username / +phone to a numeric id (Telegram-backed). Absent in tests and when messaging is disabled. */
       peers?: PeerResolverPort;
       /** Called with the failure (never the audio or its text) when a voice note could not be transcribed. */
@@ -107,7 +113,14 @@ export class IntakeService {
     if (seen.rowCount) return { status: 'duplicate' };
 
     const auth = await authenticateOwnerMessage(db, m, clock.now());
-    if (!auth.ok) return { status: 'denied', reason: auth.reason }; // silent: no reply to strangers, no state change
+    if (!auth.ok) {
+      // A vouched contact answering the assistant is relayed to the owner (as plain data, never as a command). Strangers stay silent.
+      if (auth.reason === 'unknown_sender') {
+        const relayed = await this.relayFromContact(m);
+        if (relayed) return relayed;
+      }
+      return { status: 'denied', reason: auth.reason }; // silent: no reply to strangers, no state change
+    }
     const p = auth.principal;
 
     let text = m.text ?? '';
@@ -253,6 +266,68 @@ export class IntakeService {
     // External effects (ending a live call) happen only after the transaction committed.
     if (result.status === 'handled') for (const f of afterCommit) await f().catch(() => undefined);
     return result;
+  }
+
+  /**
+   * A message from one of the owner's vouched contacts to the assistant account: it is shown to the owner verbatim (quoted, as data) and,
+   * if the owner asked to be called when this contact replies, the owner is also rung once through the reminder-call path.
+   * Bounded: at most RELAY_PER_HOUR relays per contact per hour; voice and files are reported as such, never downloaded.
+   */
+  private async relayFromContact(m: IncomingMessage): Promise<IntakeResult | null> {
+    if (m.chat.type !== 'private' || m.chat.id !== m.senderTelegramId) return null;
+    const { db, clock } = this.d;
+    const c0 = (
+      await db.query<{ id: string; owner_id: string; display_name: string; locale: Locale; timezone: string }>(
+        `SELECT c.id, c.owner_id, c.display_name, o.locale, o.timezone
+           FROM contacts c JOIN telegram_accounts a ON a.owner_id=c.owner_id AND a.id=$1 JOIN owners o ON o.id=c.owner_id
+          WHERE c.telegram_user_id=$2 AND c.verified_at IS NOT NULL AND c.ai_consent_attested_at IS NOT NULL
+            AND (c.ai_consent_revoked_at IS NULL OR c.ai_consent_revoked_at < c.ai_consent_attested_at)`,
+        [m.accountId, m.senderTelegramId],
+      )
+    ).rows[0];
+    if (!c0 || !this.d.reminders) return null;
+    const now = clock.now();
+    const handled = { status: 'handled', intent: 'contact_relayed' } as const;
+    return db.tx(async (c) => {
+      const ins = await c.query('INSERT INTO inbound_updates (account_id, update_key) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING 1', [
+        m.accountId,
+        m.updateKey,
+      ]);
+      if (!ins.rowCount) return { status: 'duplicate' } as const;
+      const recent = await c.query(
+        `SELECT 1 FROM audit_events WHERE owner_id=$1 AND action='contact.relay' AND resource_id=$2 AND created_at > $3::timestamptz - interval '1 hour' OFFSET $4 LIMIT 1`,
+        [c0.owner_id, c0.id, now, RELAY_PER_HOUR - 1],
+      );
+      if (recent.rowCount) return handled; // a flood from one contact is dropped, not relayed
+      await writeAudit(c, {
+        ownerId: c0.owner_id,
+        actorType: 'contact',
+        action: 'contact.relay',
+        resourceType: 'contact',
+        resourceId: c0.id,
+        allowed: true,
+        reasonCode: 'ok',
+      });
+      const body = (m.text ?? '').trim().slice(0, 1500);
+      const text = body ? t(c0.locale, 'contact_relay', { name: c0.display_name, text: body }) : t(c0.locale, 'contact_relay_media', { name: c0.display_name });
+      await this.reply(c, { ownerId: c0.owner_id, telegramUserId: '', locale: c0.locale, timezone: c0.timezone }, text);
+      const mode = this.d.watches ? await this.d.watches.take(c, c0.owner_id, c0.id, now) : null;
+      if (mode === 'call') {
+        // Ring the owner through the normal reminder-call path (it respects the kill switch, quiet hours and the opt-out).
+        const at = DateTime.fromJSDate(new Date(now.getTime() + 60_000), { zone: c0.timezone }).toFormat("yyyy-LL-dd'T'HH:mm");
+        await this.d.reminders!.create(
+          c0.owner_id,
+          {
+            title: `${c0.display_name} javob yozdi${body ? `: ${body.replace(/\s+/g, ' ').slice(0, 300)}` : ''}`,
+            localDateTime: at,
+            mode: 'call',
+            silent: true,
+          },
+          c,
+        );
+      }
+      return handled;
+    });
   }
 
   private async contactNames(q: pg.PoolClient, ownerId: string): Promise<Map<string, string>> {
@@ -583,6 +658,16 @@ export class IntakeService {
         if (!hit) return t(loc, 'memory_not_found');
         await mem.forget(c, p.ownerId, hit.id);
         return t(loc, 'memory_forgotten', { text: hit.text });
+      }
+      case 'watch_contact': {
+        const contacts = this.d.contacts;
+        const watches = this.d.watches;
+        if (!contacts || !watches) return t(loc, 'unknown');
+        const r = await contacts.resolveByName(c, p.ownerId, intent.contact);
+        if (r.kind === 'none') return t(loc, 'contact_unknown', { name: intent.contact });
+        if (r.kind === 'many') return t(loc, 'contact_ambiguous', { name: intent.contact, names: r.names.join(', ') });
+        await watches.set(c, p.ownerId, r.contact.id, intent.mode, this.d.clock.now());
+        return t(loc, intent.mode === 'call' ? 'watch_set_call' : 'watch_set_text', { name: r.contact.displayName });
       }
       case 'reply':
         return intent.text;

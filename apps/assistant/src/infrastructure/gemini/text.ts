@@ -70,6 +70,10 @@ export function intentFromModel(raw: unknown): Intent {
       const text = typeof o.text === 'string' ? o.text.trim().slice(0, 3000) : '';
       return text ? { kind: 'reply', text } : { kind: 'unknown' };
     }
+    case 'watch_contact': {
+      const contact = str(o.contact, 80);
+      return contact ? { kind: 'watch_contact', contact, mode: o.mode === 'call' ? 'call' : 'text' } : { kind: 'unknown' };
+    }
     case 'cancel_pending':
       return { kind: 'cancel_pending' };
     case 'list_tasks':
@@ -114,6 +118,7 @@ export function buildPrompt(text: string, ctx: InterpretContext): string {
     '{"kind":"call_contact","contact":string,"message":string,"slots":[{"date":"YYYY-MM-DD","time":"HH:mm"}]?}  // kontaktga OVOZLI qo\'ng\'iroq qilib topshiriqni muhokama qilish',
     '{"kind":"message_contact","contact":string,"text":string}  // kontaktga MATN (Telegram xabar) yuborish: egasi "yoz", "matn qilib", "xabar yubor", "junat" desa',
     '{"kind":"remember","text":string,"contact":string?}  // egasi "eslab qol", "yodda tut" desa yoki doimiy muhim fakt aytsa (contact — ro\'yxatdagi ism)',
+    '{"kind":"watch_contact","contact":string,"mode":"text"|"call"}  // egasi "X javob bersa menga ayt/qo\'ng\'iroq qilib ayt" desa (qo\'ng\'iroq so\'ralsa mode call, aks holda text)',
     '{"kind":"cancel_pending"}  // bot tasdiq kutayotgan taklifni egasi rad etsa yoki "yo\'q", "kerak emas", "indama", "tegma" desa',
     '{"kind":"list_tasks"} | {"kind":"list_reminders"}',
     '{"kind":"clarify","question":string}  // haqiqatan noaniq bo\'lsa, bitta qisqa savol (egasi tilida)',

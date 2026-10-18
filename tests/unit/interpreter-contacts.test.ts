@@ -164,3 +164,11 @@ describe('memory and text commands', () => {
     expect((r as { at?: unknown }).at).toBeUndefined();
   });
 });
+
+describe('watch a contact for a reply', () => {
+  it('by call or by text', async () => {
+    expect(await run("Nanajon javob bersa menga qo'ng'iroq qilib xabar ber")).toEqual({ kind: 'watch_contact', contact: 'Nanajon', mode: 'call' });
+    expect(await run("Nanajondan senga xabar kelsa menga qo'ngiroq qilib ayt")).toEqual({ kind: 'watch_contact', contact: 'Nanajon', mode: 'call' });
+    expect(await run('Nanajon javob yozsa menga ayt')).toEqual({ kind: 'watch_contact', contact: 'Nanajon', mode: 'text' });
+  });
+});

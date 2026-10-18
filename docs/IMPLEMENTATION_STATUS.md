@@ -98,6 +98,13 @@ contact's notes (as data) and may return 0-5 `notes` with its report, which are 
 Removing a contact forgets their notes. The free-form fallback also sees the owner's notes and notes about contacts named in the message.
 Offline-tested; not live verified.
 
+## Replies from contacts
+
+A private message from a vouched, attested contact to the assistant account is relayed to the owner as quoted text (data, never a command;
+voice/files are only reported; max 20 relays per contact per hour; strangers are ignored). «X javob bersa menga qo'ng'iroq qilib ayt» sets a
+one-shot 48 h `call` watch: the next reply also rings the owner through the reminder-call path (kill switch, quiet hours and opt-out apply).
+Offline-tested; not live verified.
+
 ## Voice notes
 
 `GeminiTranscription` (generateContent, inline audio) turns owner voice notes into text when `GEMINI_API_KEY` and

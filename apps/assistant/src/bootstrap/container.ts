@@ -12,6 +12,7 @@ import { DisabledCallAdapter } from '../modules/calls/adapters.js';
 import type { DerivedCapabilities } from '../modules/calls/capability-evidence.js';
 import { ContactCallService } from '../modules/calls/contact-calls.service.js';
 import { IntakeService } from '../modules/messaging/intake.service.js';
+import { ContactWatchService } from '../modules/contacts/watches.js';
 import { MemoryService } from '../modules/memory/memory.service.js';
 import { RulesInterpreter } from '../modules/messaging/rules-interpreter.js';
 import { DisabledInterpreter } from '../modules/messaging/disabled-interpreter.js';
@@ -110,6 +111,7 @@ export function buildContainer(d: ContainerDeps) {
     ownerCalls: operations,
     contacts,
     memory,
+    watches: new ContactWatchService(),
     ...(d.onVoiceError ? { onVoiceError: d.onVoiceError } : {}),
     ...(d.peers ? { peers: d.peers } : {}),
     ...(contactCalls ? { contactCalls } : {}),

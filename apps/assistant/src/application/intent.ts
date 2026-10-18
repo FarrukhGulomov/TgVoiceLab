@@ -81,6 +81,8 @@ export type Intent =
   | { kind: 'forget_memory'; ref: TaskRef }
   /** A conversational answer (no state change): the text AI chats, answers questions about the owner's tasks, calls and memory. */
   | { kind: 'reply'; text: string }
+  /** "Tell me when X replies": by text (the default for every reply anyway) or by ringing the owner once. */
+  | { kind: 'watch_contact'; contact: string; mode: 'text' | 'call' }
   | { kind: 'set_owner_name'; name: string }
   | { kind: 'set_briefing'; time: string } // HH:mm, daily
   | { kind: 'cancel_briefing' }

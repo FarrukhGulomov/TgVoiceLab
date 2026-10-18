@@ -173,6 +173,14 @@ export class RulesInterpreter implements TextInterpreterPort {
         return { kind: 'remove_contact', name: clean(del[1]!) };
       }
       if (/^(?:contacts?|kontaktlar(?:im)?|\/contacts)\??$/i.test(low)) return { kind: 'list_contacts' };
+      // "Nanajon javob bersa menga qo'ng'iroq qilib ayt" / "Nanajondan xabar kelsa menga ayt": tell the owner when this contact replies.
+      const watch =
+        /^(\S+?)(?:dan|ga|ka|qa)?\s+(?:senga\s+)?(?:javob\s+(?:bersa|yozsa|qaytarsa|qilsa)|xabar\s+(?:kelsa|yozsa|bersa|qaytarsa)|yozsa)\s*[,:-]?\s*(?:menga|bizga)?\s*(.*)$/i.exec(
+          text,
+        );
+      if (watch && !NOT_CONTACT_WORDS.test(watch[1]!) && /\b(?:ayt|ber|yetkaz|xabar|bildir|qo'?ng'?iroq|tel)\w*/i.test(watch[2] ?? '')) {
+        return { kind: 'watch_contact', contact: watch[1]!, mode: BY_CALL.test(normalizeApostrophes(watch[2] ?? '')) ? 'call' : 'text' };
+      }
       // "Nanajonga yoz: Assalomu alaykum, ..." / "message Nanajon: ..." -> a text for the contact (the intake asks "ha" before sending).
       const wr =
         /^(?:(\S+?)(?:\s+degan\s+kontakt\w*|\s*(?:ga|ka|qa))\s+(?:xabar\s+|matn\s+)?(?:yoz(?:ib\s+yubor)?|yubor|jo'?nat)|(?:message|text|write\s+to)\s+(\S+?))\s*[:,-]\s+(.{2,1500})$/i.exec(

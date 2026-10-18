@@ -48,6 +48,8 @@ export interface CreateReminderInput {
   mode?: 'message' | 'call' | undefined;
   kind?: 'reminder' | 'briefing' | undefined;
   taskId?: string | undefined;
+  /** Skip the "reminder scheduled" notice (the caller already tells the owner). */
+  silent?: boolean | undefined;
 }
 
 export class ReminderService {
@@ -146,24 +148,25 @@ export class ReminderService {
       );
       const id = ins.rows[0]!.id;
       const occurrenceId = await this.materialize(c, ownerId, id, 1, first.utc);
-      await emitOutbox(
-        c,
-        {
-          ownerId,
-          aggregateType: 'reminder',
-          aggregateId: id,
-          type: 'owner.notice',
-          payload: {
-            template: 'reminder_scheduled',
-            reminderId: id,
-            occurrenceId,
-            scheduledAt: first.utc.toISOString(),
-            timezone: tz,
-            dstGap: first.kind === 'gap_shifted_forward',
+      if (!i.silent)
+        await emitOutbox(
+          c,
+          {
+            ownerId,
+            aggregateType: 'reminder',
+            aggregateId: id,
+            type: 'owner.notice',
+            payload: {
+              template: 'reminder_scheduled',
+              reminderId: id,
+              occurrenceId,
+              scheduledAt: first.utc.toISOString(),
+              timezone: tz,
+              dstGap: first.kind === 'gap_shifted_forward',
+            },
           },
-        },
-        this.clock.now(),
-      );
+          this.clock.now(),
+        );
       await writeAudit(c, {
         ownerId,
         actorType: 'owner',
