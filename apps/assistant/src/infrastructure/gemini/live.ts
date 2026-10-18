@@ -25,6 +25,8 @@ export interface GeminiLiveOptions {
   tools?: ToolDeclaration[] | undefined;
   /** Diagnostics: one line per server message (structure only — never audio data, never the API key). */
   debug?: ((line: string) => void) | undefined;
+  /** The model answers in TEXT (streamed through `onText`) and another voice speaks it. Needs a Live model that supports TEXT output (native-audio models are AUDIO-only). */
+  textOutput?: boolean | undefined;
   /** How long to wait for `setupComplete` before reporting that the setup was rejected or ignored. */
   setupTimeoutMs?: number | undefined;
   /** How a plain-text turn (the greeting) is sent. `realtime` = realtimeInput.text (newer), `client_content` = clientContent turn (older). */
@@ -39,14 +41,14 @@ export const GEMINI_OUTPUT_RATE = 24_000;
 const DEFAULT_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 export function geminiSetup(
-  o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'instructions' | 'googleSearch' | 'languageCode' | 'tools'>,
+  o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'instructions' | 'googleSearch' | 'languageCode' | 'tools' | 'textOutput'>,
 ): Record<string, unknown> {
   return {
     setup: {
       model: o.model.startsWith('models/') ? o.model : `models/${o.model}`,
       generationConfig: {
-        responseModalities: ['AUDIO'],
-        ...(o.voice || o.languageCode
+        responseModalities: [o.textOutput ? 'TEXT' : 'AUDIO'],
+        ...(!o.textOutput && (o.voice || o.languageCode)
           ? {
               speechConfig: {
                 ...(o.voice ? { voiceConfig: { prebuiltVoiceConfig: { voiceName: o.voice } } } : {}),
@@ -67,7 +69,7 @@ export function geminiSetup(
         : {}),
       systemInstruction: { parts: [{ text: o.instructions }] },
       inputAudioTranscription: {},
-      outputAudioTranscription: {},
+      ...(o.textOutput ? {} : { outputAudioTranscription: {} }),
     },
   };
 }
@@ -91,7 +93,7 @@ interface ServerMessage {
   setupComplete?: unknown;
   toolCall?: { functionCalls?: Array<{ id?: string; name?: string; args?: Record<string, unknown> }> };
   serverContent?: {
-    modelTurn?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> };
+    modelTurn?: { parts?: Array<{ text?: string; inlineData?: { mimeType?: string; data?: string } }> };
     interrupted?: boolean;
     turnComplete?: boolean;
     inputTranscription?: { text?: string };
@@ -116,6 +118,7 @@ export class GeminiLiveLink implements RealtimeLink {
   #errors: Array<(m: string) => void> = [];
   #speaking = false;
   #toolCalls: Array<(c: ToolCall) => void> = [];
+  #text: Array<(delta: string, done: boolean) => void> = [];
   readonly #textMode: 'realtime' | 'client_content';
   readonly #debug: ((line: string) => void) | undefined;
   #setupTimer: NodeJS.Timeout | undefined;
@@ -186,6 +189,14 @@ export class GeminiLiveLink implements RealtimeLink {
     if (sc.inputTranscription?.text) this.#heard += sc.inputTranscription.text;
     if (sc.outputTranscription?.text) this.#said += sc.outputTranscription.text;
     for (const part of sc.modelTurn?.parts ?? []) {
+      if (part.text) {
+        if (!this.#speaking) {
+          this.#speaking = true;
+          for (const cb of this.#responseStart) cb();
+        }
+        for (const cb of this.#text) cb(part.text, false);
+        continue;
+      }
       const d = part.inlineData;
       if (!d?.data) continue;
       const rate = /rate=(\d+)/.exec(d.mimeType ?? '')?.[1];
@@ -206,6 +217,7 @@ export class GeminiLiveLink implements RealtimeLink {
     }
     if (sc.turnComplete) {
       this.#speaking = false;
+      for (const cb of this.#text) cb('', true);
       this.#flushTranscripts();
     }
   }
@@ -228,6 +240,9 @@ export class GeminiLiveLink implements RealtimeLink {
   }
   /** The server already stopped generating and dropped unplayed audio when it reported `interrupted`: nothing to do client-side. */
   interrupt(): void {}
+  onText(cb: (delta: string, done: boolean) => void): void {
+    this.#text.push(cb);
+  }
   onAudio(cb: (pcm: Uint8Array) => void): void {
     this.#audio.push(cb);
   }

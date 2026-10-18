@@ -160,3 +160,15 @@ describe('VoiceLabMouthLink', () => {
     expect(brain.interrupts).toEqual([300]);
   });
 });
+
+import { geminiSetup } from '../../apps/assistant/src/infrastructure/gemini/live.js';
+describe('Gemini Live in text mode', () => {
+  it('asks for TEXT only (no audio output settings) so VoiceLab can speak it', () => {
+    const s = (geminiSetup({ model: 'm', instructions: 'x', textOutput: true, voice: 'v', languageCode: 'uz-UZ' }) as { setup: Record<string, any> }).setup;
+    expect(s.generationConfig.responseModalities).toEqual(['TEXT']);
+    expect(s.generationConfig.speechConfig).toBeUndefined();
+    expect(s.outputAudioTranscription).toBeUndefined();
+    const a = (geminiSetup({ model: 'm', instructions: 'x' }) as { setup: Record<string, any> }).setup;
+    expect(a.generationConfig.responseModalities).toEqual(['AUDIO']);
+  });
+});

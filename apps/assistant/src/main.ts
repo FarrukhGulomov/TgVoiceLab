@@ -133,23 +133,28 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const { VoiceLabMouthLink } = await import('./infrastructure/voicelab/mouth-link.js');
   const { VOICE_TEXT_OUTPUT_RULE } = await import('./modules/calls/conversation/language-rule.js');
   const voicelab = cfg.TTS_PROVIDER === 'voicelab';
+  // VoiceLab only speaks: the model that listens and decides answers in text (tools, memory and negotiation limits work as before).
+  const voiced = <T extends import('./infrastructure/voicelab/mouth-link.js').TextBrain>(brain: T) =>
+    new VoiceLabMouthLink(
+      brain,
+      new VoiceLabTts({
+        apiKey: cfg.VOICELAB_API_KEY!,
+        voiceId: cfg.VOICELAB_VOICE_ID!,
+        baseUrl: cfg.VOICELAB_BASE_URL,
+        model: cfg.VOICELAB_TTS_MODEL,
+        speed: cfg.VOICELAB_SPEED,
+      }),
+      { log: (line) => log.debug({ call: true }, line) },
+    );
   const makeOpenAi = (o: ConstructorParameters<typeof OpenAiRealtimeLink>[0]) =>
     voicelab
-      ? new VoiceLabMouthLink(
-          new OpenAiRealtimeLink({ ...o, instructions: `${o.instructions}\n${VOICE_TEXT_OUTPUT_RULE}`, textOutput: true }),
-          new VoiceLabTts({
-            apiKey: cfg.VOICELAB_API_KEY!,
-            voiceId: cfg.VOICELAB_VOICE_ID!,
-            baseUrl: cfg.VOICELAB_BASE_URL,
-            model: cfg.VOICELAB_TTS_MODEL,
-            speed: cfg.VOICELAB_SPEED,
-          }),
-          { log: (line) => log.debug({ call: true }, line) },
-        )
+      ? voiced(new OpenAiRealtimeLink({ ...o, instructions: `${o.instructions}\n${VOICE_TEXT_OUTPUT_RULE}`, textOutput: true }))
       : new OpenAiRealtimeLink(o);
+  const makeGemini = (o: ConstructorParameters<typeof GeminiLiveLink>[0]) =>
+    voicelab ? voiced(new GeminiLiveLink({ ...o, instructions: `${o.instructions}\n${VOICE_TEXT_OUTPUT_RULE}`, textOutput: true })) : new GeminiLiveLink(o);
   const makeLink = ({ instructions, tools }: { instructions: string; tools: import('./modules/calls/audio/realtime-bridge.js').ToolDeclaration[] }) =>
     cfg.AI_VOICE_PROVIDER === 'gemini'
-      ? new GeminiLiveLink({
+      ? makeGemini({
           apiKey: cfg.GEMINI_API_KEY!,
           model: cfg.GEMINI_LIVE_MODEL!,
           voice: cfg.GEMINI_VOICE,

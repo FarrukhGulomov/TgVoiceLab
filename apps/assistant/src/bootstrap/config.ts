@@ -37,7 +37,7 @@ const EnvSchema = z
     GEMINI_DEBUG: bool.default(false),
     /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset settles 0 (documented gap). */
     AI_VOICE_COST_USD_PER_MINUTE: opt(z.coerce.number().positive().max(100)),
-    /** Who speaks on calls. Unset: the AI voice provider's own voice. `voicelab`: VoiceLab's Uzbek voice (the listening/thinking model answers in text). Needs AI_VOICE_PROVIDER=openai. */
+    /** Who speaks on calls. Unset: the AI voice provider's own voice. `voicelab`: VoiceLab's Uzbek voice (the listening/thinking model answers in text). Needs AI_VOICE_PROVIDER=openai or gemini (the model answers in text; for gemini the Live model must support TEXT output). */
     TTS_PROVIDER: z.enum(['voicelab']).optional(),
     VOICELAB_API_KEY: opt(z.string()),
     /** The voice's id from `pnpm voicelab:check` (e.g. the one named Nozima). */
