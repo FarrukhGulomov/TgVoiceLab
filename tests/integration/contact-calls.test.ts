@@ -3,6 +3,7 @@ import type { CallHandle, PcmFrame } from '@tgvl/contracts';
 import { createTestDb, type TestDb } from '../support/test-db.js';
 import { seedOwner, type SeededOwner } from '../support/seed.js';
 import { boot, TEST_KEYRING } from '../support/harness.js';
+import { RecallService } from '../../apps/assistant/src/modules/memory/recall.js';
 import { MemoryService } from '../../apps/assistant/src/modules/memory/memory.service.js';
 import { DataCrypto } from '../../apps/assistant/src/infrastructure/crypto/data-crypto.js';
 import { Envelope, parseKeyRing } from '../../apps/assistant/src/infrastructure/crypto/envelope.js';
@@ -11,7 +12,7 @@ import { FakeCallAdapter, FakeMessaging } from '../../apps/assistant/src/testing
 import type { DerivedCapabilities } from '../../apps/assistant/src/modules/calls/capability-evidence.js';
 import { ensureDailyBudget } from '../../apps/assistant/src/modules/operations/operations.service.js';
 import type { IncomingMessage } from '../../apps/assistant/src/modules/messaging/intake.service.js';
-import { OwnerCallTools } from '../../apps/assistant/src/modules/calls/conversation/owner-call-tools.js';
+import { OwnerCallTools, buildOwnerCallInstructions } from '../../apps/assistant/src/modules/calls/conversation/owner-call-tools.js';
 import { ContactCallRunner, buildContactCallInstructions } from '../../apps/assistant/src/modules/calls/conversation/contact-call-runner.js';
 import type { CallSessionRunner } from '../../apps/assistant/src/modules/calls/orchestrator.js';
 import type { RealtimeLink, ToolCall, ToolDeclaration } from '../../apps/assistant/src/modules/calls/audio/realtime-bridge.js';
@@ -400,6 +401,58 @@ describe('price limits can not be bypassed', () => {
     expect(s.links[0]!.instructions).toContain('12000 USD');
     s.links[0]!.link.toolCb!({ id: 'e', name: 'end_call', args: {} });
     await dialing;
+    await s.app.close();
+  });
+});
+
+describe('the owner call remembers earlier calls', () => {
+  it('the live owner call gets a recall tool over call reports and notes, found by topic', async () => {
+    const s = await setup();
+    await s.say("kontakt qo'sh Javlon 555000111");
+    await s.say("Javlonga qo'ng'iroq qilib Onix mashinasini sot, avval uning narxini kut");
+    const dialing = s.app.tick();
+    for (let i = 0; i < 100 && s.links.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    const { link } = s.links[0]!;
+    link.toolCb!({
+      id: 'r',
+      name: 'submit_report',
+      args: { outcome: 'counter_offer', summary: 'Javlon Onix uchun 6000 USD berishini aytdi.', contact_proposal: '6000 USD' },
+    });
+    await finish(s, link, dialing);
+    const recall = new RecallService(new DataCrypto(new Envelope(parseKeyRing(TEST_KEYRING))), s.memory);
+    const tools = new OwnerCallTools({
+      db: s.app.db,
+      tasks: s.app.tasks,
+      reminders: s.app.reminders,
+      clock: s.clock,
+      ownerId: o.ownerId,
+      timezone: 'Asia/Samarkand',
+      recall,
+      onEndCall: () => undefined,
+    });
+    const res = (await tools.execute({ id: 'q', name: 'recall', args: { query: 'Javlon mashinani qanchaga baholadi' } })).result as {
+      ok: boolean;
+      calls: string[];
+      memories: string[];
+    };
+    expect(res.ok).toBe(true);
+    expect(res.calls.join('\n')).toContain('6000 USD');
+    expect(
+      (
+        await new OwnerCallTools({
+          db: s.app.db,
+          tasks: s.app.tasks,
+          reminders: s.app.reminders,
+          clock: s.clock,
+          ownerId: o.ownerId,
+          timezone: 'Asia/Samarkand',
+          onEndCall: () => undefined,
+        }).execute({ id: 'q2', name: 'recall', args: { query: 'x' } })
+      ).result,
+    ).toMatchObject({ ok: false });
+    expect(
+      buildOwnerCallInstructions({ now: s.clock.now(), timezone: 'Asia/Samarkand', tasks: [], knowledge: { calls: res.calls, memories: res.memories } }),
+    ).toContain('6000 USD');
     await s.app.close();
   });
 });

@@ -151,8 +151,12 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
           dialect: cfg.OPENAI_REALTIME_DIALECT,
           transcriptionModel: cfg.OPENAI_TRANSCRIPTION_MODEL,
         });
+  const { MemoryService } = await import('./modules/memory/memory.service.js');
+  const { RecallService } = await import('./modules/memory/recall.js');
+  const recall = new RecallService(crypto, new MemoryService(crypto));
   const ownerRunner = new OwnerCallRunner({
     db,
+    recall,
     tasks: new TaskService(crypto),
     reminders: new ReminderService(db, crypto, systemClock),
     clock: systemClock,

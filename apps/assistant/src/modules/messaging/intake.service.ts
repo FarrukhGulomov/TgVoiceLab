@@ -58,14 +58,8 @@ export type IntakeResult =
   | { status: 'handled'; intent: Intent['kind'] | 'voice_rejected' | 'forwarded_ignored' | 'voice_uncertain' | 'contact_relayed' };
 
 /** Replies relayed per contact per hour; more are dropped (a contact cannot flood the owner). */
-/** How many of the question's words (compared by their first letters, so "Onixni" meets "Onix") occur in a stored text. */
-export function relevance(stored: string, question: string): number {
-  const stems = (x: string) => new Set((x.toLowerCase().match(/[\p{L}\p{N}']{4,}/gu) ?? []).map((w) => w.replace(/'/g, '').slice(0, 4)));
-  const have = stems(stored);
-  let n = 0;
-  for (const w of stems(question)) if (have.has(w)) n++;
-  return n;
-}
+import { relevance } from '../memory/recall.js';
+export { relevance };
 
 const RELAY_PER_HOUR = 20;
 

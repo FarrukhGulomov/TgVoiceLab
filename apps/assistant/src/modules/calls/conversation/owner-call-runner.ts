@@ -1,3 +1,4 @@
+import type { RecallService } from '../../memory/recall.js';
 import { OWNER_REQUESTED_CALL } from '../../../application/intent.js';
 import type { CallEndReason } from '@tgvl/contracts';
 import type { Db } from '../../../infrastructure/db/db.js';
@@ -21,6 +22,7 @@ export interface OwnerCallRunnerDeps {
   callRemindersLive: boolean;
   contacts?: ContactService | undefined;
   contactCalls?: ContactCallService | undefined;
+  recall?: RecallService | undefined;
   /** Estimated provider cost, used only to settle the call budget. Unset => settles 0 (documented gap). */
   costUsdPerMinute?: number | undefined;
   log?: ((line: string) => void) | undefined;
@@ -58,12 +60,15 @@ export class OwnerCallRunner implements CallSessionRunner {
       callRemindersLive: this.d.callRemindersLive,
       contacts: this.d.contacts,
       contactCalls: this.d.contactCalls,
+      recall: this.d.recall,
       onEndCall: () => endRequested(),
     });
     await tools.load();
     const asked = plan.topic === 'reminder' && plan.allowedContext[0] === OWNER_REQUESTED_CALL;
     const reminder = plan.topic === 'reminder' && !asked ? (plan.allowedContext[0] ?? undefined) : undefined;
+    const knowledge = this.d.recall ? await this.d.recall.recall(db, ownerId, '', this.d.clock.now(), { calls: 5, memories: 12 }) : undefined;
     const instructions = buildOwnerCallInstructions({
+      ...(knowledge ? { knowledge } : {}),
       now: this.d.clock.now(),
       timezone: owner.timezone,
       tasks: tools.describeList(),
