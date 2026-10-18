@@ -170,9 +170,10 @@ export class RulesInterpreter implements TextInterpreterPort {
       const tail = meetingTalk ? text.slice(callAt) : '';
       const w0 = extractWhen(head, ctx);
       const body = meetingTalk ? `${w0.rest} ${tail}`.trim() : w0.rest;
-      const uzStrict = new RegExp(`^(\\S+?)(?:\\s+degan\\s+kontakt\\w*|\\s*(?:ga|ka|qa))\\s+(.*?)${UZ_CALL}\\s+qil(?:ib|ing)?(?![\\p{L}'])[:,]?\\s*(.*)$`, 'iu').exec(
-        body,
-      );
+      const uzStrict = new RegExp(
+        `^(\\S+?)(?:\\s+degan\\s+kontakt\\w*|\\s*(?:ga|ka|qa))\\s+(.*?)${UZ_CALL}\\s+qil(?:ib|ing)?(?![\\p{L}'])[:,]?\\s*(.*)$`,
+        'iu',
+      ).exec(body);
       // "Test2 qo'ng'iroq qilib ..." (dative suffix left off): accepted only for a capitalised first word, so lowercase text like
       // "dori ichishni qo'ng'iroq qilib eslat" stays a reminder.
       const bare = uzStrict ? null : new RegExp(`^(\\p{Lu}\\S*)\\s+()${UZ_CALL}\\s+qil(?:ib|ing)?(?![\\p{L}'])[:,]?\\s*(.*)$`, 'u').exec(body);
