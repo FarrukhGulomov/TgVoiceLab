@@ -115,6 +115,10 @@ class FakeBrain implements TextBrain {
   close() {}
 }
 
+const waitFor = async (ok: () => boolean, ms = 3000) => {
+  for (const start = Date.now(); !ok() && Date.now() - start < ms;) await new Promise((r) => setTimeout(r, 10));
+};
+
 describe('VoiceLabMouthLink', () => {
   const mk = (delays: Record<string, number> = {}) => {
     const brain = new FakeBrain();
@@ -137,7 +141,8 @@ describe('VoiceLabMouthLink', () => {
     brain.textCb('Birinchi gap. Ikkinchi gap. ', false);
     brain.textCb('Uchinchi', false);
     brain.textCb(' gap.', true);
-    await new Promise((r) => setTimeout(r, 120));
+    await waitFor(() => chunks.length >= 6);
+    await new Promise((r) => setTimeout(r, 50));
     expect(chunks.length).toBe(6); // 3 sentences x 2 pieces of ~100 ms (9600 bytes = 200 ms)
   });
 
@@ -147,7 +152,7 @@ describe('VoiceLabMouthLink', () => {
     link.onToolCall(() => (audioAtTool = chunks.length));
     brain.textCb('Xayr.', true);
     brain.toolCb({ id: '1', name: 'end_call', args: {} });
-    await new Promise((r) => setTimeout(r, 100));
+    await waitFor(() => audioAtTool >= 0);
     expect(audioAtTool).toBe(2);
   });
 
@@ -155,7 +160,7 @@ describe('VoiceLabMouthLink', () => {
     const { brain, link, chunks } = mk({ 'Uzun gap.': 50 });
     brain.textCb('Uzun gap.', true);
     link.interrupt(300);
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 150));
     expect(chunks).toHaveLength(0);
     expect(brain.interrupts).toEqual([300]);
   });
@@ -170,5 +175,16 @@ describe('Gemini Live in text mode', () => {
     expect(s.outputAudioTranscription).toBeUndefined();
     const a = (geminiSetup({ model: 'm', instructions: 'x' }) as { setup: Record<string, any> }).setup;
     expect(a.generationConfig.responseModalities).toEqual(['AUDIO']);
+  });
+});
+
+import { loadConfig } from '../../apps/assistant/src/bootstrap/config.js';
+describe('VoiceLab configuration', () => {
+  const base = { DATABASE_URL: 'postgres://x', TTS_PROVIDER: 'voicelab', VOICELAB_API_KEY: 'k', VOICELAB_VOICE_ID: 'v' };
+  it('works on top of gemini or openai, needs a listening model and the key and voice', () => {
+    expect(() => loadConfig({ ...base, AI_VOICE_PROVIDER: 'gemini' })).not.toThrow();
+    expect(() => loadConfig({ ...base, AI_VOICE_PROVIDER: 'openai' })).not.toThrow();
+    expect(() => loadConfig({ ...base })).toThrow(/AI_VOICE_PROVIDER/);
+    expect(() => loadConfig({ ...base, AI_VOICE_PROVIDER: 'gemini', VOICELAB_VOICE_ID: '' })).toThrow(/VOICELAB_VOICE_ID/);
   });
 });

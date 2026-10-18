@@ -78,8 +78,8 @@ const EnvSchema = z
     if (e.TTS_PROVIDER === 'voicelab') {
       if (!e.VOICELAB_API_KEY) bad('VOICELAB_API_KEY', 'TTS_PROVIDER=voicelab requires VOICELAB_API_KEY');
       if (!e.VOICELAB_VOICE_ID) bad('VOICELAB_VOICE_ID', 'TTS_PROVIDER=voicelab requires VOICELAB_VOICE_ID (list voices with `pnpm voicelab:check`)');
-      if (e.AI_VOICE_PROVIDER !== 'openai')
-        bad('TTS_PROVIDER', 'the VoiceLab voice currently works with AI_VOICE_PROVIDER=openai (the model answers in text, VoiceLab speaks)');
+      if (!e.AI_VOICE_PROVIDER)
+        bad('TTS_PROVIDER', 'the VoiceLab voice needs AI_VOICE_PROVIDER=openai or gemini (that model listens and answers in text, VoiceLab speaks)');
     }
     if (e.CALLS_ENABLED) {
       if (e.CALL_ADAPTER === 'disabled') bad('CALL_ADAPTER', 'CALLS_ENABLED=true requires a real call adapter');
