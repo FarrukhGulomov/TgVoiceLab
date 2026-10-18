@@ -5,6 +5,7 @@
  * Needs VOICELAB_API_KEY (and VOICELAB_VOICE_ID for --say) in .env. The key is never printed.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { VoiceLabTts } from '../infrastructure/voicelab/tts.js';
 
 const env = process.env;
@@ -31,7 +32,10 @@ try {
     const t0 = Date.now();
     const a = await tts.synthesize(text, 'uz');
     const ms = Date.now() - t0;
-    mkdirSync('.local', { recursive: true });
+    // pnpm runs the script inside apps/assistant; INIT_CWD is the directory the operator typed the command in
+    const dir = join(process.env.INIT_CWD ?? process.cwd(), '.local');
+    const file = join(dir, 'voicelab-test.wav');
+    mkdirSync(dir, { recursive: true });
     const h = Buffer.alloc(44);
     h.write('RIFF', 0);
     h.writeUInt32LE(36 + a.pcm.length, 4);
@@ -45,8 +49,8 @@ try {
     h.writeUInt16LE(16, 34);
     h.write('data', 36);
     h.writeUInt32LE(a.pcm.length, 40);
-    writeFileSync('.local/voicelab-test.wav', Buffer.concat([h, Buffer.from(a.pcm)]));
-    console.log(`ok: ${(a.pcm.length / 2 / a.rateHz).toFixed(1)} s of audio at ${a.rateHz} Hz, synthesised in ${ms} ms -> .local/voicelab-test.wav`);
+    writeFileSync(file, Buffer.concat([h, Buffer.from(a.pcm)]));
+    console.log(`ok: ${(a.pcm.length / 2 / a.rateHz).toFixed(1)} s of audio at ${a.rateHz} Hz, synthesised in ${ms} ms -> ${file}`);
   }
 } catch (e) {
   console.error(String((e as Error).message ?? e));
