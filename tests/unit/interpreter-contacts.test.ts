@@ -47,6 +47,13 @@ describe('call a contact', () => {
       at: { date: '2026-10-18', time: '10:00' },
     });
   });
+  it('a space before the suffix or no suffix at all still names the contact', async () => {
+    expect(await run("Test2 ga qo'ng'iroq qilib 100 000 $ qarz berishlarini so'ra")).toMatchObject({ kind: 'call_contact', contact: 'Test2' });
+    expect(await run("Test2 qo'ng'iroq qilib bir million so'm qarz so'rab ber")).toMatchObject({ kind: 'call_contact', contact: 'Test2' });
+  });
+  it('a pronoun or date word is never taken for the contact', async () => {
+    expect((await run("menga qo'ng'iroq qilib hisobotni ayt")).kind).not.toBe('call_contact');
+  });
   it('without a time the call is for now (no `at`)', async () => {
     const r = await run("Javlonga qo'ng'iroq qilib uchrashuv soat 15:00 da ekanini ayt");
     expect(r).toMatchObject({ kind: 'call_contact', contact: 'Javlonga' });

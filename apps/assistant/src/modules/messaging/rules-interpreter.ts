@@ -170,9 +170,13 @@ export class RulesInterpreter implements TextInterpreterPort {
       const tail = meetingTalk ? text.slice(callAt) : '';
       const w0 = extractWhen(head, ctx);
       const body = meetingTalk ? `${w0.rest} ${tail}`.trim() : w0.rest;
-      const uz = new RegExp(`^(\\S+?)(?:\\s+degan\\s+kontakt\\w*|(?:ga|ka|qa))\\s+(.*?)${UZ_CALL}\\s+qil(?:ib|ing)?(?![\\p{L}'])[:,]?\\s*(.*)$`, 'iu').exec(
+      const uzStrict = new RegExp(`^(\\S+?)(?:\\s+degan\\s+kontakt\\w*|\\s*(?:ga|ka|qa))\\s+(.*?)${UZ_CALL}\\s+qil(?:ib|ing)?(?![\\p{L}'])[:,]?\\s*(.*)$`, 'iu').exec(
         body,
       );
+      // "Test2 qo'ng'iroq qilib ..." (dative suffix left off): accepted only for a capitalised first word, so lowercase text like
+      // "dori ichishni qo'ng'iroq qilib eslat" stays a reminder.
+      const bare = uzStrict ? null : new RegExp(`^(\\p{Lu}\\S*)\\s+()${UZ_CALL}\\s+qil(?:ib|ing)?(?![\\p{L}'])[:,]?\\s*(.*)$`, 'u').exec(body);
+      const uz = uzStrict ?? bare;
       const en = /^(?:please\s+)?call\s+(?!me\b|qil)(\S+)(?:\s+(.*))?$/i.exec(body);
       const NOT_NAMES = /^(?:men|me|sen|sizga?|menga|senga|unga|bizga|ularga|ertaga|bugun|indinga|kecha|hozir|kimga|nimaga|bunga|shunga)$/i;
       const who = uz ? body.split(/\s+/)[0]! : en ? en[1]! : '';

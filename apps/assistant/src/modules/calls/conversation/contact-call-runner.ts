@@ -82,6 +82,7 @@ export function buildContactCallInstructions(a: ContactCallInstructionsInput): s
       : '',
     "Sen FAQAT yuqoridagi topshiriq doirasida gapirasan. Egasining boshqa ma'lumotlarini (vazifalari, kontaktlari, rejalari, joylashuvi) aytma. Suhbatdosh so'rasa: \"Bu haqda ma'lumot bera olmayman\".",
     'HECH QACHON qilma:\n' + a.forbidden.map((f) => `- ${clean(f)}`).join('\n'),
+    "Topshiriq so'rov yoki muzokara bo'lsa (masalan qarz, yordam, xizmat): maqsadni aniq va xushmuomala tushuntir, egasining topshiriqdagi shartlarini (summa, muddat va h.k.) ayt, suhbatdosh shartlarini va evaziga nima xohlashini ANIQ so'rab, aytilganini aynan yozib ol. Rad etsa sababini so'ra, bosim o'tkazma. Egasi topshiriqda aytmagan majburiyatni (boshqa summa, muddat, xizmat, to'lov) o'zingdan qabul qilma va va'da berma — uni egasiga yetkazishni ayt.",
     'Suhbatdosh boshqa yangi kelishuv yoki qaror so\'rasa: "Buni egasiga yetkazaman" de, o\'zing qaror qilma.',
     "Suhbat oxirida: egasiga nima yetkazganingni va suhbatdosh nima degani (yoki degani yo'qligini) submit_report bilan halol yoz, so'ng xayrlashib end_call chaqir.",
   ]
