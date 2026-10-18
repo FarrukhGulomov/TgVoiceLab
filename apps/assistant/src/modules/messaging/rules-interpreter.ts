@@ -94,7 +94,7 @@ const clean = (s: string) =>
  * guesses an action. Russian is not covered by the rules adapter (returns unknown); use an LLM adapter for broader input.
  */
 // Spoken/typed variants of "qo'ng'iroq" the owner actually writes (qungiroq, qongiroq, qungriqo, ...), plus "ovozli call(da)".
-const UZ_CALL = "(?:qo'?ng'?iroq|qo'?ng'?roq|qu?ng'?iroq|qong'?iroq|qung'?riqo|zvonok)";
+const UZ_CALL = "(?:qo'?ng'?iroq|qo'?ng'?roq|qu?ng'?iroq|qong'?iroq|qung'?riqo|zvonok|telefon|tel)";
 const BY_CALL_SRC = `\\b${UZ_CALL}\\s*(?:qilib|qiling|qil|bilan|orqali)(?![\\p{L}'])|\\bovozli\\s+(?:call|${UZ_CALL})\\w*|\\bcall\\s+qil(?:ib|ing)?(?![\\p{L}'])|telefon\\s+qilib|\\b(?:call|phone|ring)\\s+me\\b|\\bby\\s+(?:call|phone)\\b`;
 const BY_CALL = new RegExp(BY_CALL_SRC, 'u');
 const BY_CALL_G = new RegExp(BY_CALL_SRC, 'giu');
@@ -185,7 +185,7 @@ export class RulesInterpreter implements TextInterpreterPort {
       const w0 = extractWhen(head, ctx);
       const body = meetingTalk ? `${w0.rest} ${tail}`.trim() : w0.rest;
       const uzStrict = new RegExp(
-        `^(\\S+?)(?:\\s+degan\\s+kontakt\\w*|\\s*(?:ga|ka|qa))\\s+(.*?)${UZ_CALL}\\s+qil(?:ib|ing)?(?![\\p{L}'])[:,]?\\s*(.*)$`,
+        `^(\\S+?)(?:\\s+(?:degan\\s+)?kontakt\\w*|\\s*(?:ga|ka|qa))\\s+(.*?)${UZ_CALL}\\s+qil(?:ib|ing)?(?![\\p{L}'])[:,]?\\s*(.*)$`,
         'iu',
       ).exec(body);
       // "Test2 qo'ng'iroq qilib ..." (dative suffix left off): accepted only for a capitalised first word, so lowercase text like

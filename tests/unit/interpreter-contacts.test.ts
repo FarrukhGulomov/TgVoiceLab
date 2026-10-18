@@ -51,6 +51,10 @@ describe('call a contact', () => {
     expect(await run("Test2 ga qo'ng'iroq qilib 100 000 $ qarz berishlarini so'ra")).toMatchObject({ kind: 'call_contact', contact: 'Test2' });
     expect(await run("Test2 qo'ng'iroq qilib bir million so'm qarz so'rab ber")).toMatchObject({ kind: 'call_contact', contact: 'Test2' });
   });
+  it('"X kontaktga tel qil ..." and "X ga telefon qilib ..." name the contact', async () => {
+    expect(await run("Javohir kontaktga tel qil, uchrashuvga kelishini so'ra")).toMatchObject({ kind: 'call_contact', contact: 'Javohir' });
+    expect(await run("Javohirga telefon qilib uchrashuv haqida so'ra")).toMatchObject({ kind: 'call_contact', contact: 'Javohirga' });
+  });
   it('a pronoun or date word is never taken for the contact', async () => {
     expect((await run("menga qo'ng'iroq qilib hisobotni ayt")).kind).not.toBe('call_contact');
   });
