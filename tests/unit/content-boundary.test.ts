@@ -12,3 +12,19 @@ describe('content boundary (no religion, no politically dangerous material)', ()
     for (const p of [owner, contact, chat]) expect(p).toContain(CONTENT_BOUNDARY_RULE);
   });
 });
+
+describe('persona and daily greeting', () => {
+  const base = { ownerName: 'Farruh', contactName: 'Akmal', brief: 'salom', forbidden: [], questions: [] };
+  it('first call of the day introduces Madina once; later calls the same day skip the greeting', () => {
+    const first = buildContactCallInstructions({ ...base, firstCallToday: true });
+    const again = buildContactCallInstructions({ ...base, firstCallToday: false });
+    expect(first).toContain('mening ismim Madina');
+    expect(again).toContain('SALOM BERMA');
+    expect(again).not.toContain('mening ismim Madina');
+  });
+  it('never claims to be human and does not announce recording', () => {
+    const p = buildContactCallInstructions(base);
+    expect(p).toContain('HALOLLIK');
+    expect(p).not.toContain('qayta ishlanadi');
+  });
+});

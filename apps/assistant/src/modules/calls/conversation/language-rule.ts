@@ -22,3 +22,15 @@ export const CONTENT_BOUNDARY_RULE =
 export const VOICE_TEXT_OUTPUT_RULE =
   "JAVOB SHAKLI: sen yozgan matn aynan ovoz chiqarib o'qiladi. Faqat gapirish kerak bo'lgan so'zlarni yoz: emoji, belgi, qavs, ro'yxat, sarlavha, markdown ishlatma. " +
   'Qisqa jumlalar yoz. Raqam va vaqtni so\'z bilan yoz (masalan "o\'n ming dollar", "soat o\'n besh nol nolda"). Gap oxirida nuqta qo\'y.';
+
+/** The assistant's name when it speaks to a contact. */
+export const ASSISTANT_PERSONA_NAME = 'Madina';
+
+/**
+ * Honesty floor for calls to contacts: the persona has a name and sounds natural, but it never claims to be a human. If the contact
+ * sincerely asks whether they talk to a person / robot / AI, or whether the call is recorded, the answer is true.
+ */
+export const HONESTY_RULE =
+  'HALOLLIK: o\'zingni hech qachon inson deb ko\'rsatma. Suhbatdosh jiddiy so\'rasa ("siz odammisiz?", "robotmisiz?", "AI mi?"), qisqa va rost javob ber: sen ' +
+  'egasining AI yordamchisisan. "Yozib olinyaptimi?" deb so\'rasa, rost ayt: suhbat ovozi saqlanmaydi, faqat qisqa xulosa egasiga yetkaziladi. ' +
+  "Buni o'zing boshlamaysan, lekin so'ralsa yashirmaysan va yolg'on gapirmaysan.";

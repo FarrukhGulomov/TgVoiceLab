@@ -137,7 +137,8 @@ describe('OwnerCallRunner', () => {
       'recall',
       'end_call',
     ]);
-    expect(link.greeting).toContain('Brifingni boshla');
+    await until(() => !!link.greeting);
+    expect(link.greeting).toContain("Vazifalarni qisqa o'qib ber");
     // the model completes a task by voice: committed, then confirmed
     link.toolCb!({ id: 'a', name: 'complete_task', args: { number: 1 } });
     await until(() => link.results.length > 0);
@@ -166,7 +167,8 @@ describe('OwnerCallRunner', () => {
     const { link, instructions } = s.links[0]!;
     expect(instructions).toContain('«Dori ichish»');
     expect(instructions).toContain("MA'LUMOT");
-    expect(link.greeting).toContain('eslatmani ayt');
+    await until(() => !!link.greeting);
+    expect(link.greeting).toContain('Eslatmani ayt');
     link.toolCb!({ id: 'r', name: 'create_reminder', args: { text: 'Uchrashuv', date: '2026-10-16', time: '16:00', by_call: true } });
     for (let i = 0; i < 50 && link.results.length === 0; i++) await tick();
     expect(link.results[0]!.result).toMatchObject({ ok: true, delivery: 'message_until_calls_enabled' });

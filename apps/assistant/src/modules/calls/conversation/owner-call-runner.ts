@@ -1,4 +1,5 @@
 import type { RecallService } from '../../memory/recall.js';
+import { answeredEarlierToday } from './daily.js';
 import { OWNER_REQUESTED_CALL } from '../../../application/intent.js';
 import type { CallEndReason } from '@tgvl/contracts';
 import type { Db } from '../../../infrastructure/db/db.js';
@@ -28,10 +29,13 @@ export interface OwnerCallRunnerDeps {
   log?: ((line: string) => void) | undefined;
 }
 
-const GREETING_BRIEFING = "Qo'ng'iroqqa hozir javob berildi. Brifingni boshla: o'zingni tanishtir va vazifalarni qisqa o'qib ber.";
-const GREETING_ASKED =
-  "Qo'ng'iroqqa hozir javob berildi. Egasining o'zi qo'ng'iroq so'ragan. Qisqa salom ber, AI yordamchi ekaningni ayt va 'Eshitaman, nima yordam kerak?' de. Eslatma haqida gapirma.";
-const GREETING_REMINDER = "Qo'ng'iroqqa hozir javob berildi. O'zingni AI yordamchi deb tanishtir va eslatmani ayt.";
+const NO_SELF_INTRO = "O'zingni tanishtirma (egasi seni biladi), 'men sizning yordamchingizman' dema.";
+const greet = (first: boolean): string =>
+  (first ? "Qisqa salom ber (bitta jumla), keyin darrov maqsadga o't. " : "Bugun allaqachon gaplashgansiz: SALOM BERMA, darrov maqsadga o't. ") + NO_SELF_INTRO;
+const GREETING_BRIEFING = (first: boolean): string => `Qo'ng'iroqqa hozir javob berildi. ${greet(first)} Vazifalarni qisqa o'qib ber.`;
+const GREETING_ASKED = (first: boolean): string =>
+  `Qo'ng'iroqqa hozir javob berildi. Egasining o'zi qo'ng'iroq so'ragan. ${greet(first)} 'Eshitaman, nima yordam kerak?' de. Eslatma haqida gapirma.`;
+const GREETING_REMINDER = (first: boolean): string => `Qo'ng'iroqqa hozir javob berildi. ${greet(first)} Eslatmani ayt.`;
 
 /**
  * The conversation layer for calls TO THE OWNER: an AI voice session with the owner's task tools. Contact calls get no conversation
@@ -77,7 +81,8 @@ export class OwnerCallRunner implements CallSessionRunner {
     const link = this.d.makeLink({ instructions, tools: OWNER_CALL_TOOL_DECLARATIONS });
     const bridge = new RealtimeCallBridge(handle, link, { ...(this.d.log ? { log: this.d.log } : {}), onTool: (c) => tools.execute(c) });
     const started = Date.now();
-    bridge.start(asked ? GREETING_ASKED : reminder ? GREETING_REMINDER : GREETING_BRIEFING);
+    const first = !(await answeredEarlierToday(db, ownerId, plan.recipientTelegramId, ctx.callId, owner.timezone, this.d.clock.now()));
+    bridge.start(asked ? GREETING_ASKED(first) : reminder ? GREETING_REMINDER(first) : GREETING_BRIEFING(first));
 
     let timer: NodeJS.Timeout | undefined;
     const limit = new Promise<'limit'>((r) => (timer = setTimeout(() => r('limit'), plan.maxDurationSeconds * 1000)));
