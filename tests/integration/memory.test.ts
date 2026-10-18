@@ -80,7 +80,7 @@ describe('owner memory (chat)', () => {
     await s.app.close();
   });
 
-  it("what is remembered reaches the free-form model, and a contact's notes only when that contact is named", async () => {
+  it("what is remembered reaches the free-form model; a named contact's notes rank first and other contacts' notes are found by topic", async () => {
     const s = setup(async () => ({ kind: 'unknown' }));
     await s.say("kontakt qo'sh Javlon 555000111");
     await s.say("kontakt qo'sh Akmal 555000222");
@@ -95,7 +95,8 @@ describe('owner memory (chat)', () => {
     const m = s.seen.at(-1)!.background!.memories!;
     expect(m.join(' | ')).toContain('Farruh anor');
     expect(m.join(' | ')).toContain('Javlon: Javlon 3 million');
-    expect(m.join(' | ')).not.toContain('mashina'); // Akmal was not mentioned
+    await s.say('mashina haqida nimadir tushunarsiz gap');
+    expect(s.seen.at(-1)!.background!.memories![0]).toContain('Akmal'); // found by topic, no contact named
     await s.app.close();
   });
 

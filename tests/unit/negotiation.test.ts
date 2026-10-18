@@ -34,3 +34,11 @@ describe('owner price limits', () => {
     expect(checkOffer([{ kind: 'max', amount: 300, currency: 'USD' }], 350, 'USD')).toMatchObject({ acceptable: false, reason: 'above_ceiling' });
   });
 });
+
+import { relevance } from '../../apps/assistant/src/modules/messaging/intake.service.js';
+describe('relevance', () => {
+  it('matches the topic word through Uzbek suffixes', () => {
+    expect(relevance('Javlon Onix uchun 5000 USD taklif qildi', 'Onixni qancha baholadi?')).toBeGreaterThan(0);
+    expect(relevance('Ertaga 15:00 uchrashuv', 'Onixni qancha baholadi?')).toBe(0);
+  });
+});

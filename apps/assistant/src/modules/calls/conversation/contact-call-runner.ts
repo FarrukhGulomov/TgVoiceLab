@@ -258,6 +258,13 @@ export class ContactCallRunner implements CallSessionRunner {
     const usageMicroUsd = this.d.costUsdPerMinute ? Math.round((seconds / 60) * this.d.costUsdPerMinute * 1_000_000) : undefined;
     // What the system really did is appended from committed state, never from the model's say-so.
     // What was learnt in the call is kept in the owner's memory about THIS contact (encrypted, listable and deletable by the owner).
+    if (this.d.memory && report) {
+      // The conversation itself is kept too: what the contact said (prices, conditions) must stay answerable, whether or not the model listed notes.
+      const when = DateTime.fromJSDate(memNow, { zone: tz }).toFormat('yyyy-LL-dd HH:mm');
+      const facts = [proposal && `Taklif: ${proposal}.`, deal && `Oldindan kelishildi: ${deal.amount} ${deal.currency}.`].filter(Boolean).join(' ');
+      const gist = `${when} (${report.outcome}) ${facts} ${report.summary}`.replace(/\s+/g, ' ');
+      notes = [gist.slice(0, 400), ...notes];
+    }
     if (this.d.memory && report && notes.length) {
       for (const n of notes)
         await this.d.memory.remember(db, ownerId, contactScope(row.id), n, { source: 'call_report', callId }, this.d.clock?.now() ?? new Date(), {

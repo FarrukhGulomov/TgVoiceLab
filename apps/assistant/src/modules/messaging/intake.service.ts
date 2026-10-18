@@ -57,6 +57,15 @@ export type IntakeResult =
   | { status: 'handled'; intent: Intent['kind'] | 'voice_rejected' | 'forwarded_ignored' | 'voice_uncertain' | 'contact_relayed' };
 
 /** Replies relayed per contact per hour; more are dropped (a contact cannot flood the owner). */
+/** How many of the question's words (compared by their first letters, so "Onixni" meets "Onix") occur in a stored text. */
+export function relevance(stored: string, question: string): number {
+  const stems = (x: string) => new Set((x.toLowerCase().match(/[\p{L}\p{N}']{4,}/gu) ?? []).map((w) => w.replace(/'/g, '').slice(0, 4)));
+  const have = stems(stored);
+  let n = 0;
+  for (const w of stems(question)) if (have.has(w)) n++;
+  return n;
+}
+
 const RELAY_PER_HOUR = 20;
 
 const SUPPORTED_VOICE_MIME = /^audio\/(?:ogg|opus|mpeg|mp3|mp4|x-m4a|aac|wav|x-wav|webm)(?:\s*;.*)?$/i;
@@ -387,9 +396,16 @@ export class IntakeService {
       const low = text.toLowerCase();
       const all = this.d.contacts ? await this.d.contacts.list(this.d.db, ownerId) : [];
       const named = all.filter((x) => low.includes(x.displayName.toLowerCase()) || (r && r.display_name === x.displayName));
-      const scopes = [OWNER_SCOPE, ...named.map((x) => contactScope(x.id))];
       const names = new Map(all.map((x) => [contactScope(x.id), x.displayName]));
-      memories = (await this.d.memory.list(this.d.db, ownerId, scopes, 20, now)).map((m) => (names.has(m.scope) ? `${names.get(m.scope)}: ${m.text}` : m.text));
+      // Every contact's notes are searchable, so "Onixni qancha baholadi?" finds what Test2 said even if the question names nobody.
+      const scopes = [OWNER_SCOPE, ...all.map((x) => contactScope(x.id))];
+      const namedScopes = new Set(named.map((x) => contactScope(x.id)));
+      const items = await this.d.memory.list(this.d.db, ownerId, scopes, 80, now);
+      const ranked = items
+        .map((m, i) => ({ m, i, score: relevance(m.text, text) + (namedScopes.has(m.scope) ? 2 : 0) + (m.scope === OWNER_SCOPE ? 0.5 : 0) }))
+        .sort((x, y) => y.score - x.score || x.i - y.i)
+        .slice(0, 25);
+      memories = ranked.map(({ m }) => (names.has(m.scope) ? `${names.get(m.scope)}: ${m.text}` : m.text));
     }
     // Read-only snapshot so the model can answer questions about the owner's own tasks, reminders and calls.
     const tasks = this.d.tasks
@@ -406,19 +422,26 @@ export class IntakeService {
           x.next_occurrence_at ? ` (${DateTime.fromJSDate(x.next_occurrence_at, { zone: x.timezone }).toFormat('yyyy-LL-dd HH:mm')})` : ''
         }`,
     );
-    const calls = (
+    // Call history (30 days): the reports that match the question (by contact name or topic words) come first and are given in full.
+    const callRows = (
       await this.d.db.query<{ narrative_enc: string | null; display_name: string; outcome: string; created_at: Date }>(
         `SELECT rp.narrative_enc, c.display_name, rp.structured_result->>'outcome' AS outcome, rp.created_at
            FROM call_reports rp JOIN calls k ON k.id=rp.call_id JOIN call_requests q ON q.id=k.call_request_id JOIN contacts c ON c.id=q.contact_id
-          WHERE rp.owner_id=$1 AND rp.complete AND rp.created_at > $2 ORDER BY rp.created_at DESC LIMIT 6`,
-        [ownerId, new Date(this.d.clock.now().getTime() - 7 * 86_400_000)],
+          WHERE rp.owner_id=$1 AND rp.complete AND rp.created_at > $2 ORDER BY rp.created_at DESC LIMIT 40`,
+        [ownerId, new Date(this.d.clock.now().getTime() - 30 * 86_400_000)],
       )
-    ).rows.map(
-      (x) =>
-        `${x.display_name} (${x.outcome}, ${x.created_at.toISOString().slice(0, 16)}Z): ${
-          x.narrative_enc ? this.d.crypto.dec(ownerId, 'call_reports.narrative', x.narrative_enc).replace(/\s+/g, ' ').slice(0, 300) : ''
-        }`,
-    );
+    ).rows.map((x, i) => {
+      const body = x.narrative_enc ? this.d.crypto.dec(ownerId, 'call_reports.narrative', x.narrative_enc).replace(/\s+/g, ' ') : '';
+      const named = text.toLowerCase().includes(x.display_name.toLowerCase());
+      return { x, i, body, score: relevance(body, text) + (named ? 3 : 0) };
+    });
+    const calls = callRows
+      .sort((a, b) => b.score - a.score || a.i - b.i)
+      .slice(0, 12)
+      .map(
+        ({ x, body, score }, k) =>
+          `${x.display_name} (${x.outcome}, ${x.created_at.toISOString().slice(0, 16)}Z): ${body.slice(0, score > 0 || k < 3 ? 1200 : 300)}`,
+      );
     return {
       contacts,
       ...(tasks.length ? { tasks } : {}),

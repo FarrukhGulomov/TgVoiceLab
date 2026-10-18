@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CallHandle, PcmFrame } from '@tgvl/contracts';
 import { createTestDb, type TestDb } from '../support/test-db.js';
 import { seedOwner, type SeededOwner } from '../support/seed.js';
-import { boot } from '../support/harness.js';
+import { boot, TEST_KEYRING } from '../support/harness.js';
+import { MemoryService } from '../../apps/assistant/src/modules/memory/memory.service.js';
+import { DataCrypto } from '../../apps/assistant/src/infrastructure/crypto/data-crypto.js';
+import { Envelope, parseKeyRing } from '../../apps/assistant/src/infrastructure/crypto/envelope.js';
 import { FakeClock } from '../../apps/assistant/src/application/clock.js';
 import { FakeCallAdapter, FakeMessaging } from '../../apps/assistant/src/testing/fakes.js';
 import type { DerivedCapabilities } from '../../apps/assistant/src/modules/calls/capability-evidence.js';
@@ -104,9 +107,12 @@ async function setup() {
         }),
     },
   });
+  const memory = new MemoryService(new DataCrypto(new Envelope(parseKeyRing(TEST_KEYRING))));
   ref.inner = new ContactCallRunner({
     db: app.db,
     tasks: app.tasks,
+    memory,
+    clock,
     makeLink: ({ instructions, tools }) => {
       const link = new FakeLink();
       links.push({ link, instructions, tools });
@@ -129,7 +135,7 @@ async function setup() {
     await app.intake.handle(msg);
   };
   const texts = () => app.messaging.sent.map((m) => m.text);
-  return { app, clock, adapter, links, say, texts };
+  return { app, clock, adapter, links, say, texts, memory };
 }
 
 describe('calls to owner-vouched contacts', () => {
@@ -327,6 +333,26 @@ describe('price negotiation with an owner limit', () => {
     const report = await finish(s, link, dialing);
     expect(report).toContain('11 000 USD');
     expect(report).toContain('Yakuniy qaror sizda');
+    await s.app.close();
+  });
+});
+
+describe('what was said in calls stays answerable', () => {
+  it('the call is kept in the contact memory and in the model context, found by topic without naming the contact', async () => {
+    const s = await setup();
+    await s.say("kontakt qo'sh Javlon 555000111");
+    await s.say("Javlonga qo'ng'iroq qilib Farruxning Onix mashinasini sot, avval uning narxini kut, 10000 usd dan past sotma");
+    const dialing = s.app.tick();
+    for (let i = 0; i < 100 && s.links.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    const { link } = s.links[0]!;
+    link.toolCb!({
+      id: 'r',
+      name: 'submit_report',
+      args: { outcome: 'no_agreement', summary: 'Javlon Onix uchun 5000 USD berishini aytdi.', contact_proposal: '5000 USD' },
+    });
+    await finish(s, link, dialing);
+    const listed = await s.memory.listAll(s.app.db, o.ownerId, 30, s.clock.now());
+    expect(listed.map((m) => m.text).join('\n')).toContain('5000 USD');
     await s.app.close();
   });
 });
