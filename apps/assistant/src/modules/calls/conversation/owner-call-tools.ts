@@ -1,3 +1,4 @@
+import type { PriceLimit } from '../negotiation.js';
 import { DateTime } from 'luxon';
 import { VOICE_LANGUAGE_RULE } from './language-rule.js';
 import type { Db } from '../../../infrastructure/db/db.js';
@@ -76,6 +77,10 @@ export const OWNER_CALL_TOOL_DECLARATIONS: ToolDeclaration[] = [
         message: { type: 'string' },
         date: { type: 'string' },
         time: { type: 'string' },
+        min_price: { type: 'number', description: "Egasi sotayotgan bo'lsa: shundan PAST narxga rozi bo'lmaslik chegarasi (raqam, masalan 10000)" },
+        max_price: { type: 'number', description: "Egasi sotib olayotgan bo'lsa: shundan YUQORI narxga rozi bo'lmaslik chegarasi" },
+        currency: { type: 'string', description: 'min_price/max_price valyutasi: USD, UZS, EUR yoki RUB (aqsh dollari = USD)' },
+        opening_price: { type: 'number', description: "Egasi aytgan boshlang'ich narx (muzokara shundan boshlanadi)" },
         meeting_slots: {
           type: 'array',
           description: "Uchrashuv taklif qilinsa: egasi aytgan aniq vaqtlar (AI faqat shulardan biriga rozi bo'la oladi)",
@@ -232,14 +237,23 @@ export class OwnerCallTools {
             if (!d) throw new ValidationError('each meeting slot needs a date');
             return d.utc;
           });
+          const cur = String(call.args.currency ?? '').toUpperCase();
+          const currency = (['USD', 'UZS', 'EUR', 'RUB'] as const).find((x) => x === cur);
+          const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : undefined);
+          const lim: PriceLimit[] = [];
+          if (currency && num(call.args.min_price)) lim.push({ kind: 'min', amount: num(call.args.min_price)!, currency });
+          if (currency && num(call.args.max_price)) lim.push({ kind: 'max', amount: num(call.args.max_price)!, currency });
+          const opening = num(call.args.opening_price);
+          const fullMessage = opening && currency ? `${message} Boshlang'ich narx: ${opening} ${currency}.` : message;
           const out = await this.d.db.tx(async (c) => {
             const r = await contacts.resolveByName(c, this.d.ownerId, name);
             if (r.kind === 'none') return { ok: false as const, error: `'${name}' nomli kontakt yo'q` };
             if (r.kind === 'many') return { ok: false as const, error: `bir nechta mos kontakt: ${r.names.join(', ')}; qaysi biri?` };
             const res = await contactCalls.request(c, this.d.ownerId, {
               contactId: r.contact.id,
-              message,
+              message: fullMessage,
               dueAt: due?.utc,
+              ...(lim.length ? { limits: lim } : {}),
               language: 'uz',
               ...(slots.length ? { slots } : {}),
             });

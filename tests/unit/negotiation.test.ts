@@ -42,3 +42,14 @@ describe('relevance', () => {
     expect(relevance('Ertaga 15:00 uchrashuv', 'Onixni qancha baholadi?')).toBe(0);
   });
 });
+
+describe('spoken amounts', () => {
+  it.each([
+    ["Mashinani 10 ming AQSh dollaridan kamiga sotma, boshlang'ich narx 12 ming", { kind: 'min', amount: 10000, currency: 'USD' }],
+    ["Onixni o'n ming dollardan past sotma", { kind: 'min', amount: 10000, currency: 'USD' }],
+    ["o'n ikki ming aqsh dollaridan arzon sotma", { kind: 'min', amount: 12000, currency: 'USD' }],
+    ["ellik million so'mdan kam sotma", { kind: 'min', amount: 50_000_000, currency: 'UZS' }],
+  ])('%s', (text, want) => {
+    expect(extractPriceLimits(text)).toEqual([want]);
+  });
+});

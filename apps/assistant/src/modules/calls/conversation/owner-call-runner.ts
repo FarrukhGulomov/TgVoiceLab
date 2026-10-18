@@ -1,3 +1,4 @@
+import { OWNER_REQUESTED_CALL } from '../../../application/intent.js';
 import type { CallEndReason } from '@tgvl/contracts';
 import type { Db } from '../../../infrastructure/db/db.js';
 import type { Clock } from '../../../application/clock.js';
@@ -26,6 +27,8 @@ export interface OwnerCallRunnerDeps {
 }
 
 const GREETING_BRIEFING = "Qo'ng'iroqqa hozir javob berildi. Brifingni boshla: o'zingni tanishtir va vazifalarni qisqa o'qib ber.";
+const GREETING_ASKED =
+  "Qo'ng'iroqqa hozir javob berildi. Egasining o'zi qo'ng'iroq so'ragan. Qisqa salom ber, AI yordamchi ekaningni ayt va 'Eshitaman, nima yordam kerak?' de. Eslatma haqida gapirma.";
 const GREETING_REMINDER = "Qo'ng'iroqqa hozir javob berildi. O'zingni AI yordamchi deb tanishtir va eslatmani ayt.";
 
 /**
@@ -58,7 +61,8 @@ export class OwnerCallRunner implements CallSessionRunner {
       onEndCall: () => endRequested(),
     });
     await tools.load();
-    const reminder = plan.topic === 'reminder' ? (plan.allowedContext[0] ?? undefined) : undefined;
+    const asked = plan.topic === 'reminder' && plan.allowedContext[0] === OWNER_REQUESTED_CALL;
+    const reminder = plan.topic === 'reminder' && !asked ? (plan.allowedContext[0] ?? undefined) : undefined;
     const instructions = buildOwnerCallInstructions({
       now: this.d.clock.now(),
       timezone: owner.timezone,
@@ -68,7 +72,7 @@ export class OwnerCallRunner implements CallSessionRunner {
     const link = this.d.makeLink({ instructions, tools: OWNER_CALL_TOOL_DECLARATIONS });
     const bridge = new RealtimeCallBridge(handle, link, { ...(this.d.log ? { log: this.d.log } : {}), onTool: (c) => tools.execute(c) });
     const started = Date.now();
-    bridge.start(reminder ? GREETING_REMINDER : GREETING_BRIEFING);
+    bridge.start(asked ? GREETING_ASKED : reminder ? GREETING_REMINDER : GREETING_BRIEFING);
 
     let timer: NodeJS.Timeout | undefined;
     const limit = new Promise<'limit'>((r) => (timer = setTimeout(() => r('limit'), plan.maxDurationSeconds * 1000)));

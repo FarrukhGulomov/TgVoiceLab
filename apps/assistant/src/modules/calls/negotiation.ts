@@ -16,7 +16,8 @@ export const LIMIT_PREFIX = 'limit:';
 const CUR = String.raw`(\$|usd|dollar\w*|доллар\w*|so'?m|sum|uzs|сум\w*|eur|euro|yevro|€|евро|rub|₽|rubl\w*|руб\w*)`;
 const MULT = String.raw`(?:\s*(mln|million\w*|миллион\w*|ming|k|тыс\w*|т\.?)(?![\p{L}]))?`;
 const NUM = String.raw`(\d{1,3}(?:[ .,']\d{3})+|\d+(?:[.,]\d+)?)`;
-const AMOUNT = new RegExp(String.raw`(?:${CUR}\s*${NUM}${MULT}|${NUM}${MULT}\s*${CUR})`, 'iu');
+const FILL = String.raw`(?:(?:aqsh|as?h|amerika\w*|us|american)\s+)?`;
+const AMOUNT = new RegExp(String.raw`(?:${CUR}\s*${NUM}${MULT}|${NUM}${MULT}\s*${FILL}${CUR})`, 'iu');
 // Words that say "not below" (sell floor) and "not above" (buy ceiling), anywhere after the amount.
 const FLOOR =
   /(?<![\p{L}])(?:past|kam|arzon|kamiga|ostida|dan\s+past|below|under|less|lower|cheaper|ниже|дешевле|меньше)(?![\p{L}])|(?<![\p{L}])(?:dan\s+)?(?:kam|past|arzon)\w*|(?<![\p{L}])minimum(?![\p{L}])|(?<![\p{L}])at\s+least(?![\p{L}])|(?<![\p{L}])no\s+less(?![\p{L}])|(?<![\p{L}])не\s+ниже(?![\p{L}])|(?<![\p{L}])камида(?![\p{L}])/iu;
@@ -46,10 +47,55 @@ export function parseAmount(num: string, mult: string | undefined): number | und
   return Math.round(n);
 }
 
+const UNITS: Record<string, number> = { bir: 1, ikki: 2, uch: 3, "to'rt": 4, besh: 5, olti: 6, yetti: 7, sakkiz: 8, "to'qqiz": 9 };
+const TENS: Record<string, number> = { "o'n": 10, yigirma: 20, "o'ttiz": 30, qirq: 40, ellik: 50, oltmish: 60, yetmish: 70, sakson: 80, "to'qson": 90 };
+
+/** "o'n ikki ming dollar" -> "12000 dollar": amounts spoken in Uzbek words (the owner often says them in a voice call). */
+export function uzNumberWordsToDigits(text: string): string {
+  const parts = text.replace(/[ʻʼ‘’`´]/g, "'").split(/(\s+)/);
+  const out: string[] = [];
+  let i = 0;
+  const isNum = (w: string) => w in UNITS || w in TENS || w === 'yuz' || w === 'ming' || w === 'million' || w === 'mln';
+  while (i < parts.length) {
+    const w = (parts[i] ?? '').toLowerCase();
+    // A run starts at a unit/ten/"yuz": a bare "ming"/"mln" after digits ("10 ming", "50 mln") is left for the digit parser.
+    if (!(w in UNITS || w in TENS || w === 'yuz')) {
+      out.push(parts[i] ?? '');
+      i++;
+      continue;
+    }
+    let total = 0;
+    let cur = 0;
+    let j = i;
+    while (j < parts.length) {
+      const x = (parts[j] ?? '').toLowerCase();
+      if (/^\s+$/.test(x)) {
+        j++;
+        continue;
+      }
+      if (!isNum(x)) break;
+      if (x in UNITS) cur += UNITS[x]!;
+      else if (x in TENS) cur += TENS[x]!;
+      else if (x === 'yuz') cur = (cur || 1) * 100;
+      else if (x === 'ming') {
+        total += (cur || 1) * 1000;
+        cur = 0;
+      } else {
+        total += (cur || 1) * 1_000_000;
+        cur = 0;
+      }
+      j++;
+    }
+    out.push(String(total + cur), ' ');
+    i = j;
+  }
+  return out.join('');
+}
+
 /** Finds the price limits the owner stated in a task ("Onix ni sot, lekin 10000 usd dan past sotma"). Returns [] when none is clear. */
 export function extractPriceLimits(text: string): PriceLimit[] {
   const out: PriceLimit[] = [];
-  const clauses = text
+  const clauses = uzNumberWordsToDigits(text)
     .replace(/[«»]/g, ' ')
     .split(/[.;!?\n]|,\s+(?=lekin|ammo|but|но)|\s(?:lekin|ammo|but|но)\s/iu)
     .filter(Boolean);

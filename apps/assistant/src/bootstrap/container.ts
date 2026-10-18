@@ -150,7 +150,7 @@ export function buildContainer(d: ContainerDeps) {
             allowedContext: [title.slice(0, 500)],
             forbiddenCommitments: [],
             language: o.locale,
-            maxDurationSeconds: 120,
+            maxDurationSeconds: 300,
             expiresAt: new Date(now.getTime() + 10 * 60_000).toISOString(),
           },
           { ownerExplicitCommand: true },

@@ -3,7 +3,7 @@ import type pg from 'pg';
 import type { Clock } from '../../application/clock.js';
 import { enqueueJob } from '../jobs/jobs.js';
 import type { AuthorizationService } from './authorizations.service.js';
-import { encodeLimit, extractPriceLimits } from './negotiation.js';
+import { encodeLimit, extractPriceLimits, type PriceLimit } from './negotiation.js';
 
 /** Things the AI may never do on a contact call, whatever the contact asks. Part of the plan the owner approved. */
 export const DEFAULT_FORBIDDEN_COMMITMENTS = [
@@ -12,6 +12,12 @@ export const DEFAULT_FORBIDDEN_COMMITMENTS = [
   "egasi nomidan qaror qabul qilmaslik yoki yangi va'da bermaslik",
   "egasining boshqa shaxsiy ma'lumotlarini, vazifalari yoki kontaktlarini aytmaslik",
 ] as const;
+
+/** Explicit limits win; a text-derived limit is added only for a kind/currency not already set. */
+function mergeLimits(explicit: PriceLimit[], fromText: PriceLimit[]): PriceLimit[] {
+  const seen = new Set(explicit.map((l) => `${l.kind}:${l.currency}`));
+  return [...explicit, ...fromText.filter((l) => !seen.has(`${l.kind}:${l.currency}`))];
+}
 
 export const CONTACT_CALL_MAX_SECONDS = 300;
 /** Entries of a plan's `allowedContext` that carry the owner-approved meeting times (UTC ISO instants). */
@@ -40,6 +46,7 @@ export class ContactCallService {
       dueAt?: Date | undefined;
       language: 'uz' | 'en' | 'ru';
       /** Meeting times the owner offers (the AI may confirm only one of these). */ slots?: Date[];
+      /** Price limits stated as structured values (e.g. by the owner-call tool); merged with those read from the text. */ limits?: PriceLimit[];
     },
   ): Promise<RequestContactCallResult> {
     const message = a.message.trim().slice(0, 1200);
@@ -68,7 +75,7 @@ export class ContactCallService {
         allowedContext: [
           message,
           // The owner's price limits are read from his own words here, in code, and enforced during the call.
-          ...extractPriceLimits(message).map(encodeLimit),
+          ...mergeLimits(a.limits ?? [], extractPriceLimits(message)).map(encodeLimit),
           ...(a.slots ?? [])
             .filter((d) => d.getTime() > now.getTime())
             .slice(0, 5)

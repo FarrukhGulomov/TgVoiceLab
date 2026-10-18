@@ -122,3 +122,6 @@ export interface InterpretContext {
     pending?: string;
   };
 }
+
+/** Title of the call reminder created by "call me now"; the owner call recognises it and just asks how it can help. */
+export const OWNER_REQUESTED_CALL = "Siz so'ragan qo'ng'iroq";

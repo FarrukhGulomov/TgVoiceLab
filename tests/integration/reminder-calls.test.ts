@@ -64,7 +64,7 @@ describe('call-mode reminders', () => {
     expect(raw).not.toContain('Dori ichish');
     // it reached the (fake) adapter through the normal policy path, addressed to the owner only
     expect(s.adapter.dials).toHaveLength(1);
-    expect(s.adapter.dials[0]).toMatchObject({ topic: 'reminder', recipientTelegramId: o.telegramUserId, maxDurationSeconds: 120 });
+    expect(s.adapter.dials[0]).toMatchObject({ topic: 'reminder', recipientTelegramId: o.telegramUserId, maxDurationSeconds: 300 });
     expect((await t.db.query(`SELECT allowed, reason_code FROM audit_events WHERE action='call.dial'`)).rows).toEqual([{ allowed: true, reason_code: 'ok' }]);
     // this harness has no conversation runner, so the call ends at once; the owner is told once, in plain words
     expect(s.texts().filter((x) => x.includes('reminder call to you did not go through'))).toHaveLength(1);

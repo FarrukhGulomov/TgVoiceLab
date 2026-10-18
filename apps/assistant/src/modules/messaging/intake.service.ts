@@ -3,6 +3,7 @@ import type pg from 'pg';
 import type { Db } from '../../infrastructure/db/db.js';
 import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
 import type { Clock } from '../../application/clock.js';
+import { OWNER_REQUESTED_CALL } from '../../application/intent.js';
 import type { ClarificationDraft, Intent, InterpretContext, LocalDateTime, TaskRef } from '../../application/intent.js';
 import type { IntentFallbackPort, PeerResolverPort, TextInterpreterPort, TranscriptionPort } from '../../application/ports.js';
 import { DomainError } from '../../application/errors.js';
@@ -713,7 +714,7 @@ export class IntakeService {
         const at = DateTime.fromJSDate(this.d.clock.now(), { zone: p.timezone }).toFormat("yyyy-LL-dd'T'HH:mm");
         await rem.create(
           p.ownerId,
-          { title: intent.reason ?? "Siz so'ragan qo'ng'iroq", localDateTime: at, mode: 'call', silent: true, fireAt: this.d.clock.now() },
+          { title: intent.reason ?? OWNER_REQUESTED_CALL, localDateTime: at, mode: 'call', silent: true, fireAt: this.d.clock.now() },
           c,
         );
         return t(loc, 'call_owner_ok');

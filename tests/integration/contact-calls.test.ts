@@ -356,3 +356,50 @@ describe('what was said in calls stays answerable', () => {
     await s.app.close();
   });
 });
+
+describe('price limits can not be bypassed', () => {
+  it('without any owner limit a price is never reported as a deal', async () => {
+    const s = await setup();
+    await s.say("kontakt qo'sh Javlon 555000111");
+    await s.say("Javlonga qo'ng'iroq qilib Onix mashinasini sot, avval uning narxini kut");
+    const dialing = s.app.tick();
+    for (let i = 0; i < 100 && s.links.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    const { link } = s.links[0]!;
+    link.toolCb!({ id: 'd', name: 'submit_report', args: { outcome: 'deal_reached', summary: '6000 ga rozi', agreed_amount: 6000, currency: 'USD' } });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(link.results.find((x) => x.id === 'd')!.result).toMatchObject({ ok: false });
+    link.toolCb!({ id: 'c', name: 'submit_report', args: { outcome: 'counter_offer', summary: 'Javlon 6000 USD dedi.', contact_proposal: '6000 USD' } });
+    const report = await finish(s, link, dialing);
+    expect(report).toContain('Hech narsa kelishilmadi');
+    await s.app.close();
+  });
+
+  it('limits given as structured values by the owner call reach the AI, spoken "AQSh dollari" included', async () => {
+    const s = await setup();
+    await s.say("kontakt qo'sh Javlon 555000111");
+    const tools = new OwnerCallTools({
+      db: s.app.db,
+      tasks: s.app.tasks,
+      reminders: s.app.reminders,
+      clock: s.clock,
+      ownerId: o.ownerId,
+      timezone: 'Asia/Samarkand',
+      contacts: s.app.contacts,
+      contactCalls: s.app.contactCalls,
+      onEndCall: () => undefined,
+    });
+    const r = await tools.execute({
+      id: '1',
+      name: 'call_contact',
+      args: { name: 'Javlon', message: 'Onix mashinasini sot', min_price: 10000, currency: 'USD', opening_price: 12000 },
+    });
+    expect(r.result).toMatchObject({ ok: true });
+    const dialing = s.app.tick();
+    for (let i = 0; i < 100 && s.links.length === 0; i++) await new Promise((r2) => setTimeout(r2, 20));
+    expect(s.links[0]!.instructions).toContain('10000 USD');
+    expect(s.links[0]!.instructions).toContain('12000 USD');
+    s.links[0]!.link.toolCb!({ id: 'e', name: 'end_call', args: {} });
+    await dialing;
+    await s.app.close();
+  });
+});
