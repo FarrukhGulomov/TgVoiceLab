@@ -48,7 +48,11 @@ export interface MessageConfirmDraft {
   contact: string;
   text: string;
 }
-export type ClarificationDraft = ReminderDraft | CallConfirmDraft | MessageConfirmDraft;
+/** The owner is asked to confirm that no real call is live before stuck (`outcome_unknown`) calls are cleared. */
+export interface ClearCallsDraft {
+  kind: 'confirm_clear_calls';
+}
+export type ClarificationDraft = ReminderDraft | CallConfirmDraft | MessageConfirmDraft | ClearCallsDraft;
 
 export type Intent =
   | { kind: 'create_task'; title: string; due?: LocalDateTime }
@@ -83,6 +87,8 @@ export type Intent =
   | { kind: 'reply'; text: string }
   /** "Tell me when X replies": by text (the default for every reply anyway) or by ringing the owner once. */
   | { kind: 'watch_contact'; contact: string; mode: 'text' | 'call' }
+  /** Free the calling account from calls whose outcome is unknown, after the owner confirmed there is no live call. */
+  | { kind: 'clear_stuck_calls'; confirmed?: boolean }
   | { kind: 'set_owner_name'; name: string }
   | { kind: 'set_briefing'; time: string } // HH:mm, daily
   | { kind: 'cancel_briefing' }

@@ -87,6 +87,9 @@ export class IntakeService {
         cancelAllCallIntents(q: pg.PoolClient, ownerId: string): Promise<number>;
         terminateAllLiveCalls(ownerId: string): Promise<number>;
         cancelContactCallIntents(q: pg.PoolClient, ownerId: string, contactId: string): Promise<number>;
+        listUnknownCalls?(q: pg.PoolClient | Db, ownerId: string): Promise<string[]>;
+        listOpenCallStates?(q: pg.PoolClient | Db, ownerId: string): Promise<string[]>;
+        resolveAllUnknownCalls?(q: pg.PoolClient, ownerId: string, now: Date): Promise<number>;
         terminateLiveContactCalls(ownerId: string, contactId: string): Promise<number>;
       };
       contacts?: ContactService;
@@ -163,7 +166,18 @@ export class IntakeService {
     const ictx = { receivedAt: m.receivedAt, timezone: p.timezone, locale: p.locale };
     let intent: Intent | null = rejection ? null : await this.d.interpreter.interpret(text, ictx);
     if (!rejection && m.contactCard && !m.forwarded) intent = { kind: 'add_contact', name: m.contactCard.name, telegramUserId: m.contactCard.userId };
-    else if (intent?.kind === 'message_contact') {
+    else if (intent?.kind === 'clear_stuck_calls' && !intent.confirmed) {
+      // Never clears on its own: first say what is stuck and ask whether the real phone shows a live call.
+      const ops = this.d.ownerCalls;
+      const stuck = ops?.listUnknownCalls ? (await ops.listUnknownCalls(db, p.ownerId)).length : 0;
+      const open = ops?.listOpenCallStates ? await ops.listOpenCallStates(db, p.ownerId) : [];
+      intent = stuck
+        ? { kind: 'clarify', question: t(p.locale, 'clear_calls_confirm', { n: stuck }), draft: { kind: 'confirm_clear_calls' } }
+        : {
+            kind: 'clarify',
+            question: open.length ? t(p.locale, 'clear_calls_other', { states: [...new Set(open)].join(', ') }) : t(p.locale, 'clear_calls_none'),
+          };
+    } else if (intent?.kind === 'message_contact') {
       // A text the owner typed for a contact is still shown back and sent only after "ha".
       const m = intent;
       intent = {
@@ -668,6 +682,12 @@ export class IntakeService {
         if (r.kind === 'many') return t(loc, 'contact_ambiguous', { name: intent.contact, names: r.names.join(', ') });
         await watches.set(c, p.ownerId, r.contact.id, intent.mode, this.d.clock.now());
         return t(loc, intent.mode === 'call' ? 'watch_set_call' : 'watch_set_text', { name: r.contact.displayName });
+      }
+      case 'clear_stuck_calls': {
+        const ops = this.d.ownerCalls;
+        if (!intent.confirmed || !ops?.resolveAllUnknownCalls) return t(loc, 'unknown');
+        const n = await ops.resolveAllUnknownCalls(c, p.ownerId, this.d.clock.now());
+        return t(loc, 'clear_calls_done', { n });
       }
       case 'reply':
         return intent.text;

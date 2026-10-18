@@ -98,6 +98,12 @@ const CATALOG = {
     call_retry: 'The connection to {name} did not work. I will call again in a minute (try {n} of {max}).',
     call_fallback_text: 'The call to {name} did not connect after {max} tries, so I sent them this text instead:\n«{text}»',
     call_retries_exhausted_no_text: 'The call to {name} did not connect after {max} tries. Say «message {name}: …» if you want me to send a text.',
+    clear_calls_confirm:
+      '{n} call(s) are stuck in an "unknown outcome" state and block new calls. Look at the assistant account on your phone: is any call ringing or live? If there is none, reply «yes» and I will clear them.',
+    clear_calls_none: 'No stuck calls: the calling account is free.',
+    clear_calls_other:
+      'Nothing is in an unknown state, but a call is still marked as: {states}. It is probably still in progress; give it a minute or say «stop calling me» to end live calls.',
+    clear_calls_done: 'Cleared {n} stuck call(s). New calls can start now.',
     contact_message_queued: 'Sending your message to {name}.',
     contact_message_sent: 'Message to {name} delivered.',
     proposal_cancelled: 'OK, cancelled. Nothing was sent or called.',
@@ -203,6 +209,12 @@ const CATALOG = {
     call_retry: '{name} bilan ulanish bo‘lmadi. Bir daqiqadan keyin qayta qo‘ng‘iroq qilaman ({n}-urinish, jami {max} ta).',
     call_fallback_text: '{name} bilan {max} marta urinishda ham ulanmadi, shuning uchun unga shu matnni yubordim:\n«{text}»',
     call_retries_exhausted_no_text: '{name} bilan {max} marta urinishda ham ulanmadi. Matn yuborishimni xohlasangiz, «{name} ga yoz: …» deb yozing.',
+    clear_calls_confirm:
+      '{n} ta qo‘ng‘iroq «natijasi noma’lum» holatida qotib qolgan va yangi qo‘ng‘iroqlarni to‘sib turibdi. Telefoningizda assistent hisobini ko‘ring: hozir jiringlayotgan yoki davom etayotgan qo‘ng‘iroq bormi? Yo‘q bo‘lsa «ha» deb yozing, men ularni tozalayman.',
+    clear_calls_none: 'Qotib qolgan qo‘ng‘iroq yo‘q: qo‘ng‘iroq hisobi bo‘sh.',
+    clear_calls_other:
+      'Noma’lum holatdagi qo‘ng‘iroq yo‘q, lekin hali ham shu holatdagi qo‘ng‘iroq bor: {states}. Ehtimol u davom etayapti; bir daqiqa kuting yoki «qo‘ng‘iroq qilma» deb jonli qo‘ng‘iroqlarni tugating.',
+    clear_calls_done: '{n} ta qotib qolgan qo‘ng‘iroq tozalandi. Yangi qo‘ng‘iroqlar boshlanishi mumkin.',
     contact_message_queued: '{name} ga xabaringiz yuborilmoqda.',
     contact_message_sent: '{name} ga xabar yetkazildi.',
     proposal_cancelled: 'Xo‘p, bekor qildim. Hech narsa yuborilmadi va qo‘ng‘iroq qilinmadi.',
@@ -306,6 +318,11 @@ const CATALOG = {
     call_retry: 'Связь с {name} не получилась. Перезвоню через минуту (попытка {n} из {max}).',
     call_fallback_text: 'Звонок {name} не соединился за {max} попытки, поэтому я отправил(а) ему(ей) текст:\n«{text}»',
     call_retries_exhausted_no_text: 'Звонок {name} не соединился за {max} попытки. Напишите «напиши {name}: …», и я отправлю текст.',
+    clear_calls_confirm:
+      '{n} звонок(ов) застряли в состоянии «исход неизвестен» и блокируют новые. Посмотрите на телефоне аккаунт ассистента: идёт ли звонок? Если нет, ответьте «да», и я их очищу.',
+    clear_calls_none: 'Застрявших звонков нет: аккаунт свободен.',
+    clear_calls_other: 'Неизвестных исходов нет, но есть звонок в состоянии: {states}. Скорее всего он ещё идёт; подождите минуту или скажите «не звони мне».',
+    clear_calls_done: 'Очищено застрявших звонков: {n}. Новые звонки можно начинать.',
     contact_message_queued: 'Отправляю сообщение {name}.',
     contact_message_sent: 'Сообщение для {name} доставлено.',
     proposal_cancelled: 'Хорошо, отменено. Ничего не отправлено и не звонили.',

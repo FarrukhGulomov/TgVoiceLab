@@ -14,6 +14,13 @@
 5. After a process crash the service reconciles orphaned calls at startup (`recoverOrphanedCalls`): the provider **confirming** the end ⇒ `failed`/`ended`; anything else (active, unknown) ⇒ `outcome_unknown` for every in-flight state; never redials. The same rule applies while running: a call whose end is not proven (no terminal event and no provider confirmation after a bounded hangup) is persisted as `outcome_unknown`.
 6. An `outcome_unknown` call also keeps its **budget reservation** until you resolve it; resolving settles it exactly once.
 
+## Clearing from chat
+
+If the owner's calls are refused with "another call is in progress" and the cause is `outcome_unknown` calls (typically after the process was
+stopped while a call was in flight), the owner can write «qo'ng'iroqni tozala». The assistant says how many calls are stuck and asks the owner
+to look at the real assistant account; only after «ha» are they cleared (same effect as step 3 above, audited as `call.resolve_unknown`).
+If a call is stuck in another state (not `outcome_unknown`) the assistant says which state instead of clearing it.
+
 ## Re-enabling calls after "stop calling me"
 
 The owner's "stop calling me" sets `owners.call_opt_out = true`, which denies **every** call (owner and contact) with `owner_opted_out` until it is cleared. There is no chat command for this yet. Only on the owner's explicit request, an operator with the migrator/bootstrap role runs:

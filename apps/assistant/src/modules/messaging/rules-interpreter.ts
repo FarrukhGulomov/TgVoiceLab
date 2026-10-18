@@ -117,6 +117,10 @@ export class RulesInterpreter implements TextInterpreterPort {
   async completeDraft(raw: string, draft: ClarificationDraft, ctx: InterpretContext): Promise<Intent | null> {
     const low = normalizeApostrophes(raw).trim().toLowerCase();
     if (!low || low.length > 40) return null;
+    if (draft.kind === 'confirm_clear_calls') {
+      if (NO.test(low)) return { kind: 'cancel_pending' };
+      return YES.test(low) ? { kind: 'clear_stuck_calls', confirmed: true } : null;
+    }
     if (draft.kind === 'confirm_call' || draft.kind === 'confirm_message') {
       if (NO.test(low)) return { kind: 'cancel_pending' };
       if (!YES.test(low)) return null;
@@ -173,6 +177,13 @@ export class RulesInterpreter implements TextInterpreterPort {
         return { kind: 'remove_contact', name: clean(del[1]!) };
       }
       if (/^(?:contacts?|kontaktlar(?:im)?|\/contacts)\??$/i.test(low)) return { kind: 'list_contacts' };
+      // "qo'ng'iroqni tozala" / "tiqilib qolgan qo'ng'iroqni yech": free the calling account (asks for confirmation first).
+      if (
+        /^(?:tiqilib\s+qolgan\s+|tiqilgan\s+|osilib\s+qolgan\s+)?(?:qo'?ng'?iroq\w*|call\w*)\s+(?:holat\w*\s+)?(?:tozala|yech|tugat|reset)\w*[.!]?$|^clear\s+stuck\s+calls?$/i.test(
+          text,
+        )
+      )
+        return { kind: 'clear_stuck_calls' };
       // "Nanajon javob bersa menga qo'ng'iroq qilib ayt" / "Nanajondan xabar kelsa menga ayt": tell the owner when this contact replies.
       const watch =
         /^(\S+?)(?:dan|ga|ka|qa)?\s+(?:senga\s+)?(?:javob\s+(?:bersa|yozsa|qaytarsa|qilsa)|xabar\s+(?:kelsa|yozsa|bersa|qaytarsa)|yozsa)\s*[,:-]?\s*(?:menga|bizga)?\s*(.*)$/i.exec(

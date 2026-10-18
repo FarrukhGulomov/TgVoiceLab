@@ -148,6 +148,30 @@ export class OperationsService {
     });
   }
 
+  /** Calls whose outcome is unknown (they occupy the calling account). */
+  async listUnknownCalls(q: Queryable, ownerId: string): Promise<string[]> {
+    return (await q.query<{ id: string }>(`SELECT id FROM calls WHERE owner_id=$1 AND state='outcome_unknown' ORDER BY created_at`, [ownerId])).rows.map(
+      (x) => x.id,
+    );
+  }
+
+  /** Calls in any other non-terminal state (what the owner should look at before clearing). */
+  async listOpenCallStates(q: Queryable, ownerId: string): Promise<string[]> {
+    return (
+      await q.query<{ state: string }>(
+        `SELECT state FROM calls WHERE owner_id=$1 AND state NOT IN ('outcome_unknown','ended','rejected','cancelled','expired','declined','busy','no_answer','failed','consent_denied')`,
+        [ownerId],
+      )
+    ).rows.map((x) => x.state);
+  }
+
+  /** The owner confirmed in chat that no real call is live: clear every outcome_unknown call. Returns how many. */
+  async resolveAllUnknownCalls(q: Queryable, ownerId: string, now: Date): Promise<number> {
+    const ids = await this.listUnknownCalls(q, ownerId);
+    for (const id of ids) await this.resolveUnknownCall(ownerId, id, { note: 'owner confirmed in chat that no call is live', now }, q);
+    return ids.length;
+  }
+
   /** Revocation cancels queued work for the contact and interrupts any live call with them. */
   async onPermissionRevoked(ownerId: string, contactId: string, q: Queryable = this.db): Promise<{ terminated: number }> {
     await inTx(q, (c) => this.cancelDialIntents(c, ownerId, contactId));
