@@ -473,3 +473,19 @@ describe('a long brief reaches the calling AI whole', () => {
     await s.app.close();
   });
 });
+
+describe('contact call hours by chat command', () => {
+  it('"X qo\'ng\'iroq vaqti ..." sets the hours as a new permission version; "istalgan vaqtda" clears them', async () => {
+    const s = await setup();
+    await s.say("kontakt qo'sh Javlon 555000111");
+    await s.say("Javlon qo'ng'iroq vaqti 08:00-23:00");
+    let rows = (await t.db.query(`SELECT version, allowed_hours FROM contact_permissions ORDER BY version`)).rows;
+    expect(rows.at(-1)).toMatchObject({ allowed_hours: { start: '08:00', end: '23:00' } });
+    const before = rows.length;
+    await s.say("Javlonga istalgan vaqtda qo'ng'iroq qilish mumkin");
+    rows = (await t.db.query(`SELECT version, allowed_hours FROM contact_permissions ORDER BY version`)).rows;
+    expect(rows.length).toBe(before + 1);
+    expect(rows.at(-1)!.allowed_hours).toBeNull();
+    await s.app.close();
+  });
+});

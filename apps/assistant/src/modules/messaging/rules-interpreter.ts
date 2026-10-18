@@ -191,6 +191,18 @@ export class RulesInterpreter implements TextInterpreterPort {
         )
       )
         return { kind: 'call_owner' };
+      // "Akmal qo'ng'iroq vaqti 08:00-23:00" / "Akmalga istalgan vaqtda qo'ng'iroq qilish mumkin": the hours a contact may be called in.
+      const hrs =
+        /^(\S+?)(?:ga|ka|qa)?\s+(?:uchun\s+)?qo'?ng'?iroq\s+(?:vaqt\w*|soat\w*)\s*[:-]?\s*(\d{1,2})(?::(\d{2}))?\s*(?:-|–|dan)\s*(\d{1,2})(?::(\d{2}))?(?:\s*gacha)?[.!]?$/i.exec(
+          text,
+        );
+      if (hrs && !NOT_CONTACT_WORDS.test(hrs[1]!)) {
+        const hh = (h: string, m: string | undefined) => (Number(h) >= 24 ? '23:59' : `${pad2(Number(h))}:${m ?? '00'}`);
+        if (Number(hrs[2]) < 24 && Number(hrs[4]) <= 24 && (hrs[3] === undefined || Number(hrs[3]) < 60) && (hrs[5] === undefined || Number(hrs[5]) < 60))
+          return { kind: 'set_contact_hours', contact: hrs[1]!, hours: { start: hh(hrs[2]!, hrs[3]), end: hh(hrs[4]!, hrs[5]) } };
+      }
+      const anyTime = /^(\S+?)(?:ga|ka|qa)?\s+(?:istalgan|har\s+qanday)\s+vaqt\w*\s+qo'?ng'?iroq\s+qil\w*(?:\s+mumkin)?[.!]?$/i.exec(text);
+      if (anyTime && !NOT_CONTACT_WORDS.test(anyTime[1]!)) return { kind: 'set_contact_hours', contact: anyTime[1]!, hours: null };
       // "Nanajon javob bersa menga qo'ng'iroq qilib ayt" / "Nanajondan xabar kelsa menga ayt": tell the owner when this contact replies.
       const watch =
         /^(\S+?)(?:dan|ga|ka|qa)?\s+(?:senga\s+)?(?:javob\s+(?:bersa|yozsa|qaytarsa|qilsa)|xabar\s+(?:kelsa|yozsa|bersa|qaytarsa)|yozsa)\s*[,:-]?\s*(?:menga|bizga)?\s*(.*)$/i.exec(

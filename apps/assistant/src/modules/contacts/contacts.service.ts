@@ -175,6 +175,54 @@ export class ContactService {
     });
   }
 
+  /** Changes the hours this contact may be called in (new permission version; everything else is copied). `null` = any time. Refused for a withdrawn contact. */
+  async setCallHours(db: Queryable, ownerId: string, contactId: string, hours: { start: string; end: string } | null, now: Date): Promise<{ ok: boolean }> {
+    return inTx(db, async (q) => {
+      const locked = await q.query('SELECT 1 FROM contacts WHERE id=$1 AND owner_id=$2 FOR UPDATE', [contactId, ownerId]);
+      if (!locked.rowCount) throw new NotFoundError('contact');
+      const cur = await q.query<{
+        version: number;
+        allow_call: boolean;
+        allow_message: boolean;
+        topic_scopes: string[];
+        context_allowlist: string[];
+        expires_at: Date;
+        revoked_at: Date | null;
+      }>(
+        'SELECT version, allow_call, allow_message, topic_scopes, context_allowlist, expires_at, revoked_at FROM contact_permissions WHERE contact_id=$1 AND owner_id=$2 ORDER BY version DESC LIMIT 1',
+        [contactId, ownerId],
+      );
+      const p = cur.rows[0];
+      if (!p || !p.allow_call || p.revoked_at) return { ok: false };
+      await q.query(
+        `INSERT INTO contact_permissions (owner_id, contact_id, version, allow_call, allow_message, topic_scopes, context_allowlist, allowed_hours, expires_at, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [
+          ownerId,
+          contactId,
+          p.version + 1,
+          p.allow_call,
+          p.allow_message,
+          p.topic_scopes,
+          p.context_allowlist,
+          hours ? JSON.stringify(hours) : null,
+          p.expires_at,
+          now,
+        ],
+      );
+      await writeAudit(q, {
+        ownerId,
+        actorType: 'owner',
+        action: 'permission.call_hours',
+        resourceType: 'contact',
+        resourceId: contactId,
+        allowed: true,
+        reasonCode: 'ok',
+      });
+      return { ok: true };
+    });
+  }
+
   /** The owner withdraws the contact: the attestation is revoked and calling permission ends. Queued calls are cancelled by the caller. */
   async removeVouched(db: Queryable, ownerId: string, contactId: string, now: Date): Promise<void> {
     await inTx(db, async (q) => {

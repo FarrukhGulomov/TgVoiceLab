@@ -196,3 +196,14 @@ describe('call the owner', () => {
     for (const t of ["ertaga 10:00 da menga qo'ng'iroq qil", "Test2 ga qo'ng'iroq qil"]) expect((await run(t)).kind).not.toBe('call_owner');
   });
 });
+
+describe('contact call hours', () => {
+  it.each([
+    ["Akmal qo'ng'iroq vaqti 08:00-23:00", 'Akmal', { start: '08:00', end: '23:00' }],
+    ["Akmalga qo'ng'iroq soatlari 9-22", 'Akmal', { start: '09:00', end: '22:00' }],
+    ["Akmal uchun qo'ng'iroq vaqti 08:30 dan 24 gacha", 'Akmal', { start: '08:30', end: '23:59' }],
+    ["Akmalga istalgan vaqtda qo'ng'iroq qilish mumkin", 'Akmal', null],
+  ])('%s', async (text, contact, hours) => {
+    expect(await run(text)).toEqual({ kind: 'set_contact_hours', contact, hours });
+  });
+});

@@ -701,6 +701,18 @@ export class IntakeService {
         await watches.set(c, p.ownerId, r.contact.id, intent.mode, this.d.clock.now());
         return t(loc, intent.mode === 'call' ? 'watch_set_call' : 'watch_set_text', { name: r.contact.displayName });
       }
+      case 'set_contact_hours': {
+        const contacts = this.d.contacts;
+        if (!contacts) return t(loc, 'unknown');
+        const r = await contacts.resolveByName(c, p.ownerId, intent.contact);
+        if (r.kind === 'none') return t(loc, 'contact_unknown', { name: intent.contact });
+        if (r.kind === 'many') return t(loc, 'contact_ambiguous', { name: intent.contact, names: r.names.join(', ') });
+        const done = await contacts.setCallHours(c, p.ownerId, r.contact.id, intent.hours, this.d.clock.now());
+        if (!done.ok) return t(loc, 'contact_hours_refused', { name: r.contact.displayName });
+        return intent.hours
+          ? t(loc, 'contact_hours_set', { name: r.contact.displayName, start: intent.hours.start, end: intent.hours.end })
+          : t(loc, 'contact_hours_any', { name: r.contact.displayName });
+      }
       case 'call_owner': {
         const rem = this.d.reminders;
         if (!rem) return t(loc, 'unknown');

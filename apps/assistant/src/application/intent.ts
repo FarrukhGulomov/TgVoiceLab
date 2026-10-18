@@ -87,6 +87,8 @@ export type Intent =
   | { kind: 'reply'; text: string }
   /** "Tell me when X replies": by text (the default for every reply anyway) or by ringing the owner once. */
   | { kind: 'watch_contact'; contact: string; mode: 'text' | 'call' }
+  /** The hours this contact may be called in (the contact's local time). `hours: null` = any time of day. */
+  | { kind: 'set_contact_hours'; contact: string; hours: { start: string; end: string } | null }
   /** "Call me now" — ring the owner right away (through the call-reminder path: kill switch, quiet hours, opt-out apply). */
   | { kind: 'call_owner'; reason?: string }
   /** Free the calling account from calls whose outcome is unknown, after the owner confirmed there is no live call. */

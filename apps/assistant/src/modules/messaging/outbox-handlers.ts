@@ -43,7 +43,8 @@ const REASONS: Record<string, string> = {
   active_call_exists: 'another call is in progress',
   budget_not_reserved: 'the daily budget is exhausted',
   quiet_hours: 'quiet hours',
-  outside_allowed_hours: 'outside the hours this contact allows',
+  outside_allowed_hours:
+    "outside the hours set for this contact (09:00-20:00 unless changed). To change: «Akmal qo'ng'iroq vaqti 08:00-23:00» or «Akmalga istalgan vaqtda qo'ng'iroq qilish mumkin»",
   topic_not_permitted: 'topic not permitted for this contact',
   declined: 'declined',
   busy: 'busy',
