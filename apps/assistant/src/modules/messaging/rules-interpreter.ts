@@ -178,7 +178,7 @@ export class RulesInterpreter implements TextInterpreterPort {
         /^(?:(\S+?)(?:\s+degan\s+kontakt\w*|\s*(?:ga|ka|qa))\s+(?:xabar\s+|matn\s+)?(?:yoz(?:ib\s+yubor)?|yubor|jo'?nat)|(?:message|text|write\s+to)\s+(\S+?))\s*[:,-]\s+(.{2,1500})$/i.exec(
           text,
         );
-      if (wr && !NOT_CONTACT_WORDS.test(wr[1] ?? wr[2] ?? '')) return { kind: 'message_contact', contact: (wr[1] ?? wr[2])!, text: clean(wr[3]!) };
+      if (wr && !NOT_CONTACT_WORDS.test(wr[1] ?? wr[2] ?? '')) return { kind: 'message_contact', contact: (wr[1] ?? wr[2])!, text: wr[3]!.trim() };
       const rem = /^(?:eslab\s+qol(?:ing)?|yodda\s+tut(?:ing)?|esingda\s+tut(?:ing)?|eslab\s+qo'?y|remember(?:\s+that)?)\s*[:,-]?\s+(.{3,400})$/i.exec(text);
       if (rem) {
         if (notAnExplicitCommand(text, low)) return { kind: 'clarify', question: t(ctx.locale, 'not_a_command') };
