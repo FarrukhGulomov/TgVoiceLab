@@ -30,6 +30,8 @@ const EnvSchema = z
     AI_VOICE_PROVIDER: z.enum(['openai', 'gemini']).optional(),
     OPENAI_REALTIME_DIALECT: z.enum(['ga', 'beta']).default('ga'),
     OPENAI_TRANSCRIPTION_MODEL: opt(z.string()),
+    /** With TTS_PROVIDER=voicelab on Gemini: `transcript` (default) drops the model's audio and voices its transcript (works with native-audio models); `modality` asks for TEXT output (needs a Live model that supports it). */
+    GEMINI_TEXT_OUTPUT: z.enum(['transcript', 'modality']).default('transcript'),
     GEMINI_TEXT_MODE: z.enum(['realtime', 'client_content']).default('realtime'),
     GEMINI_GOOGLE_SEARCH: bool.default(false),
     GEMINI_LANGUAGE_CODE: opt(z.string()),

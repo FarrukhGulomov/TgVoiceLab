@@ -151,7 +151,15 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
       ? voiced(new OpenAiRealtimeLink({ ...o, instructions: `${o.instructions}\n${VOICE_TEXT_OUTPUT_RULE}`, textOutput: true }))
       : new OpenAiRealtimeLink(o);
   const makeGemini = (o: ConstructorParameters<typeof GeminiLiveLink>[0]) =>
-    voicelab ? voiced(new GeminiLiveLink({ ...o, instructions: `${o.instructions}\n${VOICE_TEXT_OUTPUT_RULE}`, textOutput: true })) : new GeminiLiveLink(o);
+    voicelab
+      ? voiced(
+          new GeminiLiveLink({
+            ...o,
+            instructions: `${o.instructions}\n${VOICE_TEXT_OUTPUT_RULE}`,
+            textOutput: cfg.GEMINI_TEXT_OUTPUT === 'modality' ? true : 'transcript',
+          }),
+        )
+      : new GeminiLiveLink(o);
   const makeLink = ({ instructions, tools }: { instructions: string; tools: import('./modules/calls/audio/realtime-bridge.js').ToolDeclaration[] }) =>
     cfg.AI_VOICE_PROVIDER === 'gemini'
       ? makeGemini({

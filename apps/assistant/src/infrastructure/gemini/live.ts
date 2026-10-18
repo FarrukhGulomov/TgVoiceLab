@@ -25,8 +25,12 @@ export interface GeminiLiveOptions {
   tools?: ToolDeclaration[] | undefined;
   /** Diagnostics: one line per server message (structure only — never audio data, never the API key). */
   debug?: ((line: string) => void) | undefined;
-  /** The model answers in TEXT (streamed through `onText`) and another voice speaks it. Needs a Live model that supports TEXT output (native-audio models are AUDIO-only). */
-  textOutput?: boolean | undefined;
+  /**
+   * Another voice speaks, the model only decides. `true`: the model answers in TEXT (needs a Live model that supports TEXT output; native-audio
+   * models are AUDIO-only and close with 1007). `'transcript'`: the model still answers in audio, which is DROPPED, and the transcript of what it
+   * said is streamed through `onText` instead (works with native-audio models).
+   */
+  textOutput?: boolean | 'transcript' | undefined;
   /** How long to wait for `setupComplete` before reporting that the setup was rejected or ignored. */
   setupTimeoutMs?: number | undefined;
   /** How a plain-text turn (the greeting) is sent. `realtime` = realtimeInput.text (newer), `client_content` = clientContent turn (older). */
@@ -47,8 +51,8 @@ export function geminiSetup(
     setup: {
       model: o.model.startsWith('models/') ? o.model : `models/${o.model}`,
       generationConfig: {
-        responseModalities: [o.textOutput ? 'TEXT' : 'AUDIO'],
-        ...(!o.textOutput && (o.voice || o.languageCode)
+        responseModalities: [o.textOutput === true ? 'TEXT' : 'AUDIO'],
+        ...(o.textOutput !== true && (o.voice || o.languageCode)
           ? {
               speechConfig: {
                 ...(o.voice ? { voiceConfig: { prebuiltVoiceConfig: { voiceName: o.voice } } } : {}),
@@ -69,7 +73,7 @@ export function geminiSetup(
         : {}),
       systemInstruction: { parts: [{ text: o.instructions }] },
       inputAudioTranscription: {},
-      ...(o.textOutput ? {} : { outputAudioTranscription: {} }),
+      ...(o.textOutput === true ? {} : { outputAudioTranscription: {} }),
     },
   };
 }
@@ -120,11 +124,13 @@ export class GeminiLiveLink implements RealtimeLink {
   #toolCalls: Array<(c: ToolCall) => void> = [];
   #text: Array<(delta: string, done: boolean) => void> = [];
   readonly #textMode: 'realtime' | 'client_content';
+  readonly #viaTranscript: boolean;
   readonly #debug: ((line: string) => void) | undefined;
   #setupTimer: NodeJS.Timeout | undefined;
 
   constructor(o: GeminiLiveOptions) {
     this.#textMode = o.textMode ?? 'realtime';
+    this.#viaTranscript = o.textOutput === 'transcript';
     this.#debug = o.debug;
     const url = `${o.baseUrl ?? DEFAULT_URL}?key=${encodeURIComponent(o.apiKey)}`;
     this.#ws = o.socketFactory ? o.socketFactory(url) : new WebSocket(url);
@@ -187,7 +193,16 @@ export class GeminiLiveLink implements RealtimeLink {
     const sc = m.serverContent;
     if (!sc) return;
     if (sc.inputTranscription?.text) this.#heard += sc.inputTranscription.text;
-    if (sc.outputTranscription?.text) this.#said += sc.outputTranscription.text;
+    if (sc.outputTranscription?.text) {
+      this.#said += sc.outputTranscription.text;
+      if (this.#viaTranscript) {
+        if (!this.#speaking) {
+          this.#speaking = true;
+          for (const cb of this.#responseStart) cb();
+        }
+        for (const cb of this.#text) cb(sc.outputTranscription.text, false);
+      }
+    }
     for (const part of sc.modelTurn?.parts ?? []) {
       if (part.text) {
         if (!this.#speaking) {
@@ -198,7 +213,7 @@ export class GeminiLiveLink implements RealtimeLink {
         continue;
       }
       const d = part.inlineData;
-      if (!d?.data) continue;
+      if (!d?.data || this.#viaTranscript) continue; // the model's own voice is not used: another voice speaks its transcript
       const rate = /rate=(\d+)/.exec(d.mimeType ?? '')?.[1];
       if (rate && Number(rate) !== GEMINI_OUTPUT_RATE) {
         this.#emitError(`unexpected audio format ${d.mimeType} (expected ${GEMINI_OUTPUT_RATE} Hz PCM)`);

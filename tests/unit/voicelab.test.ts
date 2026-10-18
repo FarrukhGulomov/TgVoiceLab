@@ -188,3 +188,33 @@ describe('VoiceLab configuration', () => {
     expect(() => loadConfig({ ...base, AI_VOICE_PROVIDER: 'gemini', VOICELAB_VOICE_ID: '' })).toThrow(/VOICELAB_VOICE_ID/);
   });
 });
+
+import { EventEmitter } from 'node:events';
+import { GeminiLiveLink } from '../../apps/assistant/src/infrastructure/gemini/live.js';
+describe('Gemini Live: transcript mode', () => {
+  it('asks for audio plus an output transcription, drops the model audio and streams the transcript as text', () => {
+    const t = (geminiSetup({ model: 'm', instructions: 'x', textOutput: 'transcript' }) as { setup: Record<string, any> }).setup;
+    expect(t.generationConfig.responseModalities).toEqual(['AUDIO']);
+    expect(t.outputAudioTranscription).toEqual({});
+
+    const ws = Object.assign(new EventEmitter(), { send: () => undefined, close: () => undefined });
+    const link = new GeminiLiveLink({ apiKey: 'k', model: 'm', instructions: 'x', textOutput: 'transcript', socketFactory: () => ws as never });
+    const text: Array<[string, boolean]> = [];
+    let audio = 0;
+    link.onText((d, done) => text.push([d, done]));
+    link.onAudio(() => audio++);
+    const msg = (o: unknown) => ws.emit('message', Buffer.from(JSON.stringify(o)));
+    msg({ setupComplete: {} });
+    msg({
+      serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=24000', data: 'AAAA' } }] }, outputTranscription: { text: 'Salom. ' } },
+    });
+    msg({ serverContent: { outputTranscription: { text: 'Qalaysiz?' } } });
+    msg({ serverContent: { turnComplete: true } });
+    expect(audio).toBe(0);
+    expect(text).toEqual([
+      ['Salom. ', false],
+      ['Qalaysiz?', false],
+      ['', true],
+    ]);
+  });
+});

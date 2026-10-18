@@ -112,6 +112,10 @@ async function setup() {
   return { app, clock, runner, links };
 }
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+/** Polls instead of sleeping a fixed time: a loaded CI machine is slower than the sleep. */
+const until = async (ok: () => boolean, ms = 5000) => {
+  for (const start = Date.now(); !ok() && Date.now() - start < ms;) await tick(10);
+};
 
 describe('OwnerCallRunner', () => {
   it('opens a voice session with the owner tools and the real task list, greets, and completes when the model ends the call', async () => {
@@ -119,7 +123,7 @@ describe('OwnerCallRunner', () => {
     await s.app.tasks.create(s.app.db, o.ownerId, { title: 'Hisobot', dueAt: new Date('2026-10-16T10:00:00Z') });
     const h = fakeHandle();
     const run = s.runner.run({ callId: 'c1', ownerId: o.ownerId, plan: plan(), handle: h.handle });
-    await tick(80);
+    await until(() => s.links.length > 0);
     const { link, instructions, tools } = s.links[0]!;
     expect(instructions).toContain('1. Hisobot (muddati: 2026-10-16 15:00)');
     expect(instructions).toContain('2026-10-16 09:00 (Asia/Samarkand)');
@@ -136,7 +140,7 @@ describe('OwnerCallRunner', () => {
     expect(link.greeting).toContain('Brifingni boshla');
     // the model completes a task by voice: committed, then confirmed
     link.toolCb!({ id: 'a', name: 'complete_task', args: { number: 1 } });
-    await tick();
+    await until(() => link.results.length > 0);
     expect(link.results[0]).toEqual({ id: 'a', result: { ok: true, title: 'Hisobot', alreadyDone: false }, respond: true });
     expect((await t.db.query(`SELECT status FROM tasks`)).rows[0].status).toBe('done');
     // the model ends the call after the farewell
