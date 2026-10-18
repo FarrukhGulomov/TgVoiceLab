@@ -62,7 +62,12 @@ See `docs/ACCEPTANCE_MAP.md` for A01–A16 and the test that covers each.
 
 Implemented offline: contact grammar (add/remove/list, `call_contact` in chat and by voice), owner-attested consent, `ContactCallRunner`
 (AI disclosure, `submit_report`/`end_call`), sealed report to the owner. **Not verified live**, and dialing a contact still needs all six
-evidence gates (G0-D 10 calls, G0-E variants, G0-F canary) — not recorded yet.
+evidence gates (all six now recorded live for build 7b6dc8bf…).
+
+**Live-verified 2026-10-18** (test account 460770233): a contact call with AI disclosure, two-way conversation and sealed report; a
+`meeting_agreed` outcome created the owner task "Uchrashuv: Test2" at the agreed slot, and a `meeting_countered` outcome created no task.
+The earlier test account 352945952 gave no audio in either direction (account-specific, not code). Decline / consent-withdrawn paths and
+Uzbek speech quality are not yet judged live.
 
 ## Live gate progress (build-bound, see docs/runbooks/contact-call-gates.md)
 
@@ -78,7 +83,7 @@ tool `call_contact`). The offered times are sealed in the approved plan (`allowe
 ONLY one of them (`submit_report` outcome `meeting_agreed` + `agreed_slot`; any other value is refused); anything else is reported as
 `meeting_countered` with the contact's own words and commits nothing; `callback_requested` tells the owner the contact asked to be called.
 After an agreement the system creates the owner's task ("Uchrashuv: <contact>", due at the slot) and the report states what was really
-committed. Offline-tested only; contact calls remain gated by the six evidence gates.
+committed. Live-verified for `meeting_agreed` and `meeting_countered` (see above); contact calls stay gated by the six evidence gates.
 
 ## Voice notes
 
