@@ -7,7 +7,7 @@ import { encodeLimit, extractPriceLimits, type PriceLimit } from './negotiation.
 
 /** Things the AI may never do on a contact call, whatever the contact asks. Part of the plan the owner approved. */
 export const DEFAULT_FORBIDDEN_COMMITMENTS = [
-  "egasi topshirig'ida ko'rsatilgan narx/shart chegarasidan tashqarida kelishmaslik va qaror qilmaslik (yakuniy qaror doim egasida)",
+  "egasi topshirig'ida ko'rsatilgan narx/shart chegarasidan tashqarida kelishmaslik va qaror qilmaslik (chegara ichidagi narxni esa o'zing qabul qila olasan)",
   'shartnoma yoki majburiyat tuzmaslik',
   "egasi nomidan qaror qabul qilmaslik yoki yangi va'da bermaslik",
   "egasining boshqa shaxsiy ma'lumotlarini, vazifalari yoki kontaktlarini aytmaslik",
@@ -49,7 +49,7 @@ export class ContactCallService {
       /** Price limits stated as structured values (e.g. by the owner-call tool); merged with those read from the text. */ limits?: PriceLimit[];
     },
   ): Promise<RequestContactCallResult> {
-    const message = a.message.trim().slice(0, 1200);
+    const message = a.message.trim().slice(0, 2000);
     if (message.length < 3) return { ok: false, reason: 'empty_message' };
     const now = this.clock.now();
     const contact = await c.query<{ telegram_user_id: string }>('SELECT telegram_user_id FROM contacts WHERE id=$1 AND owner_id=$2', [a.contactId, ownerId]);

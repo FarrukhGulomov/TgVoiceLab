@@ -70,7 +70,7 @@ export const OWNER_CALL_TOOL_DECLARATIONS: ToolDeclaration[] = [
   {
     name: 'call_contact',
     description:
-      "Egasi tasdiqlagan kontaktga (ro'yxatdagi ism bo'yicha) uning nomidan qo'ng'iroq qilishni navbatga qo'yadi. AVVAL egasidan ism va nima deyilishini so'rab, ovoz chiqarib tasdiqlat. name — kontakt ismi; message — kontaktga nima yetkazilishi yoki nima haqida gaplashilishi; date (YYYY-MM-DD) va time (HH:mm) ixtiyoriy (bo'lmasa darrov). Natijaga qarab egasiga haqiqatni ayt.",
+      "Egasi tasdiqlagan kontaktga (ro'yxatdagi ism bo'yicha) uning nomidan qo'ng'iroq qilishni navbatga qo'yadi. AVVAL egasidan ism va nima deyilishini so'rab, ovoz chiqarib tasdiqlat. name — kontakt ismi; message — kontaktga nima yetkazilishi yoki nima haqida gaplashilishi; egasi aytgan BARCHA tafsilotlarni to'liq yoz (masalan mashinaning rangi, yili, probegi, holati, o'zgarishlar, boshlang'ich narx, shartlar) — qo'ng'iroqdagi AI faqat shu matndan foydalanadi; date (YYYY-MM-DD) va time (HH:mm) ixtiyoriy (bo'lmasa darrov). Natijaga qarab egasiga haqiqatni ayt.",
     parameters: {
       type: 'object',
       properties: {

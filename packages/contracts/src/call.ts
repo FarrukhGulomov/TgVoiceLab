@@ -40,9 +40,9 @@ export const ApprovedCallPlanSchema = z.object({
   recipientTelegramId: TelegramUserIdSchema,
   /** Short slug matched against the contact's topic-scoped permission (extension to the spec interface; see docs/adr/0002). */
   topic: z.string().regex(/^[a-z0-9_.-]{1,64}$/),
-  purpose: z.string().min(3).max(500),
+  purpose: z.string().min(3).max(2000),
   questions: z.array(z.string().min(1).max(300)).max(10),
-  allowedContext: z.array(z.string().min(1).max(500)).max(20),
+  allowedContext: z.array(z.string().min(1).max(2000)).max(20),
   forbiddenCommitments: z.array(z.string().min(1).max(300)).max(20),
   language: CallLanguageSchema,
   maxDurationSeconds: z.number().int().min(10).max(3600),

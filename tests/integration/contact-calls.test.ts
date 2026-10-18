@@ -333,7 +333,8 @@ describe('price negotiation with an owner limit', () => {
     link.toolCb!({ id: 'd2', name: 'submit_report', args: { outcome: 'deal_reached', summary: '11000 ga kelishdik', agreed_amount: 11000, currency: 'USD' } });
     const report = await finish(s, link, dialing);
     expect(report).toContain('11 000 USD');
-    expect(report).toContain('Yakuniy qaror sizda');
+    expect(report).toContain("AI o'zi qabul qildi");
+    expect((await s.app.tasks.list(s.app.db, o.ownerId, { limit: 10 })).map((x) => x.title)).toEqual(['Kelishuv: Javlon — 11 000 USD']);
     await s.app.close();
   });
 });
@@ -453,6 +454,22 @@ describe('the owner call remembers earlier calls', () => {
     expect(
       buildOwnerCallInstructions({ now: s.clock.now(), timezone: 'Asia/Samarkand', tasks: [], knowledge: { calls: res.calls, memories: res.memories } }),
     ).toContain('6000 USD');
+    await s.app.close();
+  });
+});
+
+describe('a long brief reaches the calling AI whole', () => {
+  it('car details beyond 500 characters are kept in the call instructions', async () => {
+    const s = await setup();
+    await s.say("kontakt qo'sh Javlon 555000111");
+    const details = `Onix 2019, rangi OQ-OLMOS, probeg 84000 km, ${'salon charm, birinchi egasi, hujjatlari tayyor, '.repeat(14)}oxirgi tafsilot: SHINALAR YANGI.`;
+    await s.say(`Javlonga qo'ng'iroq qilib Onix mashinasini sot, 10000 usd dan past sotma. ${details}`);
+    const dialing = s.app.tick();
+    for (let i = 0; i < 100 && s.links.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    expect(s.links[0]!.instructions).toContain('OQ-OLMOS');
+    expect(s.links[0]!.instructions).toContain('SHINALAR YANGI');
+    s.links[0]!.link.toolCb!({ id: 'e', name: 'end_call', args: {} });
+    await dialing;
     await s.app.close();
   });
 });

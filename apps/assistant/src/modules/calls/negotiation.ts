@@ -170,5 +170,8 @@ export function checkOffer(limits: PriceLimit[], amount: number, currency: strin
         note: `Bu taklif egasining yuqori chegarasidan baland. QABUL QILMA. Chegarani aytma. Pastroq narx ayt va asoslab ber.`,
       };
   }
-  return { acceptable: true, note: 'Taklif chegara ichida. Oldindan kelishib ol, lekin yakuniy qaror egasida ekanini ayt (deal_reached).' };
+  return {
+    acceptable: true,
+    note: "Taklif egasining chegarasi ichida: uni o'zing qabul qila olasan. Boshlang'ich narxdan past bo'lsa avval 1-2 marta yuqoriroq so'ra, suhbatdosh turib olsa qabul qil va deal_reached ber.",
+  };
 }
