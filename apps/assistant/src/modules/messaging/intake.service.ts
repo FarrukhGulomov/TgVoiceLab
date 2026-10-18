@@ -686,9 +686,13 @@ export class IntakeService {
       case 'call_owner': {
         const rem = this.d.reminders;
         if (!rem) return t(loc, 'unknown');
-        // Same path as a call reminder one minute from now: kill switch, quiet hours, opt-out and gates still apply.
-        const at = DateTime.fromJSDate(new Date(this.d.clock.now().getTime() + 60_000), { zone: p.timezone }).toFormat("yyyy-LL-dd'T'HH:mm");
-        await rem.create(p.ownerId, { title: intent.reason ?? "Siz so'ragan qo'ng'iroq", localDateTime: at, mode: 'call', silent: true }, c);
+        // Same path as a call reminder, due right now: kill switch, quiet hours, opt-out and gates still apply.
+        const at = DateTime.fromJSDate(this.d.clock.now(), { zone: p.timezone }).toFormat("yyyy-LL-dd'T'HH:mm");
+        await rem.create(
+          p.ownerId,
+          { title: intent.reason ?? "Siz so'ragan qo'ng'iroq", localDateTime: at, mode: 'call', silent: true, fireAt: this.d.clock.now() },
+          c,
+        );
         return t(loc, 'call_owner_ok');
       }
       case 'clear_stuck_calls': {

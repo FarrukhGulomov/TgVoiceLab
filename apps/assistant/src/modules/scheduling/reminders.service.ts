@@ -50,6 +50,8 @@ export interface CreateReminderInput {
   taskId?: string | undefined;
   /** Skip the "reminder scheduled" notice (the caller already tells the owner). */
   silent?: boolean | undefined;
+  /** Fire at this instant instead of the wall-clock time ("call me right now"). */
+  fireAt?: Date | undefined;
 }
 
 export class ReminderService {
@@ -131,7 +133,7 @@ export class ReminderService {
       assertTimezone(tz);
       const title = i.title.trim();
       if (!title) throw new ValidationError('title is required');
-      const first = this.firstInstant(i.localDateTime, tz, i.recurrence, this.clock.now());
+      const first = i.fireAt ? { utc: i.fireAt, kind: 'exact' as const } : this.firstInstant(i.localDateTime, tz, i.recurrence, this.clock.now());
       const ins = await c.query<Row>(
         `INSERT INTO reminders (owner_id, task_id, title_enc, local_wall_clock, timezone, recurrence, mode, kind)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${COLS}`,

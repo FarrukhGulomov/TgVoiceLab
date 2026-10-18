@@ -95,6 +95,21 @@ describe('replies from contacts are relayed to the owner', () => {
     await s.app.close();
   });
 
+  it('"srochno menga qo\'ng\'iroq qil" queues a call reminder due right now, not a minute later', async () => {
+    const s = setup();
+    await s.say("Srochno menga qo'ng'iroq qil");
+    const r = (
+      await t.db.query<{ mode: string; at: Date; late: boolean }>(
+        `SELECT r.mode, o.scheduled_at AS at FROM reminders r JOIN reminder_occurrences o ON o.reminder_id=r.id`,
+      )
+    ).rows;
+    expect(r).toHaveLength(1);
+    expect(r[0]!.mode).toBe('call');
+    expect(r[0]!.at.getTime()).toBe(s.clock.now().getTime());
+    expect((await s.texts()).join('\n')).toContain('right now');
+    await s.app.close();
+  });
+
   it('a flood from one contact is capped', async () => {
     const s = setup();
     await s.say("kontakt qo'sh Javlon 555000111");
