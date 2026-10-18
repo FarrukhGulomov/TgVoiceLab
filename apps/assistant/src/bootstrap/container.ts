@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '../infrastructure/db/db.js';
 import type { DataCrypto } from '../infrastructure/crypto/data-crypto.js';
 import type { Clock } from '../application/clock.js';
-import type { IntentFallbackPort, MessagingPort, TextInterpreterPort, TranscriptionPort } from '../application/ports.js';
+import type { IntentFallbackPort, MessageComposerPort, MessagingPort, TextInterpreterPort, TranscriptionPort } from '../application/ports.js';
 import type { TelegramCallAdapter } from '@tgvl/contracts';
 import { ContactService } from '../modules/contacts/contacts.service.js';
 import { AuthorizationService } from '../modules/calls/authorizations.service.js';
@@ -13,6 +13,7 @@ import type { DerivedCapabilities } from '../modules/calls/capability-evidence.j
 import { ContactCallService } from '../modules/calls/contact-calls.service.js';
 import { IntakeService } from '../modules/messaging/intake.service.js';
 import { ContactWatchService } from '../modules/contacts/watches.js';
+import { ContactCallRecovery } from '../modules/calls/contact-call-recovery.js';
 import { MemoryService } from '../modules/memory/memory.service.js';
 import { RulesInterpreter } from '../modules/messaging/rules-interpreter.js';
 import { DisabledInterpreter } from '../modules/messaging/disabled-interpreter.js';
@@ -50,6 +51,8 @@ export interface ContainerDeps {
   interpreter?: TextInterpreterPort;
   /** Free-form understanding for text the rules did not recognise (Gemini). */
   textFallback?: IntentFallbackPort;
+  /** Phrases the text sent to a contact when calls could not connect. */
+  composer?: MessageComposerPort;
   onFallbackError?: (e: Error) => void;
   transcription?: TranscriptionPort;
   voiceDownloadTimeoutMs?: number;
@@ -180,7 +183,14 @@ export function buildContainer(d: ContainerDeps) {
       await completeJob(db, job);
     },
   };
-  const outboxHandlers: Record<string, OutboxHandler> = makeOutboxHandlers({ db: d.db, crypto: d.crypto, messaging: d.messaging, tasks });
+  const recovery = contactCalls ? new ContactCallRecovery({ db: d.db, crypto: d.crypto, clock: d.clock, contactCalls, composer: d.composer }) : undefined;
+  const outboxHandlers: Record<string, OutboxHandler> = makeOutboxHandlers({
+    db: d.db,
+    crypto: d.crypto,
+    messaging: d.messaging,
+    tasks,
+    ...(recovery ? { onContactCallEnded: (a: { ownerId: string; callId: string; reason: string }) => recovery.onEnded(a.ownerId, a.callId, a.reason) } : {}),
+  });
   const workerId = d.workerId ?? `worker-${process.pid}`;
   const laneOf = (kind: string): LaneName => d.extraJobHandlers?.[kind]?.lane ?? (kind === 'call.dial' ? 'calls' : 'jobs');
   for (const [kind, x] of Object.entries(d.extraJobHandlers ?? {})) jobHandlers[kind] = x.handler;

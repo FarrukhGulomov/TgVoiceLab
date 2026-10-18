@@ -26,6 +26,11 @@ export interface IntentFallbackPort {
   propose(text: string, ctx: InterpretContext): Promise<Intent>;
 }
 
+/** Phrases the text a contact gets when a call could not be connected (the facts come from the owner's brief). */
+export interface MessageComposerPort {
+  compose(a: { ownerName: string; contactName: string; brief: string }): Promise<string | null>;
+}
+
 export interface Transcript {
   text: string;
   /** 0..1; below the configured threshold the message must be treated as uncertain. */

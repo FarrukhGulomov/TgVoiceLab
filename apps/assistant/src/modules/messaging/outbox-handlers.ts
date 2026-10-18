@@ -56,7 +56,14 @@ const REASONS: Record<string, string> = {
 };
 
 /** Outbox -> Telegram. Idempotent on the outbox event id (used as the provider dedupe key). */
-export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging: MessagingPort; tasks: TaskService }): Record<string, OutboxHandler> {
+export function makeOutboxHandlers(deps: {
+  db: Db;
+  crypto: DataCrypto;
+  messaging: MessagingPort;
+  tasks: TaskService;
+  /** After a contact call ends: may redial or fall back to text; returns a note for the owner. */
+  onContactCallEnded?: (a: { ownerId: string; callId: string; reason: string }) => Promise<string | null>;
+}): Record<string, OutboxHandler> {
   const { db, crypto } = deps;
   // Every send goes through the central length limit: long text becomes "(i/N)" chunks with stable per-chunk idempotency keys, so a
   // retry after a partial failure re-sends the same keys and the provider suppresses the ones already delivered.
@@ -205,6 +212,10 @@ export function makeOutboxHandlers(deps: { db: Db; crypto: DataCrypto; messaging
       const name = contactRow.display_name;
       const key: MessageKey = p.variant === 'rejected' ? 'call_rejected' : p.variant === 'outcome_unknown' ? 'call_outcome_unknown' : 'call_ended';
       await messaging.sendMessage({ toTelegramUserId: owner.telegram_user_id, text: t(owner.locale, key, { name, reason }), idempotencyKey: row.eventId });
+      if (p.variant === 'ended' && row.aggregateType === 'call' && deps.onContactCallEnded) {
+        const note = await deps.onContactCallEnded({ ownerId: row.ownerId, callId: row.aggregateId, reason: p.reason ?? '' });
+        if (note) await messaging.sendMessage({ toTelegramUserId: owner.telegram_user_id, text: note, idempotencyKey: `${row.eventId}:recovery` });
+      }
     },
 
     // A text the owner confirmed, sent to a contact in the owner's name. The event id is the Telegram random_id, so a retry never

@@ -206,6 +206,7 @@ if (cfg.GEMINI_API_KEY && cfg.GEMINI_TEXT_MODEL && cfg.TEXT_AI_ADAPTER === 'rule
 const app = buildContainer({
   ...(transcription ? { transcription } : {}),
   ...(textFallback ? { textFallback } : {}),
+  ...(textFallback && 'compose' in textFallback ? { composer: textFallback as unknown as import('./application/ports.js').MessageComposerPort } : {}),
   onFallbackError: (e) => log.warn({ err: e.message }, 'free-form text understanding failed; the message was treated as unknown'),
   onVoiceError: (e) => log.warn({ err: e.message }, 'voice note could not be transcribed'),
   ...(sessionRunner ? { sessionRunner } : {}),

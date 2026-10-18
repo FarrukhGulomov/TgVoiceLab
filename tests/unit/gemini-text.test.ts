@@ -76,6 +76,16 @@ describe('prompt and request', () => {
     expect(url).not.toContain('SECRET');
     expect(key).toBe('SECRET');
   });
+  it('a plain-prose answer (no JSON) is still delivered as the reply', async () => {
+    const f = (async () =>
+      new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'Samarkand qadimiy shahar. Registon mashhur.' }] } }] }), {
+        status: 200,
+      })) as unknown as typeof fetch;
+    expect(await new GeminiTextFallback({ apiKey: 'k', model: 'm', fetchImpl: f }).propose('ikki savol', ctx)).toEqual({
+      kind: 'reply',
+      text: 'Samarkand qadimiy shahar. Registon mashhur.',
+    });
+  });
   it('a failed request throws without echoing the text', async () => {
     const f = (async () => new Response('{}', { status: 500 })) as unknown as typeof fetch;
     await expect(new GeminiTextFallback({ apiKey: 'k', model: 'm', fetchImpl: f }).propose('maxfiy matn', ctx)).rejects.toThrow(/HTTP 500/);

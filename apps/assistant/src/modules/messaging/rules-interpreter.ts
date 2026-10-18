@@ -372,8 +372,10 @@ export class RulesInterpreter implements TextInterpreterPort {
     }
 
     // create task
-    const taskTrigger = /^(?:\/task\b|(?:add|create|new)\s+(?:a\s+)?task\b|task\s*[:-]|todo\s*[:-]?|vazifa\s*(?:qo'sh\w*)?\s*[:-]?)|\bvazifa\s+qo'sh\w*/i;
-    if (taskTrigger.test(text)) {
+    const taskTrigger =
+      /^(?:\/task\b|(?:add|create|new)\s+(?:a\s+)?task\b|task\s*[:-]|todo\s*[:-]?|vazifa(?![a-zA-Z'’ʻ‘])\s*(?:qo'sh\w*)?\s*[:-]?)|\bvazifa\s+qo'sh\w*/i;
+    // A question that merely mentions the word ("vazifalarim nima edi?") is not a new task.
+    if (taskTrigger.test(text) && !(/\?\s*$/.test(text) && !/^(?:\/task\b|(?:add|create|new)\s+(?:a\s+)?task\b|task\s*[:-]|todo)/i.test(text))) {
       const w = extractWhen(text, ctx);
       const amb = clarifyWhen(w, ctx);
       if (amb) return amb;

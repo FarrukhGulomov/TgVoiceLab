@@ -105,6 +105,14 @@ voice/files are only reported; max 20 relays per contact per hour; strangers are
 one-shot 48 h `call` watch: the next reply also rings the owner through the reminder-call path (kill switch, quiet hours and opt-out apply).
 Offline-tested; not live verified.
 
+## Redial and text fallback
+
+Owner's standing instruction: a contact call that ends as `transport_error` (the contact answered but the audio never connected) is redialled
+automatically 45 s later, up to 3 attempts in all (`call_requests.attempt` / `retry_of`). After the third failure the AI sends the contact a
+short text (phrased by the text model from the owner's brief, opening with "I am <owner>'s AI assistant") and tells the owner what it sent;
+without a text model the owner is told how to send it. No answer, busy, declined and privacy-restricted calls are never redialled. A
+voice message instead of text is not built (needs speech synthesis).
+
 ## Voice notes
 
 `GeminiTranscription` (generateContent, inline audio) turns owner voice notes into text when `GEMINI_API_KEY` and

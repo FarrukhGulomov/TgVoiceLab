@@ -172,3 +172,10 @@ describe('watch a contact for a reply', () => {
     expect(await run('Nanajon javob yozsa menga ayt')).toEqual({ kind: 'watch_contact', contact: 'Nanajon', mode: 'text' });
   });
 });
+
+describe('questions are not tasks', () => {
+  it('"vazifalarim nima edi?" does not create a task, but "vazifa: ..." does', async () => {
+    expect((await run('vazifalarim nima edi?')).kind).not.toBe('create_task');
+    expect(await run('vazifa: hisobot tayyorlash')).toMatchObject({ kind: 'create_task', title: 'hisobot tayyorlash' });
+  });
+});
