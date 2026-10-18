@@ -156,6 +156,19 @@ describe('VoiceLabMouthLink', () => {
     expect(audioAtTool).toBe(2);
   });
 
+  it('the caller speaking before anything was audible stops nothing; speaking over audible audio does', async () => {
+    const { brain, link, chunks } = mk();
+    let barge = 0;
+    link.onSpeechStarted(() => barge++);
+    brain.textCb('Birinchi gap.', true);
+    brain.speechCb(); // the model heard the caller before Nozima said a word
+    await waitFor(() => chunks.length >= 2);
+    expect(barge).toBe(0);
+    expect(chunks.length).toBe(2); // the answer is still spoken
+    brain.speechCb(); // now the caller talks over the audio that is playing
+    expect(barge).toBe(1);
+  });
+
   it('barge-in drops what has not been played yet and tells the model', async () => {
     const { brain, link, chunks } = mk({ 'Uzun gap.': 50 });
     brain.textCb('Uzun gap.', true);

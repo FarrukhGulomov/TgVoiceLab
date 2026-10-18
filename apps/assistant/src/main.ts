@@ -148,7 +148,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
         model: cfg.VOICELAB_TTS_MODEL,
         speed: cfg.VOICELAB_SPEED,
       }),
-      { log: (line) => log.debug({ call: true }, line) },
+      { log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
     );
   };
   const makeOpenAi = (o: ConstructorParameters<typeof OpenAiRealtimeLink>[0]) =>

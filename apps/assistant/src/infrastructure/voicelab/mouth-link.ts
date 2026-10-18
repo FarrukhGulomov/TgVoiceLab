@@ -64,6 +64,8 @@ export class VoiceLabMouthLink implements RealtimeLink {
   #epoch = 0;
   #chain: Promise<void> = Promise.resolve();
   #abort = new AbortController();
+  /** When the audio handed to the call so far finishes playing (wall clock): the caller can only be "talked over" before this moment. */
+  #audibleUntil = 0;
 
   constructor(
     private readonly brain: TextBrain,
@@ -96,9 +98,12 @@ export class VoiceLabMouthLink implements RealtimeLink {
     this.#chain = this.#chain.then(async () => {
       if (epoch !== this.#epoch) return;
       try {
+        const t0 = Date.now();
         const a = await pending;
         if (epoch !== this.#epoch) return;
+        this.o.log?.(`voicelab: ${text.length} chars voiced (waited ${Date.now() - t0} ms for the synthesis)`);
         const pcm = a.rateHz === OUT_RATE ? a.pcm : new StreamingResampler(a.rateHz, OUT_RATE).process(a.pcm);
+        this.#audibleUntil = Math.max(this.#audibleUntil, Date.now()) + (pcm.length / 2 / OUT_RATE) * 1000;
         // ~100 ms pieces keep barge-in responsive
         for (let i = 0; i < pcm.length; i += 4800) {
           if (epoch !== this.#epoch) return;
@@ -118,6 +123,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
   }
   interrupt(playedMs: number): void {
     this.#epoch++;
+    this.#audibleUntil = 0;
     this.#buf = '';
     this.#abort.abort();
     this.#abort = new AbortController();
@@ -140,7 +146,16 @@ export class VoiceLabMouthLink implements RealtimeLink {
     this.#audio.push(cb);
   }
   onSpeechStarted(cb: () => void): void {
-    this.brain.onSpeechStarted(cb);
+    this.brain.onSpeechStarted(() => {
+      // The model reports "the caller started talking" as soon as it hears it; this voice lags the model by a second or two. When the caller
+      // has not heard anything of the answer yet there is nothing to cut off: dropping it would leave the caller in silence (then talking
+      // again, and again interrupting). Only speech over audible audio is a real barge-in.
+      if (Date.now() >= this.#audibleUntil) {
+        this.o.log?.('voicelab: caller speech before anything was audible, nothing to stop');
+        return;
+      }
+      cb();
+    });
   }
   onTranscript(cb: (who: 'assistant' | 'caller', text: string) => void): void {
     this.brain.onTranscript(cb);
