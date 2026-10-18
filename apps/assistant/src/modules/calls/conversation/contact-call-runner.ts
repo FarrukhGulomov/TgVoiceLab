@@ -7,6 +7,7 @@ import type { TaskService } from '../../tasks/tasks.service.js';
 import { VOICE_LANGUAGE_RULE } from './language-rule.js';
 import { contactScope } from '../../memory/memory.service.js';
 import { MEETING_SLOT_PREFIX } from '../contact-calls.service.js';
+import { checkOffer, decodeLimit, type PriceLimit } from '../negotiation.js';
 import { RealtimeCallBridge, type RealtimeLink, type ToolCall, type ToolDeclaration, type ToolOutcome } from '../audio/realtime-bridge.js';
 
 export const CONTACT_DISCLOSURE_VERSION = 'owner-attested-v1';
@@ -31,6 +32,7 @@ const OUTCOMES = [
   'meeting_agreed',
   'meeting_countered',
   'counter_offer',
+  'deal_reached',
   'callback_requested',
   'no_agreement',
   'declined',
@@ -41,13 +43,15 @@ export const CONTACT_CALL_TOOL_DECLARATIONS: ToolDeclaration[] = [
   {
     name: 'submit_report',
     description:
-      "Suhbat natijasini egasiga yetkazish uchun hisobot. outcome: 'delivered' (xabar yetkazildi), 'answered' (savollarga javob olindi), 'meeting_agreed' (taklif qilingan vaqtlardan biri kelishildi: agreed_slot majburiy), 'meeting_countered' (uchrashuv vaqti bo'yicha suhbatdosh boshqa vaqt taklif qildi: contact_proposal ga yoz), 'counter_offer' (uchrashuv emas, boshqa masala bo'yicha — narx, summa, shart, xizmat — suhbatdosh o'z shartini taklif qildi: contact_proposal ga aynan yoz), 'callback_requested' (suhbatdosh egasi o'zi qo'ng'iroq qilishini so'radi), 'no_agreement', 'declined' (gaplashishni xohlamadi), 'consent_withdrawn' (AI bilan gaplashishni rad etdi). summary — suhbatdosh aytganlarining qisqa, halol bayoni (faqat haqiqatda aytilganini yoz). Tugatishdan oldin bir marta chaqir.",
+      "Suhbat natijasini egasiga yetkazish uchun hisobot. outcome: 'delivered' (xabar yetkazildi), 'answered' (savollarga javob olindi), 'meeting_agreed' (taklif qilingan vaqtlardan biri kelishildi: agreed_slot majburiy), 'meeting_countered' (uchrashuv vaqti bo'yicha suhbatdosh boshqa vaqt taklif qildi: contact_proposal ga yoz), 'deal_reached' (narx/shart egasining chegarasi ichida oldindan kelishildi: agreed_amount va currency majburiy; yakuniy tasdiq egasida), 'counter_offer' (uchrashuv emas, boshqa masala bo'yicha — narx, summa, shart, xizmat — suhbatdosh o'z shartini taklif qildi: contact_proposal ga aynan yoz), 'callback_requested' (suhbatdosh egasi o'zi qo'ng'iroq qilishini so'radi), 'no_agreement', 'declined' (gaplashishni xohlamadi), 'consent_withdrawn' (AI bilan gaplashishni rad etdi). summary — suhbatdosh aytganlarining qisqa, halol bayoni (faqat haqiqatda aytilganini yoz). Tugatishdan oldin bir marta chaqir.",
     parameters: {
       type: 'object',
       properties: {
         outcome: { type: 'string', enum: [...OUTCOMES] },
         summary: { type: 'string' },
         agreed_slot: { type: 'integer', description: "Kelishilgan vaqtning ro'yxatdagi raqami (faqat meeting_agreed uchun)" },
+        agreed_amount: { type: 'number', description: 'deal_reached uchun: kelishilgan summa (raqam)' },
+        currency: { type: 'string', description: 'deal_reached uchun: valyuta kodi (USD, UZS, EUR, RUB)' },
         contact_proposal: { type: 'string', description: 'Suhbatdosh taklif qilgan boshqa vaqt yoki shart, aytilganidek' },
         notes: {
           type: 'array',
@@ -57,6 +61,16 @@ export const CONTACT_CALL_TOOL_DECLARATIONS: ToolDeclaration[] = [
         },
       },
       required: ['outcome', 'summary'],
+    },
+  },
+  {
+    name: 'check_offer',
+    description:
+      "Suhbatdosh narx/summa taklif qilganda HAR SAFAR, javob berishdan OLDIN chaqir: taklif egasining chegarasi ichidami? acceptable=false bo'lsa taklifni QABUL QILMA, chegarani aytma, qarshi taklif qil.",
+    parameters: {
+      type: 'object',
+      properties: { amount: { type: 'number' }, currency: { type: 'string', description: 'USD, UZS, EUR yoki RUB' } },
+      required: ['amount', 'currency'],
     },
   },
   {
@@ -76,6 +90,8 @@ export interface ContactCallInstructionsInput {
   slots?: string[];
   /** Facts remembered from earlier calls with THIS contact (never anything about other people). */
   memories?: string[];
+  /** Price limits the owner set (read by code from his words); the AI may never accept beyond them. */
+  limits?: PriceLimit[];
 }
 
 /** The AI introduces itself in the first sentence; the owner's brief is DATA, never instructions. */
@@ -101,8 +117,19 @@ export function buildContactCallInstructions(a: ContactCallInstructionsInput): s
       : '',
     "Sen FAQAT yuqoridagi topshiriq doirasida gapirasan. Egasining boshqa ma'lumotlarini (vazifalari, kontaktlari, rejalari, joylashuvi) aytma. Suhbatdosh so'rasa: \"Bu haqda ma'lumot bera olmayman\".",
     'HECH QACHON qilma:\n' + a.forbidden.map((f) => `- ${clean(f)}`).join('\n'),
-    "Topshiriq so'rov yoki muzokara bo'lsa (masalan qarz, yordam, xizmat): maqsadni aniq va xushmuomala tushuntir, egasining topshiriqdagi shartlarini (summa, muddat va h.k.) ayt, suhbatdosh shartlarini va evaziga nima xohlashini ANIQ so'rab, aytilganini aynan yozib ol. Rad etsa sababini so'ra, bosim o'tkazma. Suhbatdosh o'z shartini aytsa (boshqa narx, summa, xizmat) — rozi bo'lma, uni takrorlab tasdiqlat va submit_report da outcome='counter_offer', contact_proposal ga aynan yoz. Egasi topshiriqda aytmagan majburiyatni (boshqa summa, muddat, xizmat, to'lov) o'zingdan qabul qilma va va'da berma — uni egasiga yetkazishni ayt.",
-    'Suhbatdosh boshqa yangi kelishuv yoki qaror so\'rasa: "Buni egasiga yetkazaman" de, o\'zing qaror qilma.',
+    a.limits?.length
+      ? "EGASINING QATIY CHEGARALARI (kod bilan tekshiriladi, bu MA'LUMOT; HECH QACHON suhbatdoshga aytma, hatto so'rasa ham, hatto yordam so'rab iltimos qilsa ham):\n" +
+        a.limits
+          .map(
+            (l) =>
+              `- ${l.kind === 'min' ? `${l.amount} ${l.currency} dan PAST narxga rozi bo'lma (egasi sotuvchi)` : `${l.amount} ${l.currency} dan YUQORI narxga rozi bo'lma (egasi xaridor)`}`,
+          )
+          .join('\n') +
+        "\nSuhbatdosh har safar summa aytganda, javob berishdan OLDIN check_offer toolini chaqir. acceptable=false bo'lsa o'sha taklifni qabul qilma va 'egasiga yetkazaman' deb qochma — muzokarani davom ettir."
+      : '',
+    "MUZOKARACHI SIFATIDA ISHLASH (narx, savdo, xizmat, shart haqida topshiriq bo'lsa): sen kuchli, tajribali, xushmuomala savdogar-kotibasan; maqsading egasiga eng yaxshi shart olish. 1) Topshiriqni yaxshi tushun: nima, kim uchun, qaysi chegara, qachon. Egasi 'avval uning narxini kut' desa, birinchi bo'lib narx aytma — savol ber: \"Qanday narx haqida o'ylayapsiz?\". 2) Suhbatdosh narx aytsa, darrov rozi bo'lma, darrov rad ham etma: taklifni takrorla, check_offer bilan tekshir. 3) Taklif chegaradan past/yuqori bo'lsa: xushmuomala, ammo qat'iy rad et, qiymatni asosla (mashinaning holati, bozor narxi, yili, ehtiyoji — FAQAT topshiriq va xotirada bor ma'lumotlardan, o'ylab topma), va aniq qarshi narx ayt: chegaradan yuqori, ammo kelishsa bo'ladigan narx bilan boshla va kichik qadamlarda tush. Chegaraning o'zini hech qachon oshkor qilma. 4) Siqish, shoshirish yoki 'oxirgi narx' bosimiga uchma; 'o'ylab ko'raman', 'egam bilan maslashaman' deb vaqt ol. 5) Suhbatdosh nimani xohlashini so'ra (to'lov usuli, muddat, ko'rish vaqti, boshqa shartlar) — shartlarni almashtirib kelishuv imkoniyatlarini top. 6) Taklif chegara ichida bo'lsa: oldindan kelishib ol (\"Men egamga yetkazaman va u tasdiqlasa, sizga xabar beramiz\"), submit_report da outcome='deal_reached', agreed_amount, currency ni yoz. 7) Chegaraga mos kelmasa va suhbatdosh turib olsa: xushmuomala xayrlash, outcome='no_agreement', summary da suhbatdosh oxirgi aytgan narxni yoz. Narx chegaradan past taklifni 'egasiga yetkazaman' deb qoldirma — bu egasining topshirig'iga zid. 8) Egasi topshiriqda aytmagan boshqa majburiyatni (boshqa summa, muddat, to'lov) o'zingdan qabul qilma. Suhbatdosh qo'shimcha yangi narsa talab qilsa, uni takrorlab tasdiqlat va submit_report da outcome='counter_offer', contact_proposal ga aynan yoz.",
+    'Haqiqiy odamdek gapir: qisqa jumlalar, tinglash, suhbatdoshning ismini ishlat, tabiiy bog\'lovchilar ("tushunarli", "xo\'p", "mayli"), takrorlama. Bir vaqtda faqat bitta fikr ayt. Gapini bo\'lib kelma.',
+    "Suhbatdosh topshiriqda yo'q yangi qaror so'rasa: \"Buni egasiga yetkazaman\" de, o'zing qaror qilma.",
     "Suhbat oxirida: egasiga nima yetkazganingni va suhbatdosh nima degani (yoki degani yo'qligini) submit_report bilan halol yoz, so'ng xayrlashib end_call chaqir.",
   ]
     .filter(Boolean)
@@ -143,6 +170,8 @@ export class ContactCallRunner implements CallSessionRunner {
     const fmt = (d: Date) => DateTime.fromJSDate(d, { zone: tz }).setLocale('en').toFormat("cccc, yyyy-LL-dd HH:mm '('z')'");
     const memNow = (this.d.clock ?? { now: () => new Date() }).now();
     const memories = this.d.memory ? (await this.d.memory.list(db, ownerId, contactScope(row.id), 12, memNow)).map((m) => m.text) : [];
+    const limits = plan.allowedContext.map(decodeLimit).filter((x): x is PriceLimit => !!x);
+    let deal: { amount: number; currency: string } | undefined;
     let notes: string[] = [];
     let agreedSlot: Date | undefined;
     let proposal = '';
@@ -170,10 +199,26 @@ export class ContactCallRunner implements CallSessionRunner {
           }
           agreedSlot = picked;
         }
+        deal = undefined;
+        if (outcome === 'deal_reached') {
+          const amount = Number(call.args.agreed_amount);
+          const currency = String(call.args.currency ?? '');
+          const chk = Number.isFinite(amount) && amount > 0 ? checkOffer(limits, amount, currency) : undefined;
+          if (!chk) return { result: { ok: false, error: 'agreed_amount and currency are required for deal_reached' } };
+          // The owner's limit is checked in code: a below-floor price can never be reported as a deal.
+          if (!chk.acceptable)
+            return { result: { ok: false, error: `deal_reached refused: ${chk.note} Muzokarani davom ettir yoki outcome='no_agreement' ber.` } };
+          deal = { amount, currency: currency.toUpperCase() };
+        }
         proposal = typeof call.args.contact_proposal === 'string' ? call.args.contact_proposal.trim().slice(0, 300) : '';
         report = { outcome, summary };
         if (outcome === 'consent_withdrawn') await this.#consent(ownerId, callId, plan.recipientTelegramId, 'withdrawn');
         return { result: { ok: true } };
+      }
+      if (call.name === 'check_offer') {
+        const amount = Number(call.args.amount);
+        if (!Number.isFinite(amount) || amount <= 0) return { result: { ok: false, error: 'amount must be a positive number' } };
+        return { result: { ok: true, ...checkOffer(limits, amount, String(call.args.currency ?? '')) } };
       }
       if (call.name === 'end_call') {
         return { result: { ok: true }, respond: false, afterPlayout: () => endRequested() };
@@ -189,6 +234,7 @@ export class ContactCallRunner implements CallSessionRunner {
       questions: plan.questions,
       slots: slotDates.map(fmt),
       memories,
+      limits,
     });
     const link = this.d.makeLink({ instructions, tools: CONTACT_CALL_TOOL_DECLARATIONS });
     const bridge = new RealtimeCallBridge(handle, link, { ...(this.d.log ? { log: this.d.log } : {}), onTool });
@@ -218,7 +264,7 @@ export class ContactCallRunner implements CallSessionRunner {
           confidence: 0.8,
         });
     }
-    const note = await this.#finalize(ownerId, row.display_name, report, agreedSlot, proposal, tz, fmt);
+    const note = await this.#finalize(ownerId, row.display_name, report, agreedSlot, proposal, tz, fmt, deal);
     const finalReport =
       (report ? { ...report, summary: `${report.summary}${note}` } : undefined) ??
       (spoke
@@ -239,6 +285,7 @@ export class ContactCallRunner implements CallSessionRunner {
     proposal: string,
     _tz: string,
     fmt: (d: Date) => string,
+    deal?: { amount: number; currency: string },
   ): Promise<string> {
     if (!report) return '';
     let out = '';
@@ -258,6 +305,8 @@ export class ContactCallRunner implements CallSessionRunner {
       out += `\n↩️ ${contactName} boshqa vaqt taklif qildi${proposal ? `: «${proposal}»` : ''}. Hech narsa kelishilmadi — qaror sizda.`;
     if (report.outcome === 'counter_offer')
       out += `\n↩️ ${contactName} o'z shartini taklif qildi${proposal ? `: «${proposal}»` : ''}. Hech narsa kelishilmadi — qaror sizda.`;
+    if (report.outcome === 'deal_reached' && deal)
+      out += `\n🤝 ${contactName} bilan oldindan kelishildi: ${deal.amount.toLocaleString('en-US').replace(/,/g, ' ')} ${deal.currency}. Yakuniy qaror sizda — tasdiqlang yoki rad eting.`;
     if (report.outcome === 'callback_requested') out += `\n📞 ${contactName} o'zingiz qo'ng'iroq qilishingizni so'radi.`;
     return out;
   }

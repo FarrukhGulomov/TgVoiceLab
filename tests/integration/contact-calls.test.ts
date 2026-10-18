@@ -150,7 +150,7 @@ describe('calls to owner-vouched contacts', () => {
     expect(instructions).toContain('Farrux');
     expect(instructions).toContain("sun'iy intellekt yordamchisiman");
     expect(instructions).toContain("«hisobot tayyor bo'lganini ayt»");
-    expect(tools.map((x) => x.name)).toEqual(['submit_report', 'end_call']); // no access to any owner data
+    expect(tools.map((x) => x.name)).toEqual(['submit_report', 'check_offer', 'end_call']); // no access to any owner data
     link.toolCb!({ id: 'r', name: 'submit_report', args: { outcome: 'delivered', summary: 'Javlon xabarni qabul qildi, rahmat dedi.' } });
     await new Promise((r) => setTimeout(r, 50));
     link.toolCb!({ id: 'e', name: 'end_call', args: {} });
@@ -304,3 +304,29 @@ describe('contact call conversation safety', () => {
 
 // keep the unused-type import honest for the handle shape used by FakeCallAdapter
 export type _Unused = CallHandle | PcmFrame;
+
+describe('price negotiation with an owner limit', () => {
+  it("the owner's floor reaches the AI, a below-floor deal is refused in code, an in-range deal is reported as pending the owner's confirmation", async () => {
+    const s = await setup();
+    await s.say("kontakt qo'sh Javlon 555000111");
+    await s.say("Javlonga qo'ng'iroq qilib Farruxning Onix mashinasini sot, avval uning narxini kut, 10000 usd dan past sotma");
+    const dialing = s.app.tick();
+    for (let i = 0; i < 100 && s.links.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    const { link, instructions } = s.links[0]!;
+    expect(instructions).toContain('10000 USD');
+    expect(instructions).toContain('check_offer');
+    const res = (id: string) => link.results.find((x) => x.id === id)!.result;
+    link.toolCb!({ id: 'c1', name: 'check_offer', args: { amount: 5000, currency: 'USD' } });
+    link.toolCb!({ id: 'd1', name: 'submit_report', args: { outcome: 'deal_reached', summary: '5000 ga rozi', agreed_amount: 5000, currency: 'USD' } });
+    link.toolCb!({ id: 'c2', name: 'check_offer', args: { amount: 11000, currency: 'USD' } });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(res('c1')).toMatchObject({ ok: true, acceptable: false, reason: 'below_floor' });
+    expect(res('d1')).toMatchObject({ ok: false });
+    expect(res('c2')).toMatchObject({ acceptable: true });
+    link.toolCb!({ id: 'd2', name: 'submit_report', args: { outcome: 'deal_reached', summary: '11000 ga kelishdik', agreed_amount: 11000, currency: 'USD' } });
+    const report = await finish(s, link, dialing);
+    expect(report).toContain('11 000 USD');
+    expect(report).toContain('Yakuniy qaror sizda');
+    await s.app.close();
+  });
+});

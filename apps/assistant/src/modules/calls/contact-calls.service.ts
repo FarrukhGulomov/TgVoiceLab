@@ -3,10 +3,11 @@ import type pg from 'pg';
 import type { Clock } from '../../application/clock.js';
 import { enqueueJob } from '../jobs/jobs.js';
 import type { AuthorizationService } from './authorizations.service.js';
+import { encodeLimit, extractPriceLimits } from './negotiation.js';
 
 /** Things the AI may never do on a contact call, whatever the contact asks. Part of the plan the owner approved. */
 export const DEFAULT_FORBIDDEN_COMMITMENTS = [
-  "narx, to'lov yoki pul haqida kelishmaslik va va'da bermaslik",
+  "egasi topshirig'ida ko'rsatilgan narx/shart chegarasidan tashqarida kelishmaslik va qaror qilmaslik (yakuniy qaror doim egasida)",
   'shartnoma yoki majburiyat tuzmaslik',
   "egasi nomidan qaror qabul qilmaslik yoki yangi va'da bermaslik",
   "egasining boshqa shaxsiy ma'lumotlarini, vazifalari yoki kontaktlarini aytmaslik",
@@ -41,7 +42,7 @@ export class ContactCallService {
       /** Meeting times the owner offers (the AI may confirm only one of these). */ slots?: Date[];
     },
   ): Promise<RequestContactCallResult> {
-    const message = a.message.trim().slice(0, 500);
+    const message = a.message.trim().slice(0, 1200);
     if (message.length < 3) return { ok: false, reason: 'empty_message' };
     const now = this.clock.now();
     const contact = await c.query<{ telegram_user_id: string }>('SELECT telegram_user_id FROM contacts WHERE id=$1 AND owner_id=$2', [a.contactId, ownerId]);
@@ -66,6 +67,8 @@ export class ContactCallService {
         questions: [],
         allowedContext: [
           message,
+          // The owner's price limits are read from his own words here, in code, and enforced during the call.
+          ...extractPriceLimits(message).map(encodeLimit),
           ...(a.slots ?? [])
             .filter((d) => d.getTime() > now.getTime())
             .slice(0, 5)
