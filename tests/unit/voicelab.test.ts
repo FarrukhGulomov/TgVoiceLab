@@ -120,7 +120,7 @@ const waitFor = async (ok: () => boolean, ms = 3000) => {
 };
 
 describe('VoiceLabMouthLink', () => {
-  const mk = (delays: Record<string, number> = {}) => {
+  const mk = (delays: Record<string, number> = {}, idleFlushMs?: { sentence: number; other: number }) => {
     const brain = new FakeBrain();
     const spoken: string[] = [];
     const tts = {
@@ -130,7 +130,7 @@ describe('VoiceLabMouthLink', () => {
         return { pcm: new Uint8Array(9600), rateHz: 24000 };
       },
     };
-    const link = new VoiceLabMouthLink(brain, tts);
+    const link = new VoiceLabMouthLink(brain, tts, { idleFlushMs });
     const chunks: number[] = [];
     link.onAudio((p) => chunks.push(p.length));
     return { brain, link, spoken, chunks };
@@ -154,6 +154,16 @@ describe('VoiceLabMouthLink', () => {
     brain.toolCb({ id: '1', name: 'end_call', args: {} });
     await waitFor(() => audioAtTool >= 0);
     expect(audioAtTool).toBe(2);
+  });
+
+  it('the last sentence is voiced when the text goes quiet, without waiting for the turn-complete signal', async () => {
+    const { brain, chunks, spoken } = mk({}, { sentence: 20, other: 60 });
+    brain.textCb('Assalomu alaykum, men yordamchiman.', false); // no space after the full stop, no "done" yet
+    await waitFor(() => chunks.length >= 2);
+    expect(spoken).toEqual(['Assalomu alaykum, men yordamchiman.']);
+    brain.textCb('Sizga qanday', false); // unfinished and quiet: still voiced after the longer pause
+    await waitFor(() => spoken.length === 2);
+    expect(spoken[1]).toBe('Sizga qanday');
   });
 
   it('the caller speaking before anything was audible stops nothing; speaking over audible audio does', async () => {

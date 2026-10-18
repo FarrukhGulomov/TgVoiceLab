@@ -66,11 +66,16 @@ export class VoiceLabMouthLink implements RealtimeLink {
   #abort = new AbortController();
   /** When the audio handed to the call so far finishes playing (wall clock): the caller can only be "talked over" before this moment. */
   #audibleUntil = 0;
+  #idle: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly brain: TextBrain,
     private readonly tts: Synthesizer,
-    private readonly o: { log?: ((line: string) => void) | undefined } = {},
+    private readonly o: {
+      log?: ((line: string) => void) | undefined;
+      /** How long the text may stay quiet before the unfinished rest is voiced anyway (after a full stop / otherwise). */
+      idleFlushMs?: { sentence: number; other: number } | undefined;
+    } = {},
   ) {
     this.inputRateHz = brain.inputRateHz;
     brain.onText((delta, done) => {
@@ -78,11 +83,19 @@ export class VoiceLabMouthLink implements RealtimeLink {
       const { sentences, rest } = takeSentences(this.#buf);
       this.#buf = rest;
       for (const s of sentences) this.#enqueue(s);
+      clearTimeout(this.#idle);
       if (done) this.#flush();
+      else if (this.#buf.trim()) {
+        // The model's turn-complete signal can arrive seconds after its last words (it follows the audio it generated). The last sentence has no
+        // space after its full stop yet, so without this it would wait for that signal: speak it as soon as the text goes quiet.
+        const idle = this.o.idleFlushMs ?? { sentence: 200, other: 900 };
+        this.#idle = setTimeout(() => this.#flush(), /[.!?…]["')»]?\s*$/.test(this.#buf) ? idle.sentence : idle.other);
+      }
     });
   }
 
   #flush(): void {
+    clearTimeout(this.#idle);
     const rest = this.#buf;
     this.#buf = '';
     this.#enqueue(rest);
@@ -122,6 +135,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
     this.brain.respond(instructions);
   }
   interrupt(playedMs: number): void {
+    clearTimeout(this.#idle);
     this.#epoch++;
     this.#audibleUntil = 0;
     this.#buf = '';
@@ -165,6 +179,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
     this.brain.onError(cb);
   }
   close(): void {
+    clearTimeout(this.#idle);
     this.#epoch++;
     this.#abort.abort();
     this.brain.close();
