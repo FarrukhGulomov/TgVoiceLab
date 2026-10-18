@@ -218,3 +218,12 @@ describe('Gemini Live: transcript mode', () => {
     ]);
   });
 });
+
+describe('Gemini turn-taking tuning', () => {
+  it('is sent only when configured', () => {
+    const none = (geminiSetup({ model: 'm', instructions: 'x' }) as { setup: Record<string, any> }).setup;
+    expect(none.realtimeInputConfig).toBeUndefined();
+    const t = (geminiSetup({ model: 'm', instructions: 'x', vad: { silenceMs: 900, end: 'low' } }) as { setup: Record<string, any> }).setup;
+    expect(t.realtimeInputConfig.automaticActivityDetection).toEqual({ endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', silenceDurationMs: 900 });
+  });
+});

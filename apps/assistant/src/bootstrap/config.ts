@@ -32,6 +32,10 @@ const EnvSchema = z
     OPENAI_TRANSCRIPTION_MODEL: opt(z.string()),
     /** With TTS_PROVIDER=voicelab on Gemini: `transcript` (default) drops the model's audio and voices its transcript (works with native-audio models); `modality` asks for TEXT output (needs a Live model that supports it). */
     GEMINI_TEXT_OUTPUT: z.enum(['transcript', 'modality']).default('transcript'),
+    /** Turn-taking tuning for Gemini Live (unset = defaults): how long a pause ends the caller's turn, and the start/end-of-speech sensitivity. */
+    GEMINI_VAD_SILENCE_MS: opt(z.coerce.number().int().min(100).max(5000)),
+    GEMINI_VAD_START: opt(z.enum(['low', 'high'])),
+    GEMINI_VAD_END: opt(z.enum(['low', 'high'])),
     GEMINI_TEXT_MODE: z.enum(['realtime', 'client_content']).default('realtime'),
     GEMINI_GOOGLE_SEARCH: bool.default(false),
     GEMINI_LANGUAGE_CODE: opt(z.string()),

@@ -31,6 +31,11 @@ export interface GeminiLiveOptions {
    * said is streamed through `onText` instead (works with native-audio models).
    */
   textOutput?: boolean | 'transcript' | undefined;
+  /**
+   * Turn-taking tuning (all optional; unset = the model's defaults). A caller on a phone line who pauses mid-sentence is otherwise answered too early
+   * and then talked over: a longer `silenceMs` and LOW end-of-speech sensitivity make the model wait for the caller to finish.
+   */
+  vad?: { silenceMs?: number | undefined; start?: 'low' | 'high' | undefined; end?: 'low' | 'high' | undefined } | undefined;
   /** How long to wait for `setupComplete` before reporting that the setup was rejected or ignored. */
   setupTimeoutMs?: number | undefined;
   /** How a plain-text turn (the greeting) is sent. `realtime` = realtimeInput.text (newer), `client_content` = clientContent turn (older). */
@@ -45,7 +50,7 @@ export const GEMINI_OUTPUT_RATE = 24_000;
 const DEFAULT_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 export function geminiSetup(
-  o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'instructions' | 'googleSearch' | 'languageCode' | 'tools' | 'textOutput'>,
+  o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'instructions' | 'googleSearch' | 'languageCode' | 'tools' | 'textOutput' | 'vad'>,
 ): Record<string, unknown> {
   return {
     setup: {
@@ -69,6 +74,17 @@ export function geminiSetup(
                 ? [{ functionDeclarations: o.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })) }]
                 : []),
             ],
+          }
+        : {}),
+      ...(o.vad && (o.vad.silenceMs || o.vad.start || o.vad.end)
+        ? {
+            realtimeInputConfig: {
+              automaticActivityDetection: {
+                ...(o.vad.start ? { startOfSpeechSensitivity: o.vad.start === 'low' ? 'START_SENSITIVITY_LOW' : 'START_SENSITIVITY_HIGH' } : {}),
+                ...(o.vad.end ? { endOfSpeechSensitivity: o.vad.end === 'low' ? 'END_SENSITIVITY_LOW' : 'END_SENSITIVITY_HIGH' } : {}),
+                ...(o.vad.silenceMs ? { silenceDurationMs: o.vad.silenceMs } : {}),
+              },
+            },
           }
         : {}),
       systemInstruction: { parts: [{ text: o.instructions }] },
