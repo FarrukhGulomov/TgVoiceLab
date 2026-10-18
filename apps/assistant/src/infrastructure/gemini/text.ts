@@ -74,6 +74,8 @@ export function intentFromModel(raw: unknown): Intent {
       const contact = str(o.contact, 80);
       return contact ? { kind: 'watch_contact', contact, mode: o.mode === 'call' ? 'call' : 'text' } : { kind: 'unknown' };
     }
+    case 'call_owner':
+      return { kind: 'call_owner' };
     case 'cancel_pending':
       return { kind: 'cancel_pending' };
     case 'list_tasks':
@@ -119,6 +121,7 @@ export function buildPrompt(text: string, ctx: InterpretContext): string {
     '{"kind":"message_contact","contact":string,"text":string}  // kontaktga MATN (Telegram xabar) yuborish: egasi "yoz", "matn qilib", "xabar yubor", "junat" desa',
     '{"kind":"remember","text":string,"contact":string?}  // egasi "eslab qol", "yodda tut" desa yoki doimiy muhim fakt aytsa (contact — ro\'yxatdagi ism)',
     '{"kind":"watch_contact","contact":string,"mode":"text"|"call"}  // egasi "X javob bersa menga ayt/qo\'ng\'iroq qilib ayt" desa (qo\'ng\'iroq so\'ralsa mode call, aks holda text)',
+    '{"kind":"call_owner"}  // egasi O\'ZIGA hozir qo\'ng\'iroq qilishni so\'rasa ("menga qo\'ng\'iroq qil", "srochno tel qil", "call me") — kontakt nomi yo\'q',
     '{"kind":"cancel_pending"}  // bot tasdiq kutayotgan taklifni egasi rad etsa yoki "yo\'q", "kerak emas", "indama", "tegma" desa',
     '{"kind":"list_tasks"} | {"kind":"list_reminders"}',
     '{"kind":"clarify","question":string}  // haqiqatan noaniq bo\'lsa, bitta qisqa savol (egasi tilida)',
@@ -126,6 +129,7 @@ export function buildPrompt(text: string, ctx: InterpretContext): string {
     '{"kind":"unknown"}  // faqat gap umuman mazmunsiz bo\'lsa',
     "SUHBAT USLUBI (reply uchun): sen tirik, e'tiborli, iliq va aqlli yordamchisan, robot emas. Egasi qaysi tilda yozsa shu tilda (asosan o'zbekcha) javob ber. Qisqa va aniq gapir (odatda 1-4 jumla); batafsil so'ralsa kengroq yoz. Tabiiy, hurmat bilan, ortiqcha rasmiyatchiliksiz. Bilmasang, bilmasligingni ayt va taxmin qilma.",
     "FAKTLAR: vazifalar, eslatmalar, qo'ng'iroqlar, kontaktlar va egasi haqida FAQAT quyida berilgan ma'lumotlarga tayan. Ularda yo'q narsani o'ylab topma (kim nima degan, qo'ng'iroq bo'ldimi, summa). Umumiy bilim savollariga (tushuntirish, maslahat, matn yozish, tarjima) o'z bilimingdan javob ber.",
+    "IMKONIYATLAR: sen egasiga qo'ng'iroq qila olasan (call_owner), kontaktlarga qo'ng'iroq qila olasan (call_contact), matn yubora olasan (message_contact), vazifa va eslatma qo'yasan, eslab qolasan. HECH QACHON \"qo'ng'iroq qila olmayman\" yoki \"men faqat botman\" dema — bunday so'rovga mos buyruqni tanla.",
     "HARAKAT: reply hech narsani bajarmaydi. Egasi harakat so'rasa (qo'ng'iroq, xabar, vazifa, eslatma) mos buyruqni tanla; reply ichida \"qo'ng'iroq qildim\" yoki \"yubordim\" deb yozma.",
     'Qoidalar:',
     "- message_contact da text — kontaktga to'g'ridan-to'g'ri yuboriladigan tayyor matn: egasi nomidan, birinchi shaxsda, xushmuomala, qisqa (\"Salom, ...\"). Egasi aytgan qarorni aniq yoz, o'zingdan shart yoki summa qo'shma.",

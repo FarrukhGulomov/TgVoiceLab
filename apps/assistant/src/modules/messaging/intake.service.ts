@@ -683,6 +683,14 @@ export class IntakeService {
         await watches.set(c, p.ownerId, r.contact.id, intent.mode, this.d.clock.now());
         return t(loc, intent.mode === 'call' ? 'watch_set_call' : 'watch_set_text', { name: r.contact.displayName });
       }
+      case 'call_owner': {
+        const rem = this.d.reminders;
+        if (!rem) return t(loc, 'unknown');
+        // Same path as a call reminder one minute from now: kill switch, quiet hours, opt-out and gates still apply.
+        const at = DateTime.fromJSDate(new Date(this.d.clock.now().getTime() + 60_000), { zone: p.timezone }).toFormat("yyyy-LL-dd'T'HH:mm");
+        await rem.create(p.ownerId, { title: intent.reason ?? "Siz so'ragan qo'ng'iroq", localDateTime: at, mode: 'call', silent: true }, c);
+        return t(loc, 'call_owner_ok');
+      }
       case 'clear_stuck_calls': {
         const ops = this.d.ownerCalls;
         if (!intent.confirmed || !ops?.resolveAllUnknownCalls) return t(loc, 'unknown');

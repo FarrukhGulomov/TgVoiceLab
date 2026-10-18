@@ -184,6 +184,13 @@ export class RulesInterpreter implements TextInterpreterPort {
         )
       )
         return { kind: 'clear_stuck_calls' };
+      // "Srochno menga qo'ng'iroq qil" / "call me now": ring the owner right away.
+      if (
+        /^(?:iltimos[,\s]+)?(?:(?:srochno|shoshilinch|zudlik\s+bilan|darhol|hoziroq|hozir|tezda|tez)[,\s]+)?(?:menga|bizga|manga)\s+(?:(?:hozir|hoziroq|srochno|darhol|tezda|tez)\s+)?(?:qo'?ng'?iroq|tel(?:efon)?|call)\w*(?:\s+(?:qil|qiling|qilsang|qilib\s+ber|et|ber)\w*)?[.!]?$|^(?:iltimos[,\s]+)?(?:(?:srochno|shoshilinch|hozir|darhol|tezda)[,\s]+)?(?:qo'?ng'?iroq|tel(?:efon)?)\s+(?:qil|qiling)\s+(?:menga|manga)[.!]?$|^(?:please\s+)?call\s+me(?:\s+(?:now|asap|urgently|right\s+now))?[.!]?$|^(?:срочно\s+)?(?:позвони|позвоните)\s+мне(?:\s+(?:сейчас|срочно))?[.!]?$/iu.test(
+          text,
+        )
+      )
+        return { kind: 'call_owner' };
       // "Nanajon javob bersa menga qo'ng'iroq qilib ayt" / "Nanajondan xabar kelsa menga ayt": tell the owner when this contact replies.
       const watch =
         /^(\S+?)(?:dan|ga|ka|qa)?\s+(?:senga\s+)?(?:javob\s+(?:bersa|yozsa|qaytarsa|qilsa)|xabar\s+(?:kelsa|yozsa|bersa|qaytarsa)|yozsa)\s*[,:-]?\s*(?:menga|bizga)?\s*(.*)$/i.exec(

@@ -179,3 +179,20 @@ describe('questions are not tasks', () => {
     expect(await run('vazifa: hisobot tayyorlash')).toMatchObject({ kind: 'create_task', title: 'hisobot tayyorlash' });
   });
 });
+
+describe('call the owner', () => {
+  it.each([
+    "Srochno menga qo'ng'iroq qil.",
+    "menga qo'ng'iroq qil",
+    'Hozir menga tel qiling',
+    'call me',
+    'Call me now!',
+    "qo'ng'iroq qil menga",
+    'Срочно позвони мне',
+  ])('%s -> call_owner', async (text) => {
+    expect(await run(text)).toEqual({ kind: 'call_owner' });
+  });
+  it('a call with a time or a contact is not an immediate owner call', async () => {
+    for (const t of ["ertaga 10:00 da menga qo'ng'iroq qil", "Test2 ga qo'ng'iroq qil"]) expect((await run(t)).kind).not.toBe('call_owner');
+  });
+});
