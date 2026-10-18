@@ -134,8 +134,12 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const { VOICE_TEXT_OUTPUT_RULE } = await import('./modules/calls/conversation/language-rule.js');
   const voicelab = cfg.TTS_PROVIDER === 'voicelab';
   // VoiceLab only speaks: the model that listens and decides answers in text (tools, memory and negotiation limits work as before).
-  const voiced = <T extends import('./infrastructure/voicelab/mouth-link.js').TextBrain>(brain: T) =>
-    new VoiceLabMouthLink(
+  const voiced = <T extends import('./infrastructure/voicelab/mouth-link.js').TextBrain>(brain: T) => {
+    log.info(
+      { listens: cfg.AI_VOICE_PROVIDER, speaks: 'voicelab', geminiTextOutput: cfg.GEMINI_TEXT_OUTPUT },
+      'call voice: the AI model listens, VoiceLab speaks',
+    );
+    return new VoiceLabMouthLink(
       brain,
       new VoiceLabTts({
         apiKey: cfg.VOICELAB_API_KEY!,
@@ -146,6 +150,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
       }),
       { log: (line) => log.debug({ call: true }, line) },
     );
+  };
   const makeOpenAi = (o: ConstructorParameters<typeof OpenAiRealtimeLink>[0]) =>
     voicelab
       ? voiced(new OpenAiRealtimeLink({ ...o, instructions: `${o.instructions}\n${VOICE_TEXT_OUTPUT_RULE}`, textOutput: true }))
