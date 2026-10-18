@@ -21,6 +21,8 @@ export interface RealtimeOptions {
   /** Optional input-transcription model (printed as `caller:` lines). Never defaulted: the name must come from configuration. */
   transcriptionModel?: string | undefined;
   dialect?: RealtimeDialect | undefined;
+  /** The model answers in TEXT (streamed through `onText`); something else (a TTS voice) speaks it. */
+  textOutput?: boolean | undefined;
   sampleRateHz?: number | undefined;
   baseUrl?: string | undefined;
   /** Test seam. */
@@ -33,14 +35,14 @@ function toolsField(tools: ToolDeclaration[] | undefined): Record<string, unknow
 }
 
 export function sessionUpdate(
-  o: Pick<RealtimeOptions, 'voice' | 'instructions' | 'dialect' | 'sampleRateHz' | 'transcriptionModel' | 'tools'>,
+  o: Pick<RealtimeOptions, 'voice' | 'instructions' | 'dialect' | 'sampleRateHz' | 'transcriptionModel' | 'tools' | 'textOutput'>,
 ): Record<string, unknown> {
   const rate = o.sampleRateHz ?? 24_000;
   if ((o.dialect ?? 'ga') === 'beta')
     return {
       type: 'session.update',
       session: {
-        modalities: ['audio', 'text'],
+        modalities: o.textOutput ? ['text'] : ['audio', 'text'],
         instructions: o.instructions,
         ...(o.voice ? { voice: o.voice } : {}),
         input_audio_format: 'pcm16',
@@ -55,7 +57,7 @@ export function sessionUpdate(
     session: {
       type: 'realtime',
       instructions: o.instructions,
-      output_modalities: ['audio'],
+      output_modalities: o.textOutput ? ['text'] : ['audio'],
       ...toolsField(o.tools),
       audio: {
         input: {
@@ -63,7 +65,7 @@ export function sessionUpdate(
           turn_detection: { type: 'server_vad' },
           ...(o.transcriptionModel ? { transcription: { model: o.transcriptionModel } } : {}),
         },
-        output: { format: { type: 'audio/pcm', rate }, ...(o.voice ? { voice: o.voice } : {}) },
+        ...(o.textOutput ? {} : { output: { format: { type: 'audio/pcm', rate }, ...(o.voice ? { voice: o.voice } : {}) } }),
       },
     },
   };
@@ -83,9 +85,12 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   #toolCalls: Array<(c: ToolCall) => void> = [];
   #activeResponse = false;
   #lastItemId: string | null = null;
+  #text: Array<(delta: string, done: boolean) => void> = [];
+  readonly #textOutput: boolean;
 
   constructor(o: RealtimeOptions) {
     this.inputRateHz = this.outputRateHz = o.sampleRateHz ?? 24_000;
+    this.#textOutput = !!o.textOutput;
     const url = `${o.baseUrl ?? 'wss://api.openai.com/v1/realtime'}?model=${encodeURIComponent(o.model)}`;
     const headers: Record<string, string> = { Authorization: `Bearer ${o.apiKey}` };
     if (o.dialect === 'beta') headers['OpenAI-Beta'] = 'realtime=v1';
@@ -140,6 +145,14 @@ export class OpenAiRealtimeLink implements RealtimeLink {
         if (e.item_id) this.#lastItemId = e.item_id;
         if (e.delta) for (const cb of this.#audio) cb(new Uint8Array(Buffer.from(e.delta, 'base64')));
         break;
+      case 'response.output_text.delta': // ga
+      case 'response.text.delta': // beta
+        if (e.delta) for (const cb of this.#text) cb(e.delta, false);
+        break;
+      case 'response.output_text.done': // ga
+      case 'response.text.done': // beta
+        for (const cb of this.#text) cb('', true);
+        break;
       case 'response.output_item.done':
         if (e.item?.type === 'function_call' && e.item.name && e.item.call_id) {
           let args: Record<string, unknown> = {};
@@ -179,7 +192,7 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   }
   interrupt(playedMs: number): void {
     if (this.#activeResponse) this.#send({ type: 'response.cancel' });
-    if (this.#lastItemId)
+    if (this.#lastItemId && !this.#textOutput)
       this.#send({ type: 'conversation.item.truncate', item_id: this.#lastItemId, content_index: 0, audio_end_ms: Math.max(0, Math.round(playedMs)) });
     this.#lastItemId = null;
   }
@@ -192,6 +205,9 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   sendToolResult(call: ToolCall, result: unknown, opts: { respond: boolean }): void {
     this.#send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: call.id, output: JSON.stringify(result) } });
     if (opts.respond) this.#send({ type: 'response.create' });
+  }
+  onText(cb: (delta: string, done: boolean) => void): void {
+    this.#text.push(cb);
   }
   onAudio(cb: (pcm: Uint8Array) => void): void {
     this.#audio.push(cb);

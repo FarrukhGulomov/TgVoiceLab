@@ -8,3 +8,8 @@ export const VOICE_LANGUAGE_RULE =
   'BOSHQA HECH QANDAY TILDA gapirma: hind, nemis, turk, arab, ispan, fransuz, xitoy va boshqa tillarda mutlaqo gapirma. ' +
   "Agar gap tushunarsiz, shovqinli yoki boshqa tilga o'xshab eshitilsa, buni o'zbekcha deb hisobla va o'zbekcha ayt: \"Kechirasiz, eshitolmadim, takrorlab bera olasizmi?\". " +
   "Raqam, vaqt va ismlarni ham o'zbekcha ayt.";
+
+/** Added when the model's TEXT is read aloud by a separate voice: it must write what is to be said, nothing else. */
+export const VOICE_TEXT_OUTPUT_RULE =
+  "JAVOB SHAKLI: sen yozgan matn aynan ovoz chiqarib o'qiladi. Faqat gapirish kerak bo'lgan so'zlarni yoz: emoji, belgi, qavs, ro'yxat, sarlavha, markdown ishlatma. " +
+  'Qisqa jumlalar yoz. Raqam va vaqtni so\'z bilan yoz (masalan "o\'n ming dollar", "soat o\'n besh nol nolda"). Gap oxirida nuqta qo\'y.';

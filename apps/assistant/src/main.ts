@@ -129,6 +129,24 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const { ReminderService } = await import('./modules/scheduling/reminders.service.js');
   const { GeminiLiveLink } = await import('./infrastructure/gemini/live.js');
   const { OpenAiRealtimeLink } = await import('./infrastructure/openai/realtime.js');
+  const { VoiceLabTts } = await import('./infrastructure/voicelab/tts.js');
+  const { VoiceLabMouthLink } = await import('./infrastructure/voicelab/mouth-link.js');
+  const { VOICE_TEXT_OUTPUT_RULE } = await import('./modules/calls/conversation/language-rule.js');
+  const voicelab = cfg.TTS_PROVIDER === 'voicelab';
+  const makeOpenAi = (o: ConstructorParameters<typeof OpenAiRealtimeLink>[0]) =>
+    voicelab
+      ? new VoiceLabMouthLink(
+          new OpenAiRealtimeLink({ ...o, instructions: `${o.instructions}\n${VOICE_TEXT_OUTPUT_RULE}`, textOutput: true }),
+          new VoiceLabTts({
+            apiKey: cfg.VOICELAB_API_KEY!,
+            voiceId: cfg.VOICELAB_VOICE_ID!,
+            baseUrl: cfg.VOICELAB_BASE_URL,
+            model: cfg.VOICELAB_TTS_MODEL,
+            speed: cfg.VOICELAB_SPEED,
+          }),
+          { log: (line) => log.debug({ call: true }, line) },
+        )
+      : new OpenAiRealtimeLink(o);
   const makeLink = ({ instructions, tools }: { instructions: string; tools: import('./modules/calls/audio/realtime-bridge.js').ToolDeclaration[] }) =>
     cfg.AI_VOICE_PROVIDER === 'gemini'
       ? new GeminiLiveLink({
@@ -142,7 +160,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
           languageCode: cfg.GEMINI_LANGUAGE_CODE,
           ...(cfg.GEMINI_DEBUG ? { debug: (line: string) => log.info({ gemini: true }, line.slice(0, 200)) } : {}),
         })
-      : new OpenAiRealtimeLink({
+      : makeOpenAi({
           apiKey: cfg.OPENAI_API_KEY!,
           model: cfg.OPENAI_REALTIME_MODEL!,
           voice: cfg.OPENAI_VOICE,

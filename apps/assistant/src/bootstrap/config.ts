@@ -37,6 +37,15 @@ const EnvSchema = z
     GEMINI_DEBUG: bool.default(false),
     /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset settles 0 (documented gap). */
     AI_VOICE_COST_USD_PER_MINUTE: opt(z.coerce.number().positive().max(100)),
+    /** Who speaks on calls. Unset: the AI voice provider's own voice. `voicelab`: VoiceLab's Uzbek voice (the listening/thinking model answers in text). Needs AI_VOICE_PROVIDER=openai. */
+    TTS_PROVIDER: z.enum(['voicelab']).optional(),
+    VOICELAB_API_KEY: opt(z.string()),
+    /** The voice's id from `pnpm voicelab:check` (e.g. the one named Nozima). */
+    VOICELAB_VOICE_ID: opt(z.string()),
+    VOICELAB_BASE_URL: opt(z.string().url()),
+    /** Sent as `model` only when set (the web studio offers "Lison v1"; the public API reference lists no model field). */
+    VOICELAB_TTS_MODEL: opt(z.string()),
+    VOICELAB_SPEED: opt(z.coerce.number().min(0.5).max(2)),
     DATA_ENCRYPTION_KEY_REF: opt(z.string()),
     ADMIN_TOKEN_SECRET_REF: opt(z.string()),
     /** Escape hatch for single-login development databases. Never set in production deployments (audit F11). */
@@ -65,6 +74,12 @@ const EnvSchema = z
       if (!e.DATA_ENCRYPTION_KEY_REF) bad('DATA_ENCRYPTION_KEY_REF', 'required in production');
       if (!e.ADMIN_TOKEN_SECRET_REF) bad('ADMIN_TOKEN_SECRET_REF', 'required in production');
       if (!e.OWNER_TELEGRAM_USER_ID) bad('OWNER_TELEGRAM_USER_ID', 'required in production');
+    }
+    if (e.TTS_PROVIDER === 'voicelab') {
+      if (!e.VOICELAB_API_KEY) bad('VOICELAB_API_KEY', 'TTS_PROVIDER=voicelab requires VOICELAB_API_KEY');
+      if (!e.VOICELAB_VOICE_ID) bad('VOICELAB_VOICE_ID', 'TTS_PROVIDER=voicelab requires VOICELAB_VOICE_ID (list voices with `pnpm voicelab:check`)');
+      if (e.AI_VOICE_PROVIDER !== 'openai')
+        bad('TTS_PROVIDER', 'the VoiceLab voice currently works with AI_VOICE_PROVIDER=openai (the model answers in text, VoiceLab speaks)');
     }
     if (e.CALLS_ENABLED) {
       if (e.CALL_ADAPTER === 'disabled') bad('CALL_ADAPTER', 'CALLS_ENABLED=true requires a real call adapter');

@@ -38,6 +38,7 @@
     "db:replay-tombstones": "pnpm --filter @tgvl/assistant run db:replay-tombstones",
     "keys:rotate": "pnpm --filter @tgvl/assistant run keys:rotate",
     "verify": "pnpm run lint && pnpm run format && pnpm run typecheck && pnpm run build && pnpm run test:all",
+    "voicelab:check": "pnpm --filter @tgvl/assistant run voicelab:check",
     "live:ai-call": "pnpm --filter @tgvl/assistant run live:ai-call",
     "live:gate-calls": "pnpm --filter @tgvl/assistant run live:gate-calls",
     "attest:target-host": "pnpm --filter @tgvl/assistant run attest:target-host",

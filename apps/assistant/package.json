@@ -15,6 +15,7 @@
     "db:replay-tombstones": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/cli/restore-replay.ts",
     "keys:rotate": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/cli/rotate-keys.ts",
     "build:contracts": "pnpm --filter @tgvl/contracts run build",
+    "voicelab:check": "tsx --env-file-if-exists=../../.env src/tools/voicelab-check.ts",
     "live:ai-call": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/tools/ai-call-test.ts",
     "live:gate-calls": "pnpm run build:contracts && tsx --env-file-if-exists=../../.env src/tools/gate-calls.ts",
     "attest:target-host": "pnpm run build:contracts && tsx src/tools/attest-target-host.ts",
