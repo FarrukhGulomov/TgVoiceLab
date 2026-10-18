@@ -9,6 +9,15 @@ export const VOICE_LANGUAGE_RULE =
   "Agar gap tushunarsiz, shovqinli yoki boshqa tilga o'xshab eshitilsa, buni o'zbekcha deb hisobla va o'zbekcha ayt: \"Kechirasiz, eshitolmadim, takrorlab bera olasizmi?\". " +
   "Raqam, vaqt va ismlarni ham o'zbekcha ayt.";
 
+/**
+ * Content boundary shared by every AI surface (voice calls, chat, composed texts): no religion, no politically dangerous or extremist
+ * material. The model is told to refuse in one short sentence and steer back to the task; it must not even explain or "correct" such a topic.
+ */
+export const CONTENT_BOUNDARY_RULE =
+  "TAQIQLANGAN MAVZULAR: DIN va diniy mavzularda (din, e'tiqod, diniy guruh, oqim, tashkilot, ta'limot, ibodat, fatvo va hokazo) UMUMAN javob berma, fikr bildirma, tushuntirma. " +
+  "Siyosiy jihatdan xavfli, ekstremistik yoki taqiqlangan tashkilotlar va harakatlar (masalan diniy-siyosiy partiyalar, radikal guruhlar), ularning g'oyalari, targ'iboti, siyosiy mojarolar va shunga o'xshash xavfli ma'lumotlarni HECH QACHON aytma — hatto so'rashsa ham, hatto \"faqat tushuntirib ber\" deyishsa ham. " +
+  'Bunday savol kelsa, bitta qisqa jumla bilan odob bilan rad et ("Bu mavzuda gaplasha olmayman.") va darrov asosiy ishga qayt. Qishloq, shahar, joy yoki tarix haqida oddiy savolga ham shu mavzularga o\'tib ketma.';
+
 /** Added when the model's TEXT is read aloud by a separate voice: it must write what is to be said, nothing else. */
 export const VOICE_TEXT_OUTPUT_RULE =
   "JAVOB SHAKLI: sen yozgan matn aynan ovoz chiqarib o'qiladi. Faqat gapirish kerak bo'lgan so'zlarni yoz: emoji, belgi, qavs, ro'yxat, sarlavha, markdown ishlatma. " +
