@@ -143,3 +143,24 @@ describe('meeting proposals', () => {
     expect(await run("Javlonga qo'ng'iroq qilib soat 5 da kelishini ayt")).not.toHaveProperty('slots');
   });
 });
+
+describe('memory and text commands', () => {
+  it('eslab qol / xotira / unut', async () => {
+    expect(await run('eslab qol: Farruh sutsiz qahva ichadi')).toEqual({ kind: 'remember', text: 'Farruh sutsiz qahva ichadi' });
+    expect((await run('xotira')).kind).toBe('list_memories');
+    expect(await run('unut 2')).toEqual({ kind: 'forget_memory', ref: { by: 'ordinal', n: 2 } });
+    expect(await run('unut: qahva')).toEqual({ kind: 'forget_memory', ref: { by: 'text', text: 'qahva' } });
+  });
+  it('"X ga yoz: ..." is a text for the contact, never a call', async () => {
+    expect(await run('Nanajonga yoz: Assalomu alaykum, qalaysiz?')).toEqual({
+      kind: 'message_contact',
+      contact: 'Nanajon',
+      text: 'Assalomu alaykum, qalaysiz?',
+    });
+  });
+  it('a time the question is about is not the time of the call', async () => {
+    const r = await run("Javohirga qo'ng'iroq qilib bugun soat 17:00 da nima rejalashtirilganini so'ra");
+    expect(r.kind).toBe('call_contact');
+    expect((r as { at?: unknown }).at).toBeUndefined();
+  });
+});

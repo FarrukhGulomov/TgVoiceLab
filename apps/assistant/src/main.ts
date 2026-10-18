@@ -167,6 +167,8 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const contactRunner = new ContactCallRunner({
     db,
     tasks: new TaskService(crypto),
+    memory: new (await import('./modules/memory/memory.service.js')).MemoryService(crypto),
+    clock: systemClock,
     makeLink,
     costUsdPerMinute: cfg.AI_VOICE_COST_USD_PER_MINUTE,
     log: (line) => log.debug({ call: true }, line.slice(0, 200)),

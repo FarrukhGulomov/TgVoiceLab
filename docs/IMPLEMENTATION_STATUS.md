@@ -90,6 +90,14 @@ committed. Live-verified for `meeting_agreed` and `meeting_countered` (see above
 `GeminiTextFallback` understands text the rules do not recognise (also transcribed voice notes), using contacts and the latest call report as
 context. A call it proposes asks for "ha" first. Offline-tested with fakes; **not live verified**.
 
+## Owner memory
+
+`MemoryService` (`memories` table, encrypted, scoped `owner:notes` / `contact:<id>:notes`, owner-approved only, expiry + per-scope cap of 60). The
+owner says «eslab qol: …», «xotira», «unut 2» (or the free-form fallback proposes `remember`). In contact calls the AI gets only THAT
+contact's notes (as data) and may return 0-5 `notes` with its report, which are stored as contact memory with provenance `call_report`.
+Removing a contact forgets their notes. The free-form fallback also sees the owner's notes and notes about contacts named in the message.
+Offline-tested; not live verified.
+
 ## Voice notes
 
 `GeminiTranscription` (generateContent, inline audio) turns owner voice notes into text when `GEMINI_API_KEY` and

@@ -12,6 +12,7 @@ import { DisabledCallAdapter } from '../modules/calls/adapters.js';
 import type { DerivedCapabilities } from '../modules/calls/capability-evidence.js';
 import { ContactCallService } from '../modules/calls/contact-calls.service.js';
 import { IntakeService } from '../modules/messaging/intake.service.js';
+import { MemoryService } from '../modules/memory/memory.service.js';
 import { RulesInterpreter } from '../modules/messaging/rules-interpreter.js';
 import { DisabledInterpreter } from '../modules/messaging/disabled-interpreter.js';
 import { TaskService } from '../modules/tasks/tasks.service.js';
@@ -78,6 +79,7 @@ export function buildContainer(d: ContainerDeps) {
   });
   const derive = d.deriveCapabilities ?? noCaps;
   const contacts = new ContactService(d.crypto);
+  const memory = new MemoryService(d.crypto);
   const authorizations = new AuthorizationService(d.db, d.clock, d.crypto);
   const contactCalls = d.callsEnabled ? new ContactCallService(authorizations, d.clock) : undefined;
   const operations = new OperationsService(d.db, d.clock, registry);
@@ -107,6 +109,7 @@ export function buildContainer(d: ContainerDeps) {
     ...(d.onFallbackError ? { onFallbackError: d.onFallbackError } : {}),
     ownerCalls: operations,
     contacts,
+    memory,
     ...(d.onVoiceError ? { onVoiceError: d.onVoiceError } : {}),
     ...(d.peers ? { peers: d.peers } : {}),
     ...(contactCalls ? { contactCalls } : {}),

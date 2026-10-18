@@ -75,6 +75,10 @@ export type Intent =
   | { kind: 'message_contact'; contact: string; text: string }
   /** The owner declined or withdrew the proposal that is waiting for a yes/no. */
   | { kind: 'cancel_pending' }
+  /** Keep a fact in the owner's memory (optionally about one contact). */
+  | { kind: 'remember'; text: string; contact?: string }
+  | { kind: 'list_memories' }
+  | { kind: 'forget_memory'; ref: TaskRef }
   | { kind: 'set_owner_name'; name: string }
   | { kind: 'set_briefing'; time: string } // HH:mm, daily
   | { kind: 'cancel_briefing' }
@@ -95,6 +99,8 @@ export interface InterpretContext {
     recentCall?: { contact: string; outcome: string; summary: string };
     /** The last few exchanges, oldest first, so a short reply is read in the light of what was just said. */
     history?: Array<{ from: 'owner' | 'assistant'; text: string }>;
+    /** What the assistant remembers that is relevant (the owner's notes and notes about contacts named in the message). */
+    memories?: string[];
     /** What the assistant is waiting for a yes/no on, if anything. */
     pending?: string;
   };

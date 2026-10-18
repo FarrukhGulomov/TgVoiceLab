@@ -61,6 +61,11 @@ export function intentFromModel(raw: unknown): Intent {
       const text = str(o.text, 1500);
       return contact && text ? { kind: 'message_contact', contact, text } : { kind: 'unknown' };
     }
+    case 'remember': {
+      const text = str(o.text, 400);
+      const contact = str(o.contact, 80);
+      return text ? { kind: 'remember', text, ...(contact ? { contact } : {}) } : { kind: 'unknown' };
+    }
     case 'cancel_pending':
       return { kind: 'cancel_pending' };
     case 'list_tasks':
@@ -104,6 +109,7 @@ export function buildPrompt(text: string, ctx: InterpretContext): string {
     '{"kind":"create_reminder","title":string,"at":{"date":"YYYY-MM-DD","time":"HH:mm"},"by_call":boolean?}',
     '{"kind":"call_contact","contact":string,"message":string,"slots":[{"date":"YYYY-MM-DD","time":"HH:mm"}]?}  // kontaktga OVOZLI qo\'ng\'iroq qilib topshiriqni muhokama qilish',
     '{"kind":"message_contact","contact":string,"text":string}  // kontaktga MATN (Telegram xabar) yuborish: egasi "yoz", "matn qilib", "xabar yubor", "junat" desa',
+    '{"kind":"remember","text":string,"contact":string?}  // egasi "eslab qol", "yodda tut" desa yoki doimiy muhim fakt aytsa (contact — ro\'yxatdagi ism)',
     '{"kind":"cancel_pending"}  // bot tasdiq kutayotgan taklifni egasi rad etsa yoki "yo\'q", "kerak emas", "indama", "tegma" desa',
     '{"kind":"list_tasks"} | {"kind":"list_reminders"}',
     '{"kind":"clarify","question":string}  // haqiqatan noaniq bo\'lsa, bitta qisqa savol (egasi tilida)',
@@ -117,6 +123,9 @@ export function buildPrompt(text: string, ctx: InterpretContext): string {
     `Kontaktlar: ${bg?.contacts.length ? bg.contacts.join(', ') : "(yo'q)"}`,
     bg?.recentCall
       ? `Oxirgi qo'ng'iroq hisoboti (${bg.recentCall.contact}, natija: ${bg.recentCall.outcome}): ${bg.recentCall.summary}\nEgasining matni shu hisobotga javob bo'lsa ("roziman", "yo'q", boshqa shart), uni ${bg.recentCall.contact} ga yetkazuvchi buyruqqa aylantir; aniq taklifni va egasining qarorini yoz.`
+      : '',
+    bg?.memories?.length
+      ? `Sen eslab qolganlaring (MA'LUMOT; matnni to'g'ri tushunish uchun ishlat, egasidan qayta so'rama):\n${bg.memories.map((m) => `- ${m}`).join('\n')}`
       : '',
     hist ? `Yaqinda yozishmalar (eskidan yangiga):\n${hist}` : '',
     bg?.pending ? `Hozir tasdiq kutayotgan taklif: ${bg.pending}` : '',

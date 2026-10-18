@@ -12,6 +12,7 @@ import { writeAudit } from '../audit/audit.js';
 import type { TaskService, Task } from '../tasks/tasks.service.js';
 import type { ReminderService } from '../scheduling/reminders.service.js';
 import type { ContactService } from '../contacts/contacts.service.js';
+import { MemoryService, OWNER_SCOPE, contactScope } from '../memory/memory.service.js';
 import { CONTACT_CALL_MAX_SECONDS, type ContactCallService } from '../calls/contact-calls.service.js';
 import { describeInstant, resolveWallClock } from '../scheduling/wallclock.js';
 import { t, type Locale, type MessageKey } from './i18n.js';
@@ -85,6 +86,8 @@ export class IntakeService {
         terminateLiveContactCalls(ownerId: string, contactId: string): Promise<number>;
       };
       contacts?: ContactService;
+      /** Owner-controlled memory ("eslab qol", "xotira", "unut"); also gives the free-form fallback what it remembers. */
+      memory?: MemoryService;
       /** Resolves @username / +phone to a numeric id (Telegram-backed). Absent in tests and when messaging is disabled. */
       peers?: PeerResolverPort;
       /** Called with the failure (never the audio or its text) when a voice note could not be transcribed. */
@@ -147,7 +150,15 @@ export class IntakeService {
     const ictx = { receivedAt: m.receivedAt, timezone: p.timezone, locale: p.locale };
     let intent: Intent | null = rejection ? null : await this.d.interpreter.interpret(text, ictx);
     if (!rejection && m.contactCard && !m.forwarded) intent = { kind: 'add_contact', name: m.contactCard.name, telegramUserId: m.contactCard.userId };
-    else if (intent?.kind === 'lookup_contact') {
+    else if (intent?.kind === 'message_contact') {
+      // A text the owner typed for a contact is still shown back and sent only after "ha".
+      const m = intent;
+      intent = {
+        kind: 'clarify',
+        question: t(p.locale, 'confirm_message', { name: m.contact, message: m.text.slice(0, 600) }),
+        draft: { kind: 'confirm_message', contact: m.contact, text: m.text },
+      };
+    } else if (intent?.kind === 'lookup_contact') {
       const q = intent;
       const hit = this.d.peers
         ? await this.d.peers.resolve({ ...(q.username ? { username: q.username } : {}), ...(q.phone ? { phone: q.phone } : {}) }).catch(() => null)
@@ -182,7 +193,7 @@ export class IntakeService {
             ? t(p.locale, 'confirm_message', { name: open.contact, message: open.text.slice(0, 600) })
             : undefined;
       try {
-        const proposed = await this.d.fallback.propose(text, { ...ictx, background: await this.background(p.ownerId, pending) });
+        const proposed = await this.d.fallback.propose(text, { ...ictx, background: await this.background(p.ownerId, text, pending) });
         if (proposed.kind === 'call_contact') {
           const draft2: ClarificationDraft = {
             kind: 'confirm_call',
@@ -244,7 +255,12 @@ export class IntakeService {
     return result;
   }
 
-  private async background(ownerId: string, pending?: string): Promise<NonNullable<InterpretContext['background']>> {
+  private async contactNames(q: pg.PoolClient, ownerId: string): Promise<Map<string, string>> {
+    const r = await q.query<{ id: string; display_name: string }>('SELECT id, display_name FROM contacts WHERE owner_id=$1', [ownerId]);
+    return new Map(r.rows.map((x) => [x.id, x.display_name]));
+  }
+
+  private async background(ownerId: string, text: string, pending?: string): Promise<NonNullable<InterpretContext['background']>> {
     const contacts = this.d.contacts ? (await this.d.contacts.list(this.d.db, ownerId)).filter((c) => c.active).map((c) => c.displayName) : [];
     const r = (
       await this.d.db.query<{ narrative_enc: string | null; display_name: string; outcome: string }>(
@@ -275,8 +291,20 @@ export class IntakeService {
       .sort((a, b) => a.at - b.at)
       .slice(-8)
       .map(({ from, text }) => ({ from, text: text.slice(0, 400) }));
+    // What the assistant remembers that bears on this message: the owner's own notes, plus notes about any contact the message names.
+    let memories: string[] = [];
+    if (this.d.memory) {
+      const now = this.d.clock.now();
+      const low = text.toLowerCase();
+      const all = this.d.contacts ? await this.d.contacts.list(this.d.db, ownerId) : [];
+      const named = all.filter((x) => low.includes(x.displayName.toLowerCase()) || (r && r.display_name === x.displayName));
+      const scopes = [OWNER_SCOPE, ...named.map((x) => contactScope(x.id))];
+      const names = new Map(all.map((x) => [contactScope(x.id), x.displayName]));
+      memories = (await this.d.memory.list(this.d.db, ownerId, scopes, 20, now)).map((m) => (names.has(m.scope) ? `${names.get(m.scope)}: ${m.text}` : m.text));
+    }
     return {
       contacts,
+      ...(memories.length ? { memories } : {}),
       ...(history.length ? { history } : {}),
       ...(pending ? { pending } : {}),
       ...(r && summary ? { recentCall: { contact: r.display_name, outcome: r.outcome, summary: summary.slice(0, 800) } } : {}),
@@ -468,6 +496,7 @@ export class IntakeService {
         if (r.kind === 'none') return t(loc, 'contact_unknown', { name: intent.name });
         if (r.kind === 'many') return t(loc, 'contact_ambiguous', { name: intent.name, names: r.names.join(', ') });
         await contacts.removeVouched(c, p.ownerId, r.contact.id, this.d.clock.now());
+        await this.d.memory?.forgetContact(c, p.ownerId, r.contact.id);
         const ops = this.d.ownerCalls;
         if (ops) {
           await ops.cancelContactCallIntents(c, p.ownerId, r.contact.id);
@@ -486,6 +515,43 @@ export class IntakeService {
         const name = intent.name.trim().slice(0, 80);
         await c.query('UPDATE owners SET display_name=$2 WHERE id=$1', [p.ownerId, name]);
         return t(loc, 'owner_name_set', { name });
+      }
+      case 'remember': {
+        const mem = this.d.memory;
+        if (!mem) return t(loc, 'unknown');
+        let scope = OWNER_SCOPE;
+        let who = '';
+        if (intent.contact && this.d.contacts) {
+          const r = await this.d.contacts.resolveByName(c, p.ownerId, intent.contact);
+          if (r.kind === 'none') return t(loc, 'contact_unknown', { name: intent.contact });
+          if (r.kind === 'many') return t(loc, 'contact_ambiguous', { name: intent.contact, names: r.names.join(', ') });
+          scope = contactScope(r.contact.id);
+          who = r.contact.displayName;
+        }
+        const saved = await mem.remember(c, p.ownerId, scope, intent.text, { source: 'owner_command' }, this.d.clock.now());
+        return saved ? t(loc, 'memory_saved', { text: saved.text, who: who ? ` (${who})` : '' }) : t(loc, 'memory_known');
+      }
+      case 'list_memories': {
+        const mem = this.d.memory;
+        if (!mem) return t(loc, 'unknown');
+        const items = await mem.listAll(c, p.ownerId, 30, this.d.clock.now());
+        if (!items.length) return t(loc, 'memory_empty');
+        const names = await this.contactNames(c, p.ownerId);
+        const lines = items.map((m, i) => {
+          const cid = /^contact:([0-9a-f-]{36}):notes$/.exec(m.scope)?.[1];
+          return `${i + 1}. ${cid ? `[${names.get(cid) ?? '?'}] ` : ''}${m.text}`;
+        });
+        return t(loc, 'memory_list', { list: lines.join('\n') });
+      }
+      case 'forget_memory': {
+        const mem = this.d.memory;
+        if (!mem) return t(loc, 'unknown');
+        const items = await mem.listAll(c, p.ownerId, 30, this.d.clock.now());
+        const ref = intent.ref;
+        const hit = ref.by === 'ordinal' ? items[ref.n - 1] : items.find((m) => m.text.toLowerCase().includes(ref.text.toLowerCase()));
+        if (!hit) return t(loc, 'memory_not_found');
+        await mem.forget(c, p.ownerId, hit.id);
+        return t(loc, 'memory_forgotten', { text: hit.text });
       }
       case 'cancel_pending':
         return t(loc, 'proposal_cancelled');

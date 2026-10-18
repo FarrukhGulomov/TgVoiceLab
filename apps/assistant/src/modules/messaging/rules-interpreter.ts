@@ -107,6 +107,8 @@ const NO_WORD =
   "(?:yo'?q|yuq|yoq|no|nope|nah|net|нет|kerak\\s*emas|kerakmas|shart\\s*emas|shartmas|bekor(?:\\s+qil\\w*)?|cancel|stop|qilma\\w*|indama\\w*|tegma\\w*|bo'?ldi|kerak)";
 const NO = new RegExp(`^${NO_WORD}(?:[\\s,.!;-]+${NO_WORD})*[.!\\s]*$`, 'iu');
 
+const NOT_CONTACT_WORDS = /^(?:men|me|menga|sen|senga|unga|ularga|bizga|hammaga|ertaga|bugun|hozir)$/i;
+
 export class RulesInterpreter implements TextInterpreterPort {
   /**
    * Finish a pending reminder with the owner's next message. Only a short, time-shaped reply counts ("17:00", "5 pm", "evening");
@@ -171,6 +173,24 @@ export class RulesInterpreter implements TextInterpreterPort {
         return { kind: 'remove_contact', name: clean(del[1]!) };
       }
       if (/^(?:contacts?|kontaktlar(?:im)?|\/contacts)\??$/i.test(low)) return { kind: 'list_contacts' };
+      // "Nanajonga yoz: Assalomu alaykum, ..." / "message Nanajon: ..." -> a text for the contact (the intake asks "ha" before sending).
+      const wr =
+        /^(?:(\S+?)(?:\s+degan\s+kontakt\w*|\s*(?:ga|ka|qa))\s+(?:xabar\s+|matn\s+)?(?:yoz(?:ib\s+yubor)?|yubor|jo'?nat)|(?:message|text|write\s+to)\s+(\S+?))\s*[:,-]\s+(.{2,1500})$/i.exec(
+          text,
+        );
+      if (wr && !NOT_CONTACT_WORDS.test(wr[1] ?? wr[2] ?? '')) return { kind: 'message_contact', contact: (wr[1] ?? wr[2])!, text: clean(wr[3]!) };
+      const rem = /^(?:eslab\s+qol(?:ing)?|yodda\s+tut(?:ing)?|esingda\s+tut(?:ing)?|eslab\s+qo'?y|remember(?:\s+that)?)\s*[:,-]?\s+(.{3,400})$/i.exec(text);
+      if (rem) {
+        if (notAnExplicitCommand(text, low)) return { kind: 'clarify', question: t(ctx.locale, 'not_a_command') };
+        return { kind: 'remember', text: clean(rem[1]!) };
+      }
+      if (/^(?:xotira(?:m|ni\s+ko'?rsat)?|memory|memories|nimalarni\s+(?:eslaysan|eslab\s+qolding|yodda\s+tutding)|nimalar\s+eslab\s+qolgan)\??$/i.test(low))
+        return { kind: 'list_memories' };
+      const fm = /^(?:unut(?:ing)?|forget)\s*[:,-]?\s+(?:(?:xotira\s+)?#?(\d{1,3})|(.{3,200}))$/i.exec(text);
+      if (fm) {
+        if (notAnExplicitCommand(text, low)) return { kind: 'clarify', question: t(ctx.locale, 'not_a_command') };
+        return { kind: 'forget_memory', ref: fm[1] ? { by: 'ordinal', n: Number(fm[1]) } : { by: 'text', text: clean(fm[2]!) } };
+      }
       const nm = /^(?:my\s+name\s+is|mening\s+ismim|ismim)\s*:?\s+(.{1,80})$/i.exec(text);
       if (nm) return { kind: 'set_owner_name', name: clean(nm[1]!) };
       // "Javlonga ertaga 10:00 da qo'ng'iroq qilib hisobot tayyorligini ayt"  /  "call Javlon tomorrow at 10:00 and tell him the report is ready".
@@ -180,10 +200,18 @@ export class RulesInterpreter implements TextInterpreterPort {
       // slots, not the time of the call, so only the part BEFORE the call phrase is searched for the call's own date and time.
       const callAt = normalizeApostrophes(text).search(new RegExp(`${UZ_CALL}\\s+qil|\\bcall\\s+\\S+\\s`, 'iu'));
       const meetingTalk = callAt >= 0 && /uchrashuv|учраш|meeting|meet\b|ko'rish/i.test(normalizeApostrophes(text).slice(callAt));
-      const head = meetingTalk ? text.slice(0, callAt) : text;
-      const tail = meetingTalk ? text.slice(callAt) : '';
+      // "... qo'ng'iroq qilib bugun soat 17:00 da nima rejalashtirilganini so'rab": a time that the question is ABOUT belongs to what
+      // is said on the call, not to when the call is placed.
+      const timeIsTopic =
+        callAt >= 0 &&
+        /(?:\d{1,2}[:.]\d{2}|soat\s+\d{1,2})\s*(?:da|dagi|gacha|dan)?\s+(?:nima|qayer|qanday|kim|rejalash|bor(?:mi|ligi)?|bo'?lad|kelas|qilas|ishla)/i.test(
+          normalizeApostrophes(text).slice(callAt),
+        );
+      const splitAtCall = meetingTalk || timeIsTopic;
+      const head = splitAtCall ? text.slice(0, callAt) : text;
+      const tail = splitAtCall ? text.slice(callAt) : '';
       const w0 = extractWhen(head, ctx);
-      const body = meetingTalk ? `${w0.rest} ${tail}`.trim() : w0.rest;
+      const body = splitAtCall ? `${w0.rest} ${tail}`.trim() : w0.rest;
       const uzStrict = new RegExp(
         `^(\\S+?)(?:\\s+(?:degan\\s+)?kontakt\\w*|\\s*(?:ga|ka|qa))\\s+(.*?)${UZ_CALL}\\s+qil(?:ib|ing)?(?![\\p{L}'])[:,]?\\s*(.*)$`,
         'iu',
