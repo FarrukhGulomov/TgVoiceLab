@@ -8,6 +8,10 @@ export interface OutboundMessage {
   /** Stable across redelivery (the outbox event id). Adapters map it to Telegram `random_id` to suppress duplicates. */
   idempotencyKey: string;
 }
+/** Speaks a short reply as a Telegram voice note (best effort: the text of the reply is always sent too). */
+export interface VoiceReplyPort {
+  speak(toTelegramUserId: string, text: string, idempotencyKey: string): Promise<void>;
+}
 export interface MessagingPort {
   sendMessage(m: OutboundMessage): Promise<{ providerMessageId: string }>;
 }

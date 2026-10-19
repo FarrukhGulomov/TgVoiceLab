@@ -245,6 +245,30 @@ if (cfg.GEMINI_API_KEY && cfg.GEMINI_TEXT_MODEL && cfg.TEXT_AI_ADAPTER === 'rule
   );
 }
 
+let voiceReplies: import('./application/ports.js').VoiceReplyPort | undefined;
+if (gateway && cfg.TTS_PROVIDER === 'voicelab' && cfg.VOICE_REPLIES) {
+  const { VoiceReplies, ffmpegAvailable } = await import('./infrastructure/voicelab/voice-reply.js');
+  const { VoiceLabTts } = await import('./infrastructure/voicelab/tts.js');
+  if (!(await ffmpegAvailable())) {
+    log.warn('voice replies are off: `ffmpeg` is not installed (macOS: brew install ffmpeg; Debian/Ubuntu: apt install ffmpeg)');
+  } else {
+    const gw = gateway;
+    voiceReplies = new VoiceReplies(
+      new VoiceLabTts({
+        apiKey: cfg.VOICELAB_API_KEY!,
+        voiceId: cfg.VOICELAB_VOICE_ID!,
+        baseUrl: cfg.VOICELAB_BASE_URL,
+        model: cfg.VOICELAB_TTS_MODEL,
+        speed: cfg.VOICELAB_SPEED,
+      }),
+      (to, ogg, dur, key) => gw.sendVoice(to, ogg, dur, key),
+      undefined,
+      (line) => log.warn(line),
+    );
+    log.info('voice replies are on: answers to your voice notes are also spoken');
+  }
+}
+
 const app = buildContainer({
   ...(transcription ? { transcription } : {}),
   ...(textFallback ? { textFallback } : {}),
@@ -257,6 +281,7 @@ const app = buildContainer({
   crypto,
   clock: systemClock,
   messaging,
+  ...(voiceReplies ? { voiceReplies } : {}),
   callAdapter,
   deriveCapabilities: derive,
   callsEnabled: cfg.CALLS_ENABLED,

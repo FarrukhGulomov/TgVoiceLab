@@ -61,6 +61,7 @@ export function makeOutboxHandlers(deps: {
   db: Db;
   crypto: DataCrypto;
   messaging: MessagingPort;
+  voiceReplies?: import('../../application/ports.js').VoiceReplyPort;
   tasks: TaskService;
   /** After a contact call ends: may redial or fall back to text; returns a note for the owner. */
   onContactCallEnded?: (a: { ownerId: string; callId: string; reason: string }) => Promise<string | null>;
@@ -245,13 +246,12 @@ export function makeOutboxHandlers(deps: {
 
     // Direct replies to owner messages (chat intake) travel through the outbox too, so they survive a crash after commit.
     'owner.reply': async (row) => {
-      const p = row.payload as { textEnc: string };
+      const p = row.payload as { textEnc: string; speak?: boolean };
       const owner = await loadOwner(row.ownerId);
-      await messaging.sendMessage({
-        toTelegramUserId: owner.telegram_user_id,
-        text: crypto.dec(row.ownerId, 'outbox.reply', p.textEnc),
-        idempotencyKey: row.eventId,
-      });
+      const text = crypto.dec(row.ownerId, 'outbox.reply', p.textEnc);
+      await messaging.sendMessage({ toTelegramUserId: owner.telegram_user_id, text, idempotencyKey: row.eventId });
+      // The voice note is an extra: its failure must never make the outbox retry (the text is already delivered).
+      if (p.speak && deps.voiceReplies) await deps.voiceReplies.speak(owner.telegram_user_id, text, `${row.eventId}:voice`).catch(() => undefined);
     },
   };
 }

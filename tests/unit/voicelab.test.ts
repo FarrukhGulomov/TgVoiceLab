@@ -277,3 +277,28 @@ describe('Gemini turn-taking tuning', () => {
     expect(t.realtimeInputConfig.automaticActivityDetection).toEqual({ endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', silenceDurationMs: 900 });
   });
 });
+
+describe('VoiceReplies', () => {
+  it('synthesises, encodes and sends short replies; long ones and symbols-only are skipped; failures are swallowed', async () => {
+    const { VoiceReplies } = await import('../../apps/assistant/src/infrastructure/voicelab/voice-reply.js');
+    const sent: Array<{ to: string; bytes: number; dur: number }> = [];
+    const tts = { synthesize: async () => ({ pcm: new Uint8Array(48000), rateHz: 24000 }) };
+    const v = new VoiceReplies(
+      tts,
+      async (to, ogg, dur) => void sent.push({ to, bytes: ogg.length, dur }),
+      async () => Buffer.from('ogg'),
+    );
+    await v.speak('1', 'Salom, **vazifa** qo‘shildi.', 'k');
+    await v.speak('1', '😀', 'k');
+    await v.speak('1', 'a '.repeat(400), 'k');
+    expect(sent).toEqual([{ to: '1', bytes: 3, dur: 1 }]);
+    const bad = new VoiceReplies(
+      tts,
+      async () => {
+        throw new Error('x');
+      },
+      async () => Buffer.from('ogg'),
+    );
+    await expect(bad.speak('1', 'Salom.', 'k')).resolves.toBeUndefined();
+  });
+});

@@ -36,6 +36,8 @@ export interface ContainerDeps {
   crypto: DataCrypto;
   clock: Clock;
   messaging: MessagingPort;
+  /** When set, a reply to an owner's voice note is also spoken. */
+  voiceReplies?: import('../application/ports.js').VoiceReplyPort;
   callAdapter?: TelegramCallAdapter;
   deriveCapabilities?: () => DerivedCapabilities;
   sessionRunner?: CallSessionRunner;
@@ -188,6 +190,7 @@ export function buildContainer(d: ContainerDeps) {
     db: d.db,
     crypto: d.crypto,
     messaging: d.messaging,
+    ...(d.voiceReplies ? { voiceReplies: d.voiceReplies } : {}),
     tasks,
     ...(recovery ? { onContactCallEnded: (a: { ownerId: string; callId: string; reason: string }) => recovery.onEnded(a.ownerId, a.callId, a.reason) } : {}),
   });

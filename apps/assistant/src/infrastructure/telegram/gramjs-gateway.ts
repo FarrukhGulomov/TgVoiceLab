@@ -169,6 +169,18 @@ export class GramjsMessaging implements MessagingPort, PeerResolverPort {
     return { providerMessageId: String(id ?? 'unknown') };
   }
 
+  /** A voice note (OGG/Opus). The caller treats failure as non-fatal: the reply text was already delivered. */
+  async sendVoice(to: string, ogg: Buffer, durationSeconds: number, _key: string): Promise<void> {
+    if (!this.started) throw new Error('Telegram gateway not started');
+    const peer = await this.client.getInputEntity(bigInt(to));
+    const { CustomFile } = await import('telegram/client/uploads.js');
+    await this.client.sendFile(peer, {
+      file: new CustomFile('voice.ogg', ogg.length, '', ogg),
+      voiceNote: true,
+      attributes: [new Api.DocumentAttributeAudio({ voice: true, duration: durationSeconds })],
+    });
+  }
+
   async stop(): Promise<void> {
     await this.recoveryLane?.stop();
     await this.client.disconnect();

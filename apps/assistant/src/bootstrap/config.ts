@@ -45,6 +45,8 @@ const EnvSchema = z
     AI_VOICE_COST_USD_PER_MINUTE: opt(z.coerce.number().positive().max(100)),
     /** Who speaks on calls. Unset: the AI voice provider's own voice. `voicelab`: VoiceLab's Uzbek voice (the listening/thinking model answers in text). Needs AI_VOICE_PROVIDER=openai or gemini (the model answers in text; for gemini the Live model must support TEXT output). */
     TTS_PROVIDER: z.enum(['voicelab']).optional(),
+    /** Also speak the reply to an owner's voice note (needs TTS_PROVIDER=voicelab and `ffmpeg`). */
+    VOICE_REPLIES: bool.default(true),
     VOICELAB_API_KEY: opt(z.string()),
     /** The voice's id from `pnpm voicelab:check` (e.g. the one named Nozima). */
     VOICELAB_VOICE_ID: opt(z.string()),

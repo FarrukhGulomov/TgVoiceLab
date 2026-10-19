@@ -278,7 +278,8 @@ export class IntakeService {
           await c.query('DELETE FROM conversation_drafts WHERE owner_id=$1', [p.ownerId]);
         else if (intent!.kind === 'clarify' && intent!.draft) await this.saveDraft(c, p.ownerId, intent!.draft);
       }
-      if (replyText !== null) await this.reply(c, p, replyText);
+      // A voice note from the owner is answered in text AND (when configured) by voice.
+      if (replyText !== null) await this.reply(c, p, replyText, !!m.voice && !rejection);
       return { status: 'handled', intent: kind } as const;
     });
     // External effects (ending a live call) happen only after the transaction committed.
@@ -512,7 +513,7 @@ export class IntakeService {
     );
   }
 
-  private async reply(c: pg.PoolClient, p: Principal, text: string) {
+  private async reply(c: pg.PoolClient, p: Principal, text: string, speak = false) {
     await emitOutbox(
       c,
       {
@@ -520,7 +521,7 @@ export class IntakeService {
         aggregateType: 'owner',
         aggregateId: p.ownerId,
         type: 'owner.reply',
-        payload: { textEnc: this.d.crypto.enc(p.ownerId, 'outbox.reply', text) },
+        payload: { textEnc: this.d.crypto.enc(p.ownerId, 'outbox.reply', text), ...(speak ? { speak: true } : {}) },
       },
       this.d.clock.now(),
     );
