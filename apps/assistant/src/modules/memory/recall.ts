@@ -1,5 +1,6 @@
 import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
 import type { Queryable } from '../../infrastructure/db/db.js';
+import { sanitizeLesson } from '../calls/conversation/lessons.js';
 import { LESSON_SCOPE, OWNER_SCOPE, contactScope, type MemoryService } from './memory.service.js';
 
 /** How many of the question's words (compared by their first letters, so "Onixni" meets "Onix") occur in a stored text. */
@@ -57,7 +58,8 @@ export class RecallService {
 
     const scopes = [OWNER_SCOPE, LESSON_SCOPE, ...[...names.keys()].map(contactScope)];
     const named = new Set([...names].filter(([, n]) => low.includes(n.toLowerCase())).map(([id]) => contactScope(id)));
-    const items = await this.memory.list(q, ownerId, scopes, 80, now);
+    // Lessons come from what contacts said during calls: only the sanitised style advice may enter a prompt.
+    const items = (await this.memory.list(q, ownerId, scopes, 80, now)).filter((m) => m.scope !== LESSON_SCOPE || sanitizeLesson(m.text) !== null);
     const memories = items
       .map((m, i) => ({ m, i, score: relevance(m.text, question) + (named.has(m.scope) ? 2 : 0) + (m.scope === OWNER_SCOPE ? 0.5 : 0) }))
       .sort((a, b) => b.score - a.score || a.i - b.i)

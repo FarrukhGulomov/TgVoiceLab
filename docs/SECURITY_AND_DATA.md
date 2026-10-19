@@ -76,3 +76,11 @@ non-interactive use. Rotation: runbooks `key-rotation`, `session-compromise`.
 - Prompt-injection and consent-refusal behavior against real speech cannot be tested until the conversation layer exists.
 - The image and database run as real containers in `deploy/smoke.sh` (run locally and in CI); a real host canary with Telegram has **not** been done. `pnpm audit` runs in CI and was run locally on 2026-10-17.
 - LGPL-3.0 `ntgcalls`: excluded from the production image; legal review required before bundling (ADR-0001).
+
+## Voice, memory and persona data flows (added with the VoiceLab / Madina work)
+
+- **VoiceLab (TTS) receives only text the assistant itself wrote** (call sentences, short voice-note replies): never the contact's or the owner's audio. That text can contain a contact's name or facts from the owner's brief. Spoken replies to voice notes are capped (500 characters, 40 per hour).
+- **Gemini / OpenAI receive the live call audio** (the listening model). Use a paid tier before calling contacts: on free tiers the provider may train on it.
+- **Call lessons** ("what to do better") are written by the model from what a contact said. They are the only memory that crosses from one contact's call into another's prompt, so they are accepted only as short style advice (`calls/conversation/lessons.ts`): instructions aimed at the system, limits, amounts, numbers, links and contact details are rejected when saved, when recalled and when put into a prompt, and they are framed as data that cannot change rules, limits or the brief.
+- **Persona**: the assistant calls itself "Madina" and does not announce that it is an AI unprompted, but it never claims to be a human and answers truthfully if asked whether it is a person/AI or whether the call is recorded (audio is not stored). A contact who objects to talking to an AI ends the call with `consent_withdrawn`.
+- **Content boundary**: the assistant declines religious topics and politically dangerous/extremist material in calls, chat and composed texts. This is an instruction to the model, not a classifier; treat it as best effort.

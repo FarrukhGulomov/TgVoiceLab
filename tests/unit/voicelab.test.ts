@@ -334,3 +334,24 @@ describe('takeSentences: long runs', () => {
     expect(takeSentences('qisqa gap, davomi')).toEqual({ sentences: [], rest: 'qisqa gap, davomi' });
   });
 });
+
+describe('VoiceReplies: hourly cap', () => {
+  it('stops after 40 spoken replies in an hour and resumes after it', async () => {
+    const { VoiceReplies } = await import('../../apps/assistant/src/infrastructure/voicelab/voice-reply.js');
+    let n = 0;
+    let clock = 0;
+    const tts = { synthesize: async () => ({ pcm: new Uint8Array(4800), rateHz: 24000 }) };
+    const v = new VoiceReplies(
+      tts,
+      async () => void n++,
+      async () => Buffer.from('o'),
+      undefined,
+      () => clock,
+    );
+    for (let i = 0; i < 50; i++) await v.speak('1', 'Salom, tayyor.', 'k');
+    expect(n).toBe(40);
+    clock = 3_600_001;
+    await v.speak('1', 'Yana bitta.', 'k');
+    expect(n).toBe(41);
+  });
+});
