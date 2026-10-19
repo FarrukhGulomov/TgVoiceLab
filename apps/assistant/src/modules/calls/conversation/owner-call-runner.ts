@@ -90,6 +90,10 @@ export class OwnerCallRunner implements CallSessionRunner {
     let spoke = false;
     let resent = 0;
     let nudges = 0;
+    let ownerSpoke = false; // set by the model's own transcript of the owner, which does not depend on how loud the line is
+    link.onTranscript((who) => {
+      if (who === 'caller') ownerSpoke = true;
+    });
     let lastActivity = Date.now();
     let seenAudio = 0;
     let seenVoice = 0;
@@ -109,8 +113,8 @@ export class OwnerCallRunner implements CallSessionRunner {
         this.d.log?.(`owner call: no voice ${Math.round((now - started) / 1000)} s after answering, asking the model again`);
         link.respond(greeting);
         lastActivity = now;
-      } else if (spoke && now - lastActivity >= 5000 && nudges < 3) {
-        // Nobody spoke for a while after the assistant's words: ask once more, briefly.
+      } else if (spoke && !ownerSpoke && s.nonSilentFramesIn === 0 && now - lastActivity >= 7000 && nudges < 2) {
+        // The owner has not said a single word since answering: ask once more, briefly. Never once the conversation has started.
         nudges++;
         link.respond(NUDGE);
         lastActivity = now;
