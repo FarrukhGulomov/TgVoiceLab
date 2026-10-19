@@ -1,6 +1,6 @@
 import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
 import type { Queryable } from '../../infrastructure/db/db.js';
-import { OWNER_SCOPE, contactScope, type MemoryService } from './memory.service.js';
+import { LESSON_SCOPE, OWNER_SCOPE, contactScope, type MemoryService } from './memory.service.js';
 
 /** How many of the question's words (compared by their first letters, so "Onixni" meets "Onix") occur in a stored text. */
 export function relevance(stored: string, question: string): number {
@@ -55,7 +55,7 @@ export class RecallService {
           `${x.display_name} (${x.outcome}, ${x.created_at.toISOString().slice(0, 16)}Z): ${body.slice(0, score > 0 || k < 3 ? 1200 : 300)}`,
       );
 
-    const scopes = [OWNER_SCOPE, ...[...names.keys()].map(contactScope)];
+    const scopes = [OWNER_SCOPE, LESSON_SCOPE, ...[...names.keys()].map(contactScope)];
     const named = new Set([...names].filter(([, n]) => low.includes(n.toLowerCase())).map(([id]) => contactScope(id)));
     const items = await this.memory.list(q, ownerId, scopes, 80, now);
     const memories = items

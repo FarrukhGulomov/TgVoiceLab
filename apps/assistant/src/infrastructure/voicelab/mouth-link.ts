@@ -8,6 +8,7 @@ export interface TextBrain extends RealtimeLink {
 }
 
 const OUT_RATE = 24_000;
+const DEGRADE_AFTER = 2;
 
 const EMOJI = new RegExp(String.raw`\p{Extended_Pictographic}|\u200d|\ufe0f`, 'gu');
 
@@ -67,6 +68,10 @@ export class VoiceLabMouthLink implements RealtimeLink {
   /** When the audio handed to the call so far finishes playing (wall clock): the caller can only be "talked over" before this moment. */
   #audibleUntil = 0;
   #idle: NodeJS.Timeout | undefined;
+  /** Consecutive synthesis failures; at DEGRADE_AFTER the brain's own voice (when it makes audio) takes over for the rest of the call. */
+  #failures = 0;
+  #degraded = false;
+  #brainResampler: StreamingResampler | undefined;
 
   constructor(
     private readonly brain: TextBrain,
@@ -78,6 +83,15 @@ export class VoiceLabMouthLink implements RealtimeLink {
     } = {},
   ) {
     this.inputRateHz = brain.inputRateHz;
+    // Fallback voice: a brain that also produces audio (Gemini in 'transcript' mode) keeps talking in ITS voice once VoiceLab is out of
+    // service (e.g. no credits left). Normally that audio is dropped. A brain that answers in text only can not do this.
+    if (brain.outputRateHz !== OUT_RATE) this.#brainResampler = new StreamingResampler(brain.outputRateHz, OUT_RATE);
+    brain.onAudio((pcm) => {
+      if (!this.#degraded) return;
+      const out = this.#brainResampler ? this.#brainResampler.process(pcm) : pcm;
+      this.#audibleUntil = Math.max(this.#audibleUntil, Date.now()) + (out.length / 2 / OUT_RATE) * 1000;
+      for (const cb of this.#audio) cb(out);
+    });
     brain.onText((delta, done) => {
       this.#buf += delta;
       const { sentences, rest } = takeSentences(this.#buf);
@@ -104,6 +118,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
   #enqueue(raw: string): void {
     const text = speakable(raw);
     if (!/[\p{L}\p{N}]/u.test(text)) return;
+    if (this.#degraded) return; // the brain's own voice is speaking this
     const epoch = this.#epoch;
     const signal = this.#abort.signal;
     const pending = this.tts.synthesize(text, languageOf(text), signal);
@@ -114,6 +129,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
         const t0 = Date.now();
         const a = await pending;
         if (epoch !== this.#epoch) return;
+        this.#failures = 0;
         this.o.log?.(`voicelab: ${text.length} chars voiced (waited ${Date.now() - t0} ms for the synthesis)`);
         const pcm = a.rateHz === OUT_RATE ? a.pcm : new StreamingResampler(a.rateHz, OUT_RATE).process(a.pcm);
         this.#audibleUntil = Math.max(this.#audibleUntil, Date.now()) + (pcm.length / 2 / OUT_RATE) * 1000;
@@ -123,7 +139,13 @@ export class VoiceLabMouthLink implements RealtimeLink {
           for (const cb of this.#audio) cb(pcm.subarray(i, i + 4800));
         }
       } catch (e) {
-        if (epoch === this.#epoch) for (const cb of this.#errors) cb(`voicelab tts: ${String((e as Error)?.message ?? e)}`);
+        if (epoch === this.#epoch) {
+          for (const cb of this.#errors) cb(`voicelab tts: ${String((e as Error)?.message ?? e)}`);
+          if (++this.#failures >= DEGRADE_AFTER && !this.#degraded) {
+            this.#degraded = true;
+            this.o.log?.("voicelab: unavailable, switching to the AI model's own voice for the rest of the call");
+          }
+        }
       }
     });
   }

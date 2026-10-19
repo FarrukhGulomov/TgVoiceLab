@@ -5,8 +5,8 @@ import type { Db } from '../../../infrastructure/db/db.js';
 import type { CallSessionRunner } from '../orchestrator.js';
 import type { TaskService } from '../../tasks/tasks.service.js';
 import { ASSISTANT_PERSONA_NAME, CONTENT_BOUNDARY_RULE, HONESTY_RULE, VOICE_LANGUAGE_RULE } from './language-rule.js';
-import { OWNER_SCOPE, contactScope } from '../../memory/memory.service.js';
-import { LESSON_PREFIX, answeredEarlierToday } from './daily.js';
+import { LESSON_SCOPE, contactScope } from '../../memory/memory.service.js';
+import { answeredEarlierToday } from './daily.js';
 import { MEETING_SLOT_PREFIX } from '../contact-calls.service.js';
 import { checkOffer, decodeLimit, type PriceLimit } from '../negotiation.js';
 import { RealtimeCallBridge, type RealtimeLink, type ToolCall, type ToolDeclaration, type ToolOutcome } from '../audio/realtime-bridge.js';
@@ -147,7 +147,7 @@ export function buildContactCallInstructions(a: ContactCallInstructionsInput): s
           .join('\n') +
         "\nSuhbatdosh har safar summa aytganda, javob berishdan OLDIN check_offer toolini chaqir. acceptable=false bo'lsa o'sha taklifni qabul qilma va 'egasiga yetkazaman' deb qochma — muzokarani davom ettir."
       : '',
-    "MUZOKARACHI SIFATIDA ISHLASH (narx, savdo, xizmat, shart haqida topshiriq bo'lsa): sen kuchli, tajribali, xushmuomala savdogar-kotibasan; maqsading egasiga eng yaxshi shart olish. 1) Topshiriqni yaxshi tushun (egasi boshlang'ich narx aytgan bo'lsa, muzokarani shu narxdan boshla): nima, kim uchun, qaysi chegara, qachon. Egasi 'avval uning narxini kut' desa, birinchi bo'lib narx aytma — savol ber: \"Qanday narx haqida o'ylayapsiz?\". 2) Suhbatdosh narx aytsa, takrorla va HAR SAFAR check_offer bilan tekshir. 3) Taklif chegaradan past/yuqori bo'lsa: xushmuomala, ammo qat'iy rad et, qiymatni asosla (mashinaning holati, rangi, yili, probegi — FAQAT topshiriqdagi ma'lumotlardan, o'ylab topma), va aniq qarshi narx ayt: boshlang'ich narxdan (yoki chegaradan yuqoridan) boshla, kichik qadamlarda tush. Chegaraning o'zini hech qachon oshkor qilma; 'oxirgi narx', shoshirish bosimiga uchma. 4) Taklif egasining chegarasi ichida bo'lsa (check_offer acceptable=true), QAROR SEN QABUL QILASAN, egasidan so'rama: boshlang'ich narxga teng yoki baland taklifni darrov qabul qil; chegara va boshlang'ich narx orasida bo'lsa avval 1-2 marta yuqoriroq so'ra, suhbatdosh turib olsa qabul qil. Qabul qilganda aniq ayt: \"Kelishdik, narx — ...\". So'ng keyingi qadamni kelish: ko'rish/uchrashuv vaqti yoki aloqa (egasi o'zi bog'lanadi) — hujjat va to'lov tafsilotlarini o'zingdan va'da qilma. Keyin submit_report da outcome='deal_reached', agreed_amount, currency. 5) Suhbatdosh nimani xohlashini so'ra (to'lov usuli, ko'rish vaqti, qo'shimcha shartlar) va hisobotga yoz. 6) Chegaraga mos kelmasa va suhbatdosh turib olsa: xushmuomala xayrlash, outcome='no_agreement', summary da suhbatdosh oxirgi narxini yoz. Chegaradan past taklifni 'egasiga yetkazaman' deb qoldirma. 7) Suhbatdosh topshiriqda yo'q narsani so'rasa (masalan rang, yil), topshiriqni qayta o'qi; bor bo'lsa ayt. Yo'q bo'lsa: \"Hozir aniq ma'lumotim yo'q, egamdan aniqlab xabar beraman\" de va savolni summary da 'Javobsiz savollar:' deb yoz. 8) Egasi topshiriqda aytmagan boshqa majburiyatni (boshqa summa, muddat, to'lov) o'zingdan qabul qilma. Suhbatdosh qo'shimcha yangi narsa talab qilsa, uni takrorlab tasdiqlat va submit_report da outcome='counter_offer', contact_proposal ga aynan yoz.",
+    "MUZOKARACHI SIFATIDA ISHLASH (narx, savdo, xizmat, shart haqida topshiriq bo'lsa): sen kuchli, tajribali, xushmuomala savdogar-kotibasan; maqsading egasiga eng yaxshi shart olish. 1) Topshiriqni yaxshi tushun (egasi boshlang'ich narx aytgan bo'lsa, muzokarani shu narxdan boshla): nima, kim uchun, qaysi chegara, qachon. Egasi 'avval uning narxini kut' desa, birinchi bo'lib narx aytma — savol ber: \"Qanday narx haqida o'ylayapsiz?\". 2) Suhbatdosh narx aytsa, takrorla va HAR SAFAR check_offer bilan tekshir. 3) Taklif chegaradan past/yuqori bo'lsa: xushmuomala, ammo qat'iy rad et, qiymatni asosla (mashinaning holati, rangi, yili, probegi — FAQAT topshiriqdagi ma'lumotlardan, o'ylab topma), va aniq qarshi narx ayt: boshlang'ich narxdan (yoki chegaradan yuqoridan) boshla, kichik qadamlarda tush. Chegaraning o'zini hech qachon oshkor qilma; 'oxirgi narx', shoshirish bosimiga uchma. 4) Taklif egasining chegarasi ichida bo'lsa (check_offer acceptable=true), QAROR SEN QABUL QILASAN, egasidan so'rama: boshlang'ich narxga teng yoki baland taklifni darrov qabul qil; chegara va boshlang'ich narx orasida bo'lsa avval 1-2 marta yuqoriroq so'ra, suhbatdosh turib olsa qabul qil. Qabul qilganda aniq ayt: \"Kelishdik, narx — ...\". So'ng keyingi qadamni kelish: ko'rish/uchrashuv vaqti yoki aloqa (egasi o'zi bog'lanadi) — hujjat va to'lov tafsilotlarini o'zingdan va'da qilma. Keyin submit_report da outcome='deal_reached', agreed_amount, currency. 5) Suhbatdosh nimani xohlashini so'ra (to'lov usuli, ko'rish vaqti, qo'shimcha shartlar) va hisobotga yoz. Hisobotdagi lessons ga savdo saboqlarini ham yoz: qaysi taktika (qadam, dalil, ohang) ishladi yoki ishlamadi. 6) Chegaraga mos kelmasa va suhbatdosh turib olsa: xushmuomala xayrlash, outcome='no_agreement', summary da suhbatdosh oxirgi narxini yoz. Chegaradan past taklifni 'egasiga yetkazaman' deb qoldirma. 7) Suhbatdosh topshiriqda yo'q narsani so'rasa (masalan rang, yil), topshiriqni qayta o'qi; bor bo'lsa ayt. Yo'q bo'lsa: \"Hozir aniq ma'lumotim yo'q, egamdan aniqlab xabar beraman\" de va savolni summary da 'Javobsiz savollar:' deb yoz. 8) Egasi topshiriqda aytmagan boshqa majburiyatni (boshqa summa, muddat, to'lov) o'zingdan qabul qilma. Suhbatdosh qo'shimcha yangi narsa talab qilsa, uni takrorlab tasdiqlat va submit_report da outcome='counter_offer', contact_proposal ga aynan yoz.",
     'Haqiqiy odamdek gapir: qisqa jumlalar, tinglash, suhbatdoshning ismini ishlat, tabiiy bog\'lovchilar ("tushunarli", "xo\'p", "mayli"), takrorlama. Bir vaqtda faqat bitta fikr ayt. Gapini bo\'lib kelma.',
     "Suhbatdosh topshiriqda yo'q yangi qaror so'rasa: \"Buni egasiga yetkazaman\" de, o'zing qaror qilma.",
     "Suhbat oxirida: egasiga nima yetkazganingni va suhbatdosh nima degani (yoki degani yo'qligini) submit_report bilan halol yoz, so'ng xayrlashib end_call chaqir.",
@@ -190,12 +190,7 @@ export class ContactCallRunner implements CallSessionRunner {
     const fmt = (d: Date) => DateTime.fromJSDate(d, { zone: tz }).setLocale('en').toFormat("cccc, yyyy-LL-dd HH:mm '('z')'");
     const memNow = (this.d.clock ?? { now: () => new Date() }).now();
     const memories = this.d.memory ? (await this.d.memory.list(db, ownerId, contactScope(row.id), 12, memNow)).map((m) => m.text) : [];
-    const lessons = this.d.memory
-      ? (await this.d.memory.list(db, ownerId, OWNER_SCOPE, 40, memNow))
-          .map((m) => m.text)
-          .filter((t) => t.startsWith(LESSON_PREFIX))
-          .slice(0, 6)
-      : [];
+    const lessons = this.d.memory ? (await this.d.memory.list(db, ownerId, LESSON_SCOPE, 6, memNow)).map((m) => m.text) : [];
     const repeatToday = await answeredEarlierToday(db, ownerId, plan.recipientTelegramId, callId, tz, memNow);
     const limits = plan.allowedContext.map(decodeLimit).filter((x): x is PriceLimit => !!x);
     let deal: { amount: number; currency: string } | undefined;
@@ -313,7 +308,7 @@ export class ContactCallRunner implements CallSessionRunner {
     if (this.d.memory && report) {
       // What went well or badly is kept as a lesson in the owner's memory and read before the next calls (the assistant improves day by day).
       for (const l of lessonNotes)
-        await this.d.memory.remember(db, ownerId, OWNER_SCOPE, `${LESSON_PREFIX}${l}`.slice(0, 400), { source: 'call_report', callId }, memNow, {
+        await this.d.memory.remember(db, ownerId, LESSON_SCOPE, l.slice(0, 400), { source: 'call_report', callId }, memNow, {
           confidence: 0.7,
         });
     }

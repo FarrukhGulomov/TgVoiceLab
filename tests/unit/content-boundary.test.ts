@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CONTENT_BOUNDARY_RULE } from '../../apps/assistant/src/modules/calls/conversation/language-rule.js';
 import { buildOwnerCallInstructions } from '../../apps/assistant/src/modules/calls/conversation/owner-call-tools.js';
 import { buildContactCallInstructions } from '../../apps/assistant/src/modules/calls/conversation/contact-call-runner.js';
+import { nearlySame } from '../../apps/assistant/src/modules/memory/memory.service.js';
 import { buildPrompt } from '../../apps/assistant/src/infrastructure/gemini/text.js';
 
 describe('content boundary (no religion, no politically dangerous material)', () => {
@@ -26,5 +27,13 @@ describe('persona and daily greeting', () => {
     const p = buildContactCallInstructions(base);
     expect(p).toContain('HALOLLIK');
     expect(p).not.toContain('qayta ishlanadi');
+  });
+});
+
+describe('memory near-duplicates', () => {
+  it('re-worded duplicates are the same fact, a changed number is not', () => {
+    expect(nearlySame('Onix mashinasi 2019 yil oq rangda 12000 dollar', 'Onix mashinasi 2019 yil oq rangda 12000 dollar turadi')).toBe(true);
+    expect(nearlySame('Onix mashinasi 2019 yil oq rangda 12000 dollar', 'Onix mashinasi 2019 yil oq rangda 9000 dollar')).toBe(false);
+    expect(nearlySame('ha', 'ha')).toBe(false);
   });
 });

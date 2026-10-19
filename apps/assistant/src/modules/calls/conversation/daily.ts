@@ -21,5 +21,3 @@ export async function answeredEarlierToday(
   );
   return Number(r.rows[0]?.n ?? 0) > 0;
 }
-
-export const LESSON_PREFIX = 'Saboq: ';

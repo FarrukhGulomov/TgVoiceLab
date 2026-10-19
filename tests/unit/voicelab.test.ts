@@ -108,7 +108,10 @@ class FakeBrain implements TextBrain {
     this.interrupts.push(ms);
   }
   onResponseStart() {}
-  onAudio() {}
+  audioCb: (p: Uint8Array) => void = () => undefined;
+  onAudio(cb: (p: Uint8Array) => void) {
+    this.audioCb = cb;
+  }
   onTranscript() {}
   onError() {}
   sendToolResult() {}
@@ -190,6 +193,30 @@ describe('VoiceLabMouthLink', () => {
 });
 
 import { geminiSetup } from '../../apps/assistant/src/infrastructure/gemini/live.js';
+describe('VoiceLab out of service', () => {
+  it("after repeated synthesis failures the brain's own voice takes over; before that its audio is dropped", async () => {
+    const brain = new FakeBrain();
+    const errors: string[] = [];
+    const tts = {
+      synthesize: async () => {
+        throw new Error('HTTP 402 insufficient_credits');
+      },
+    };
+    const link = new VoiceLabMouthLink(brain, tts);
+    const got: number[] = [];
+    link.onAudio((p) => got.push(p.length));
+    link.onError((m) => errors.push(m));
+    brain.audioCb(new Uint8Array(100));
+    expect(got).toEqual([]); // VoiceLab still in charge: the model's own audio is not played
+    brain.textCb('Birinchi. ', false);
+    brain.textCb('Ikkinchi. ', false);
+    await waitFor(() => errors.length >= 2);
+    await new Promise((r) => setTimeout(r, 20));
+    brain.audioCb(new Uint8Array(100));
+    expect(got).toEqual([100]);
+  });
+});
+
 describe('Gemini Live in text mode', () => {
   it('asks for TEXT only (no audio output settings) so VoiceLab can speak it', () => {
     const s = (geminiSetup({ model: 'm', instructions: 'x', textOutput: true, voice: 'v', languageCode: 'uz-UZ' }) as { setup: Record<string, any> }).setup;

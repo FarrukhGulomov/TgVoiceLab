@@ -11,6 +11,8 @@ import type { Queryable } from '../../infrastructure/db/db.js';
  * given to any other contact.
  */
 export const OWNER_SCOPE = 'owner:notes';
+/** What the assistant learnt from its own calls (what to do better). Kept apart so it can never push the owner's notes out of their capped scope. */
+export const LESSON_SCOPE = 'owner:lessons';
 export const contactScope = (contactId: string): string => `contact:${contactId}:notes`;
 
 export const MEMORY_TEXT_MAX = 400;
@@ -32,6 +34,23 @@ const norm = (s: string): string =>
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 
+const tokens = (x: string): Set<string> => new Set(x.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+/** Almost the same words (>= 85% overlap both ways): a re-worded duplicate that only adds noise to recall. Different numbers make a different fact. */
+export function nearlySame(a: string, b: string): boolean {
+  const x = tokens(a);
+  const y = tokens(b);
+  if (x.size < 4 || y.size < 4) return false;
+  const nums = (t: Set<string>) =>
+    [...t]
+      .filter((w) => /\d/.test(w))
+      .sort()
+      .join(',');
+  if (nums(x) !== nums(y)) return false; // a different number (price, time) is a different fact
+  let common = 0;
+  for (const w of x) if (y.has(w)) common++;
+  return common / x.size >= 0.85 && common / y.size >= 0.85;
+}
+
 export class MemoryService {
   constructor(private readonly crypto: DataCrypto) {}
 
@@ -48,7 +67,7 @@ export class MemoryService {
     const t = clean(text);
     if (t.length < 3) return null;
     const existing = await this.list(q, ownerId, scope, MEMORY_PER_SCOPE, now);
-    if (existing.some((m) => norm(m.text) === norm(t))) return null;
+    if (existing.some((m) => norm(m.text) === norm(t) || nearlySame(m.text, t))) return null;
     const id = randomUUID();
     await q.query(
       `INSERT INTO memories (id, owner_id, subject_scope, value_enc, provenance, confidence, approved_at, expires_at, created_at)

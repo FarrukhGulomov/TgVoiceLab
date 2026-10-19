@@ -176,7 +176,8 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
           textMode: cfg.GEMINI_TEXT_MODE,
           googleSearch: cfg.GEMINI_GOOGLE_SEARCH,
           languageCode: cfg.GEMINI_LANGUAGE_CODE,
-          vad: { silenceMs: cfg.GEMINI_VAD_SILENCE_MS, start: cfg.GEMINI_VAD_START, end: cfg.GEMINI_VAD_END },
+          // Faster turn-taking by default (answer after ~0.5 s of silence); raise GEMINI_VAD_SILENCE_MS if people get cut off.
+          vad: { silenceMs: cfg.GEMINI_VAD_SILENCE_MS ?? 500, start: cfg.GEMINI_VAD_START, end: cfg.GEMINI_VAD_END ?? 'high' },
           ...(cfg.GEMINI_DEBUG ? { debug: (line: string) => log.info({ gemini: true }, line.slice(0, 200)) } : {}),
         })
       : makeOpenAi({
