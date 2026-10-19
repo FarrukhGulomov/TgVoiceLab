@@ -57,6 +57,7 @@ describe('VoiceLabSttStream (realtime protocol)', () => {
     s.sendAudio(frames(200, 3000)); // before ready: held
     expect(sock.sent).toHaveLength(0);
     sock.say({ event: 'ready' });
+    sock.say({ event: 'started' });
     expect(sock.json()[0]).toEqual({ type: 'start', language: 'uz', audio_format: 'pcm_s16le', sample_rate: 16000, channels: 1, word_timestamps: true });
     expect(sock.sent[0]).toEqual(expect.any(String)); // start comes first
     expect(sock.sent[1]).toBeInstanceOf(Uint8Array); // then the held audio, raw PCM, no header
@@ -67,6 +68,7 @@ describe('VoiceLabSttStream (realtime protocol)', () => {
     const { s, socks } = mk();
     const sock = socks[0]!.sock;
     sock.say({ event: 'ready' });
+    sock.say({ event: 'started' });
     const finals: string[] = [];
     const errors: string[] = [];
     s.onFinal((f) => finals.push(f.text));
@@ -88,8 +90,26 @@ describe('VoiceLabSttStream (realtime protocol)', () => {
     s.sendAudio(frames(200, 3000)); // still waiting for ready
     s.interrupt();
     sock.say({ event: 'ready' });
+    sock.say({ event: 'started' });
     expect(sock.sent.filter((x) => x instanceof Uint8Array)).toHaveLength(0);
     expect(sock.json().some((j) => j.action === 'interrupt')).toBe(true);
+  });
+
+  it('holds audio until start is acknowledged, retries start on not_started, and logs the failure once instead of per frame', () => {
+    const { s, socks } = mk();
+    const errors: string[] = [];
+    s.onError((m) => errors.push(m));
+    const { sock } = socks[0]!;
+    sock.say({ event: 'ready' });
+    s.sendAudio(frames(200, 3000));
+    expect(sock.sent.filter((x) => x instanceof Uint8Array)).toHaveLength(0); // no ack yet: audio is held
+    for (let i = 0; i < 50; i++) sock.say({ event: 'error', code: 'not_started', message: 'Send a start message before audio.' });
+    expect(sock.json().filter((j) => j.type === 'start').length).toBeLessThanOrEqual(3);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('refusing the start');
+    s.sendAudio(frames(200, 3000));
+    expect(sock.sent.filter((x) => x instanceof Uint8Array)).toHaveLength(0); // given up: nothing more is streamed
+    expect(s.commit()).toBe(false);
   });
 
   it('reconnects after an unexpected close (twice at most) and then reports it', () => {

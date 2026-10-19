@@ -169,7 +169,13 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     const ears = sttCalls
       ? new VoiceLabEars(
           brain as unknown as import('./infrastructure/voicelab/stt-ears.js').UserTextBrain,
-          new VoiceLabSttStream({ apiKey: cfg.VOICELAB_API_KEY!, url: sttUrl, language: cfg.VOICELAB_STT_LANGUAGE, sampleRateHz: 16_000 }),
+          new VoiceLabSttStream({
+            apiKey: cfg.VOICELAB_API_KEY!,
+            url: sttUrl,
+            language: cfg.VOICELAB_STT_LANGUAGE,
+            sampleRateHz: 16_000,
+            log: (line) => log.info({ call: true, voicelab: true }, line),
+          }),
           {
             silenceMs: cfg.VOICELAB_STT_SILENCE_MS,
             level: cfg.VOICELAB_STT_LEVEL,
