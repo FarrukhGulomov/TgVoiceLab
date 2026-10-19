@@ -187,6 +187,12 @@ export class OpenAiRealtimeLink implements RealtimeLink {
     if (!pcm.length) return;
     this.#send({ type: 'input_audio_buffer.append', audio: Buffer.from(pcm).toString('base64') });
   }
+  /** The caller's words as TEXT (when another recogniser does the listening): a user message, then an answer. */
+  sendUserText(text: string): void {
+    if (!text.trim()) return;
+    this.#send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
+    this.#send({ type: 'response.create' });
+  }
   respond(instructions?: string): void {
     this.#send({ type: 'response.create', ...(instructions ? { response: { instructions } } : {}) });
   }

@@ -50,6 +50,18 @@ const EnvSchema = z
     VOICE_REPLIES: bool.default(true),
     /** VoiceLab voice: say a short "Xo'p." the moment the caller stops talking, before the model's answer is ready. */
     VOICELAB_FILLER: bool.default(true),
+    /** Speech recognition. Unset: the AI voice model hears the call itself (and Gemini transcribes voice notes). `voicelab`: VoiceLab's Uzbek recogniser (key needs stt:realtime for calls, stt:write + stt:read for voice notes). */
+    STT_PROVIDER: z.enum(['voicelab']).optional(),
+    /** With STT_PROVIDER=voicelab: use it for live calls (needs TTS_PROVIDER=voicelab: the model then only reads and writes text) and for the owner's voice notes. */
+    VOICELAB_STT_CALLS: bool.default(true),
+    VOICELAB_STT_NOTES: bool.default(true),
+    /** Live recognition endpoint; default is derived from VOICELAB_BASE_URL (wss://api.voicelab.uz/v1/stt/stream). */
+    VOICELAB_STT_URL: opt(z.string().regex(/^wss?:\/\//)),
+    VOICELAB_STT_LANGUAGE: z.string().min(2).max(8).default('uz'),
+    /** Silence (ms) that ends the caller's utterance and commits it to the recogniser: shorter = faster answers but people get cut off. */
+    VOICELAB_STT_SILENCE_MS: z.coerce.number().int().min(250).max(2000).default(600),
+    /** RMS level of the caller's audio that counts as speech (raise on a noisy line). */
+    VOICELAB_STT_LEVEL: z.coerce.number().int().min(100).max(3000).default(450),
     VOICELAB_API_KEY: opt(z.string()),
     /** The voice's id from `pnpm voicelab:check` (e.g. the one named Nozima). */
     VOICELAB_VOICE_ID: opt(z.string()),
@@ -91,6 +103,14 @@ const EnvSchema = z
       if (!e.VOICELAB_VOICE_ID) bad('VOICELAB_VOICE_ID', 'TTS_PROVIDER=voicelab requires VOICELAB_VOICE_ID (list voices with `pnpm voicelab:check`)');
       if (!e.AI_VOICE_PROVIDER)
         bad('TTS_PROVIDER', 'the VoiceLab voice needs AI_VOICE_PROVIDER=openai or gemini (that model listens and answers in text, VoiceLab speaks)');
+    }
+    if (e.STT_PROVIDER === 'voicelab') {
+      if (!e.VOICELAB_API_KEY) bad('VOICELAB_API_KEY', 'STT_PROVIDER=voicelab requires VOICELAB_API_KEY');
+      if (e.VOICELAB_STT_CALLS && e.CALLS_ENABLED && e.TTS_PROVIDER !== 'voicelab')
+        bad(
+          'STT_PROVIDER',
+          'live-call recognition by VoiceLab needs TTS_PROVIDER=voicelab (the thinking model then works in text only); set VOICELAB_STT_CALLS=false to use it for voice notes only',
+        );
     }
     if (e.CALLS_ENABLED) {
       if (e.CALL_ADAPTER === 'disabled') bad('CALL_ADAPTER', 'CALLS_ENABLED=true requires a real call adapter');

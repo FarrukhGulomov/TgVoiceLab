@@ -132,8 +132,19 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const { VoiceLabTts } = await import('./infrastructure/voicelab/tts.js');
   const { VoiceLabMouthLink } = await import('./infrastructure/voicelab/mouth-link.js');
   const { VOICE_TEXT_OUTPUT_RULE: RULE_PLAIN, VOICE_TEXT_OUTPUT_RULE_WITH_REACTIONS } = await import('./modules/calls/conversation/language-rule.js');
-  const VOICE_TEXT_OUTPUT_RULE = cfg.VOICELAB_FILLER ? VOICE_TEXT_OUTPUT_RULE_WITH_REACTIONS : RULE_PLAIN;
+  const sttOnCalls = cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_CALLS;
+  const EARS_NOTE =
+    " SUHBATDOSH GAPI: suhbatdoshning nutqi senga MATN bo'lib keladi (nutqni tanish tizimi yozadi), unda imlo va so'z xatolari bo'lishi mumkin. Ma'nosiga qarab tushun; ma'no noaniq bo'lsa, qisqa aniqlashtir.";
+  const VOICE_TEXT_OUTPUT_RULE = (cfg.VOICELAB_FILLER ? VOICE_TEXT_OUTPUT_RULE_WITH_REACTIONS : RULE_PLAIN) + (sttOnCalls ? EARS_NOTE : '');
   const voicelab = cfg.TTS_PROVIDER === 'voicelab';
+  const { VoiceLabEars } = await import('./infrastructure/voicelab/stt-ears.js');
+  const { VoiceLabSttStream } = await import('./infrastructure/voicelab/stt-stream.js');
+  const { TurnTimer } = await import('./infrastructure/voicelab/turn-timer.js');
+  const sttUrl = cfg.VOICELAB_STT_URL ?? `${(cfg.VOICELAB_BASE_URL ?? 'https://api.voicelab.uz').replace(/\/+$/, '').replace(/^http/, 'ws')}/v1/stt/stream`;
+  if (voicelab && cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_CALLS)
+    log.warn(
+      "live calls: VoiceLab listens (speech recognition), the AI model only reads the text; the caller's audio is sent to VoiceLab, not to Gemini/OpenAI",
+    );
   const { CachingSynthesizer } = await import('./infrastructure/voicelab/tts.js');
   const FILLERS = ["Xo'p.", 'Ha.', 'Mayli.', 'Tushundim.'];
   // One cache for all calls of this process: stock phrases and openers are voiced instantly after the first time.
@@ -153,10 +164,24 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
       { listens: cfg.AI_VOICE_PROVIDER, speaks: 'voicelab', geminiTextOutput: cfg.GEMINI_TEXT_OUTPUT },
       'call voice: the AI model listens, VoiceLab speaks',
     );
+    const sttCalls = cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_CALLS;
+    const timer = new TurnTimer((line) => log.info({ call: true, voicelab: true }, line)); // timings only, never words
+    const ears = sttCalls
+      ? new VoiceLabEars(
+          brain as unknown as import('./infrastructure/voicelab/stt-ears.js').UserTextBrain,
+          new VoiceLabSttStream({ apiKey: cfg.VOICELAB_API_KEY!, url: sttUrl, language: cfg.VOICELAB_STT_LANGUAGE, sampleRateHz: 16_000 }),
+          {
+            silenceMs: cfg.VOICELAB_STT_SILENCE_MS,
+            level: cfg.VOICELAB_STT_LEVEL,
+            timer,
+            log: (line) => log.info({ call: true, voicelab: true }, line),
+          },
+        )
+      : undefined;
     return new VoiceLabMouthLink(
-      brain,
+      ears ?? brain,
       callTts,
-      { fillers: cfg.VOICELAB_FILLER ? FILLERS : [], log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
+      { timer, fillers: cfg.VOICELAB_FILLER ? FILLERS : [], log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
     );
   };
   const makeOpenAi = (o: ConstructorParameters<typeof OpenAiRealtimeLink>[0]) =>
@@ -243,7 +268,11 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
 }
 
 let transcription: import('./application/ports.js').TranscriptionPort | undefined;
-if (cfg.GEMINI_API_KEY && cfg.GEMINI_TRANSCRIPTION_MODEL) {
+if (cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_NOTES) {
+  const { VoiceLabFileStt } = await import('./infrastructure/voicelab/stt-file.js');
+  transcription = new VoiceLabFileStt({ apiKey: cfg.VOICELAB_API_KEY!, baseUrl: cfg.VOICELAB_BASE_URL, language: cfg.VOICELAB_STT_LANGUAGE });
+  log.warn('voice notes are transcribed by VoiceLab (not live verified); the audio is sent to VoiceLab');
+} else if (cfg.GEMINI_API_KEY && cfg.GEMINI_TRANSCRIPTION_MODEL) {
   const { GeminiTranscription } = await import('./infrastructure/gemini/transcribe.js');
   transcription = new GeminiTranscription({ apiKey: cfg.GEMINI_API_KEY, model: cfg.GEMINI_TRANSCRIPTION_MODEL });
   log.warn('voice notes are transcribed by Gemini (not live verified); on the free tier Google may use the audio to improve its products');

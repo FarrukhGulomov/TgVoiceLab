@@ -1,6 +1,7 @@
 import type { RealtimeLink, ToolCall } from '../../modules/calls/audio/realtime-bridge.js';
 import { StreamingResampler } from '../../modules/calls/audio/resampler.js';
 import type { Synthesizer, TtsLanguage } from './tts.js';
+import type { TurnTimer } from './turn-timer.js';
 
 /** A realtime session that answers in TEXT (the "brain": it listens, decides, calls tools) and streams the text as it is written. */
 export interface TextBrain extends RealtimeLink {
@@ -98,6 +99,8 @@ export class VoiceLabMouthLink implements RealtimeLink {
        */
       fillers?: string[] | undefined;
       now?: (() => number) | undefined;
+      /** Times each turn (needs the ears to mark the turn's start). */
+      timer?: TurnTimer | undefined;
     } = {},
   ) {
     this.inputRateHz = brain.inputRateHz;
@@ -111,6 +114,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
       for (const cb of this.#audio) cb(out);
     });
     brain.onText((delta, done) => {
+      if (delta) this.o.timer?.mark('firstText');
       this.#buf += delta;
       const { sentences, rest } = takeSentences(this.#buf);
       this.#buf = rest;
@@ -146,12 +150,13 @@ export class VoiceLabMouthLink implements RealtimeLink {
     this.#enqueue(rest);
   }
 
-  #enqueue(raw: string): void {
+  #enqueue(raw: string, filler = false): void {
     const text = speakable(raw);
     if (!/[\p{L}\p{N}]/u.test(text)) return;
     if (this.#degraded) return; // the brain's own voice is speaking this
     const epoch = this.#epoch;
     const signal = this.#abort.signal;
+    if (!filler) this.o.timer?.mark('ttsStart');
     const pending = this.tts.synthesize(text, languageOf(text), signal);
     pending.catch(() => undefined); // reported where it is awaited; a dropped one must not become an unhandled rejection
     this.#chain = this.#chain.then(async () => {
@@ -160,6 +165,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
         const t0 = this.#now();
         const a = await pending;
         if (epoch !== this.#epoch) return;
+        if (!filler) this.o.timer?.mark('ttsDone');
         this.#failures = 0;
         this.o.log?.(`voicelab: ${text.length} chars voiced (waited ${this.#now() - t0} ms for the synthesis)`);
         const pcm = a.rateHz === OUT_RATE ? a.pcm : new StreamingResampler(a.rateHz, OUT_RATE).process(a.pcm);
@@ -167,6 +173,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
         // ~100 ms pieces keep barge-in responsive
         for (let i = 0; i < pcm.length; i += 4800) {
           if (epoch !== this.#epoch) return;
+          if (!filler && i === 0) this.o.timer?.mark('firstAudio');
           for (const cb of this.#audio) cb(pcm.subarray(i, i + 4800));
         }
       } catch (e) {
@@ -223,7 +230,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
     this.#lastFillerAt = now;
     const f = this.o.fillers![Math.floor(this.#fillerTurn / 2) % this.o.fillers!.length]!;
     this.o.log?.('voicelab: instant reaction');
-    this.#enqueue(f);
+    this.#enqueue(f, true);
   }
   respond(instructions?: string): void {
     this.brain.respond(instructions);

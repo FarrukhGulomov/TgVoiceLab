@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { AutoGain } from '../audio/auto-gain.js';
 import type { RealtimeLink, ToolCall, ToolDeclaration } from '../../modules/calls/audio/realtime-bridge.js';
 
 /**
@@ -283,31 +284,15 @@ export class GeminiLiveLink implements RealtimeLink {
     }
   }
 
-  #level = 0; // smoothed loudness of the caller's speech
+  readonly #gain = new AutoGain({ target: TARGET_LEVEL });
   sendAudio(pcm: Uint8Array): void {
     if (!pcm.length) return;
-    const out = this.#o.autoGain === false ? pcm : this.#gain(pcm);
+    const out = this.#o.autoGain === false ? pcm : this.#gain.process(pcm);
     this.#send({ realtimeInput: { audio: { data: Buffer.from(out).toString('base64'), mimeType: `audio/pcm;rate=${GEMINI_INPUT_RATE}` } } });
   }
-
-  /** Speech on a phone line is often very quiet, and quiet speech is what the model mishears: raise it towards a steady level (at most 6x, never clipping). */
-  #gain(pcm: Uint8Array): Uint8Array {
-    const n = Math.floor(pcm.length / 2);
-    if (!n) return pcm;
-    const src = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-    let sum = 0;
-    for (let i = 0; i < n; i++) {
-      const x = src.getInt16(i * 2, true);
-      sum += x * x;
-    }
-    const rms = Math.sqrt(sum / n);
-    if (rms > 200) this.#level = this.#level ? this.#level * 0.9 + rms * 0.1 : rms; // only speech moves the estimate, never the noise floor
-    const g = this.#level ? Math.min(6, Math.max(1, TARGET_LEVEL / this.#level)) : 1;
-    if (g < 1.05) return pcm;
-    const out = new Uint8Array(pcm.length);
-    const dst = new DataView(out.buffer);
-    for (let i = 0; i < n; i++) dst.setInt16(i * 2, Math.max(-32768, Math.min(32767, Math.round(src.getInt16(i * 2, true) * g))), true);
-    return out;
+  /** The caller's words as TEXT (when another recogniser does the listening): a user turn the model answers. */
+  sendUserText(text: string): void {
+    this.respond(text);
   }
   respond(instructions?: string): void {
     if (!instructions) return;
