@@ -76,6 +76,7 @@ describe('VoiceLabSttStream (realtime protocol)', () => {
     s.sendAudio(frames(60, 3000));
     expect(s.commit()).toBe(false); // 60 ms is too short
     s.sendAudio(frames(100, 3000));
+    sock.say({ event: 'started' });
     expect(s.commit()).toBe(true);
     expect(sock.json().at(-1)).toEqual({ type: 'commit' });
     sock.say({ event: 'final', text: 'Salom dunyo', language: 'uz' });
@@ -92,23 +93,61 @@ describe('VoiceLabSttStream (realtime protocol)', () => {
     sock.say({ event: 'ready' });
     sock.say({ event: 'started' });
     expect(sock.sent.filter((x) => x instanceof Uint8Array)).toHaveLength(0);
-    expect(sock.json().some((j) => j.action === 'interrupt')).toBe(true);
+    expect(sock.json().some((j) => j.action === 'interrupt')).toBe(false); // nothing had started, nothing to cancel
   });
 
-  it('holds audio until start is acknowledged, retries start on not_started, and logs the failure once instead of per frame', () => {
+  it('interrupt after a commit cancels it and the next utterance opens a new session', () => {
+    const { s, socks } = mk();
+    const sock = socks[0]!.sock;
+    sock.say({ event: 'ready' });
+    s.sendAudio(frames(200, 3000));
+    sock.say({ event: 'started' });
+    s.commit();
+    s.interrupt();
+    expect(sock.json().some((j) => j.action === 'interrupt')).toBe(true);
+    s.sendAudio(frames(200, 3000));
+    expect(sock.json().filter((j) => j.type === 'start')).toHaveLength(2);
+  });
+
+  it('opens a new session for every utterance, sends nothing while a result is pending, and ignores busy', () => {
+    const { s, socks } = mk();
+    const errors: string[] = [];
+    const finals: string[] = [];
+    s.onError((m) => errors.push(m));
+    s.onFinal((f) => finals.push(f.text));
+    const { sock } = socks[0]!;
+    sock.say({ event: 'ready' });
+    s.sendAudio(frames(200, 3000));
+    expect(sock.sent.filter((x) => x instanceof Uint8Array)).toHaveLength(0); // start sent, waiting
+    sock.say({ event: 'started' });
+    expect(sock.sent.filter((x) => x instanceof Uint8Array)).toHaveLength(1);
+    s.commit();
+    s.sendAudio(frames(200, 3000)); // next speech while the first result is pending: held
+    expect(sock.sent.filter((x) => x instanceof Uint8Array)).toHaveLength(1);
+    sock.say({ event: 'error', code: 'busy', message: 'Finish or interrupt the current transcription first.' });
+    sock.say({ event: 'final', text: 'bir' });
+    expect(finals).toEqual(['bir']);
+    expect(sock.json().filter((j) => j.type === 'start')).toHaveLength(2); // second utterance starts fresh
+    sock.say({ event: 'started' });
+    expect(sock.sent.filter((x) => x instanceof Uint8Array)).toHaveLength(2);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('on not_started drops the lost audio, starts again with the next audio and reports a hopeless server once', () => {
     const { s, socks } = mk();
     const errors: string[] = [];
     s.onError((m) => errors.push(m));
     const { sock } = socks[0]!;
     sock.say({ event: 'ready' });
     s.sendAudio(frames(200, 3000));
-    expect(sock.sent.filter((x) => x instanceof Uint8Array)).toHaveLength(0); // no ack yet: audio is held
+    sock.say({ event: 'started' });
+    sock.say({ event: 'error', code: 'not_started', message: 'Send a start message before audio.' });
+    s.sendAudio(frames(200, 3000));
+    expect(sock.json().filter((j) => j.type === 'start')).toHaveLength(2);
     for (let i = 0; i < 50; i++) sock.say({ event: 'error', code: 'not_started', message: 'Send a start message before audio.' });
-    expect(sock.json().filter((j) => j.type === 'start').length).toBeLessThanOrEqual(3);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('refusing the start');
     s.sendAudio(frames(200, 3000));
-    expect(sock.sent.filter((x) => x instanceof Uint8Array)).toHaveLength(0); // given up: nothing more is streamed
     expect(s.commit()).toBe(false);
   });
 

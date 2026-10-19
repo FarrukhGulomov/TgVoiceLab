@@ -23,13 +23,14 @@ export interface SttStreamOptions {
   maxReconnects?: number | undefined;
   /** Event names only (never audio, text or keys); used to learn what the server really sends. */
   log?: ((line: string) => void) | undefined;
-  /** How long to wait for the server to acknowledge `start` before sending audio anyway. */
+  /** How long to wait after `start` (the server sends no acknowledgement we know of) before audio follows. */
   startWaitMs?: number | undefined;
 }
 
-const MAX_START_RETRIES = 3;
 const MAX_QUEUED_MS = 5_000;
 const ERROR_REPEAT_MS = 5_000;
+const FINAL_TIMEOUT_MS = 8_000;
+const COMMIT = Symbol('commit');
 
 export const STT_MIN_COMMIT_MS = 100;
 export const STT_MAX_COMMIT_MS = 35_000;
@@ -45,18 +46,27 @@ export interface SttStream {
   close(): void;
 }
 
+/**
+ * Observed behaviour (live log): `ready` arrives once; `start` is not acknowledged; a session handles ONE utterance - after `final`, after
+ * `interrupt` the server answers `not_started` to audio until a new `start`, and `busy` if audio/commit arrives while a transcription is
+ * still running. So: every utterance opens with its own `start`, nothing is sent while a result is pending, and extra audio waits in a
+ * bounded queue.
+ */
 export class VoiceLabSttStream implements SttStream {
   #ws!: WebSocket;
-  #ready = false; // server said `ready`
-  #live = false; // `start` was acknowledged (or the wait ran out): audio may flow
-  #dead = false; // start was refused repeatedly: stop streaming, one warning was given
-  #startTries = 0;
+  #ready = false; // server said `ready` on this connection
+  #open = false; // a `start` was sent and the session has not ended
+  #warming = false; // `start` sent, short wait before audio
+  #inFlight = false; // committed, `final` not back yet
+  #dead = false; // the server refused the start again and again: off for this call
+  #notStarted: number[] = [];
   #startTimer: ReturnType<typeof setTimeout> | undefined;
+  #flightTimer: ReturnType<typeof setTimeout> | undefined;
   #seen = new Set<string>();
   #lastError = { msg: '', at: 0, n: 0 };
   #closed = false;
-  #queue: Array<string | Uint8Array> = []; // everything sent before `ready` (and during a reconnect)
-  #pendingMs = 0; // audio sent since the last commit
+  #queue: Array<typeof COMMIT | Uint8Array> = [];
+  #pendingMs = 0; // audio accepted for the current utterance
   #finals: Array<(f: SttFinal) => void> = [];
   #errors: Array<(m: string) => void> = [];
   #reconnects = 0;
@@ -80,31 +90,12 @@ export class VoiceLabSttStream implements SttStream {
     for (const cb of this.#errors) cb(msg + more);
   }
 
-  #start(): void {
-    this.#live = false;
-    this.#startTries++;
-    this.#ws.send(
-      JSON.stringify({
-        type: 'start',
-        language: this.o.language,
-        audio_format: 'pcm_s16le',
-        sample_rate: this.o.sampleRateHz,
-        channels: 1,
-        word_timestamps: true,
-      }),
-    );
+  #resetSession(): void {
+    this.#open = false;
+    this.#warming = false;
+    this.#inFlight = false;
     clearTimeout(this.#startTimer);
-    // No acknowledgement event is known for certain; if the server stays silent (and does not complain) the session is taken as started.
-    this.#startTimer = setTimeout(() => this.#goLive(), this.o.startWaitMs ?? 400);
-  }
-
-  #goLive(): void {
-    clearTimeout(this.#startTimer);
-    if (this.#live || this.#dead || this.#closed) return;
-    this.#live = true;
-    const q = this.#queue;
-    this.#queue = [];
-    for (const x of q) this.#ws.send(x);
+    clearTimeout(this.#flightTimer);
   }
 
   #connect(): void {
@@ -112,8 +103,7 @@ export class VoiceLabSttStream implements SttStream {
     const ws = this.o.socketFactory ? this.o.socketFactory(this.o.url, headers) : new WebSocket(this.o.url, { headers });
     this.#ws = ws;
     this.#ready = false;
-    this.#live = false;
-    this.#startTries = 0;
+    this.#resetSession();
     ws.on('message', (raw: WebSocket.RawData, isBinary?: boolean) => {
       if (isBinary) return;
       this.#onMessage(raw.toString());
@@ -124,11 +114,74 @@ export class VoiceLabSttStream implements SttStream {
       if (this.#reconnects < (this.o.maxReconnects ?? 2)) {
         this.#reconnects++;
         this.#pendingMs = 0; // the audio of a lost connection can not be recovered
+        this.#queue = [];
         this.#connect();
         return;
       }
       this.#emitError(`stt websocket closed (${code}) ${reason.toString()}`.trim());
     });
+  }
+
+  #bound(): void {
+    const ms = (x: Uint8Array) => (x.length / 2 / this.o.sampleRateHz) * 1000;
+    let total = 0;
+    for (const q of this.#queue) if (q !== COMMIT) total += ms(q);
+    while (total > MAX_QUEUED_MS) {
+      const i = this.#queue.findIndex((q) => q !== COMMIT);
+      if (i < 0) break;
+      const d = this.#queue.splice(i, 1)[0] as Uint8Array;
+      total -= ms(d);
+      this.#pendingMs = Math.max(0, this.#pendingMs - ms(d));
+    }
+  }
+
+  /** Sends what may be sent now: a fresh `start` first when the session is closed, then audio, stopping after a commit. */
+  #pump(): void {
+    if (this.#dead || !this.#ready || this.#inFlight || this.#warming || !this.#queue.length) return;
+    if (!this.#open) {
+      this.#open = true;
+      this.#warming = true;
+      this.#ws.send(
+        JSON.stringify({
+          type: 'start',
+          language: this.o.language,
+          audio_format: 'pcm_s16le',
+          sample_rate: this.o.sampleRateHz,
+          channels: 1,
+          word_timestamps: true,
+        }),
+      );
+      this.#startTimer = setTimeout(() => this.#started(), this.o.startWaitMs ?? 300);
+      return;
+    }
+    while (this.#queue.length) {
+      const x = this.#queue.shift()!;
+      if (x === COMMIT) {
+        this.#ws.send(JSON.stringify({ type: 'commit' }));
+        this.#inFlight = true;
+        clearTimeout(this.#flightTimer);
+        this.#flightTimer = setTimeout(() => this.#giveUpWaiting(), FINAL_TIMEOUT_MS);
+        return;
+      }
+      this.#ws.send(x);
+    }
+  }
+
+  #started(): void {
+    clearTimeout(this.#startTimer);
+    this.#warming = false;
+    this.#pump();
+  }
+
+  #giveUpWaiting(): void {
+    this.#emitError('stt: no result came back in time');
+    try {
+      this.#ws.send(JSON.stringify({ action: 'interrupt' }));
+    } catch {
+      /* socket gone */
+    }
+    this.#resetSession();
+    this.#pump();
   }
 
   #onMessage(raw: string): void {
@@ -143,66 +196,64 @@ export class VoiceLabSttStream implements SttStream {
       this.#seen.add(kind);
       this.o.log?.(`stt event: ${kind}`);
     }
-    if (kind !== 'ready' && kind !== 'error' && !this.#live && this.#ready) this.#goLive(); // any non-error answer to `start` means it was accepted
+    if (this.#warming && kind !== 'ready' && kind !== 'error') this.#started(); // any non-error answer to `start` means it was accepted
     switch (kind) {
       case 'ready':
         this.#ready = true;
-        this.#start();
+        this.#resetSession();
+        this.#pump();
         break;
       case 'final':
+        this.#resetSession(); // the session handled its utterance: the next one opens with a new `start`
         if (typeof m.text === 'string')
           for (const cb of this.#finals) cb({ text: m.text, ...(typeof m.language === 'string' ? { language: m.language } : {}) });
+        this.#pump();
         break;
       case 'error': {
         const why = [m.code, m.message ?? m.error].filter((x) => typeof x === 'string').join(': ');
         if (m.code === 'not_started') {
+          // the session is over (after interrupt / final / a lost start): drop what was sent into it and open a new one with the next audio
+          const now = Date.now();
+          this.#notStarted = this.#notStarted.filter((t) => now - t < 3_000);
+          this.#notStarted.push(now);
           this.#pendingMs = 0;
           this.#queue = [];
-          if (this.#startTries < MAX_START_RETRIES && !this.#dead) {
-            this.#start(); // the server did not take our `start`: say it again, hold the audio until it answers
-            break;
-          }
-          if (!this.#dead) {
+          this.#resetSession();
+          if (this.#notStarted.length >= 10 && !this.#dead) {
             this.#dead = true;
-            clearTimeout(this.#startTimer);
             this.#emitError('stt: the server keeps refusing the start message; speech recognition is off for this call');
           }
           break;
         }
+        if (m.code === 'busy') break; // our commit/audio crossed a running transcription; the queue holds the rest
+        if (typeof m.code === 'string' && m.code.includes('already')) {
+          this.#open = true;
+          break;
+        }
         this.#emitError(`stt error${why ? `: ${why}` : ''}`);
+        if (this.#inFlight) {
+          this.#resetSession(); // a rejected commit gets no `final`
+          this.#pump();
+        }
         break;
       }
       default:
     }
   }
 
-  #send(x: string | Uint8Array): void {
-    if (this.#dead) return;
-    if (this.#live) this.#ws.send(x);
-    else {
-      this.#queue.push(x);
-      let ms = 0; // audio waiting for the start acknowledgement is bounded: the oldest goes first
-      for (const q of this.#queue) if (typeof q !== 'string') ms += (q.length / 2 / this.o.sampleRateHz) * 1000;
-      while (ms > MAX_QUEUED_MS) {
-        const i = this.#queue.findIndex((q) => typeof q !== 'string');
-        if (i < 0) break;
-        const [d] = this.#queue.splice(i, 1);
-        ms -= ((d as Uint8Array).length / 2 / this.o.sampleRateHz) * 1000;
-        this.#pendingMs = Math.max(0, this.#pendingMs - ((d as Uint8Array).length / 2 / this.o.sampleRateHz) * 1000);
-      }
-    }
-  }
-
   sendAudio(pcm: Uint8Array): void {
     if (!pcm.length || this.#dead) return;
     this.#pendingMs += (pcm.length / 2 / this.o.sampleRateHz) * 1000;
-    this.#send(pcm);
+    this.#queue.push(pcm);
+    this.#bound();
+    this.#pump();
   }
 
   commit(): boolean {
-    if (this.#pendingMs < STT_MIN_COMMIT_MS) return false;
+    if (this.#dead || this.#pendingMs < STT_MIN_COMMIT_MS) return false;
     this.#pendingMs = 0;
-    this.#send(JSON.stringify({ type: 'commit' }));
+    this.#queue.push(COMMIT);
+    this.#pump();
     return true;
   }
 
@@ -212,8 +263,9 @@ export class VoiceLabSttStream implements SttStream {
 
   interrupt(): void {
     this.#pendingMs = 0;
-    this.#queue = this.#queue.filter((x) => typeof x === 'string'); // audio that never left is dropped
-    this.#send(JSON.stringify({ action: 'interrupt' }));
+    this.#queue = []; // audio and commits that never left
+    if (this.#ready && (this.#open || this.#inFlight)) this.#ws.send(JSON.stringify({ action: 'interrupt' }));
+    this.#resetSession();
   }
 
   onFinal(cb: (f: SttFinal) => void): void {
@@ -224,7 +276,7 @@ export class VoiceLabSttStream implements SttStream {
   }
   close(): void {
     this.#closed = true;
-    clearTimeout(this.#startTimer);
+    this.#resetSession();
     try {
       this.#ws.close();
     } catch {
