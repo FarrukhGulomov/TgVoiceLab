@@ -40,11 +40,18 @@ export function takeSentences(buf: string): { sentences: string[]; rest: string 
     sentences.push(rest.slice(0, m.index + m[0].length));
     rest = rest.slice(m.index + m[0].length);
   }
-  if (rest.length > 220) {
-    const cut = Math.max(rest.lastIndexOf(', ', 200), rest.lastIndexOf(' ', 200));
+  // A long run without a full stop is cut at a comma (late in the run) so the caller is not kept waiting for one 100-character sentence.
+  if (rest.length > 90) {
+    const cut = rest.lastIndexOf(', ', 85);
     if (cut > 40) {
       sentences.push(rest.slice(0, cut + 1));
       rest = rest.slice(cut + 1);
+    } else if (rest.length > 220) {
+      const sp = rest.lastIndexOf(' ', 200);
+      if (sp > 40) {
+        sentences.push(rest.slice(0, sp + 1));
+        rest = rest.slice(sp + 1);
+      }
     }
   }
   return { sentences, rest };

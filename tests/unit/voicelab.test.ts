@@ -323,3 +323,14 @@ describe('VoiceLabMouthLink: first words sooner', () => {
     expect(spoken[1]).toBe('keyin javob olib kelaman xo‘pmi?');
   });
 });
+
+describe('takeSentences: long runs', () => {
+  it('cuts a long unpunctuated run at a late comma, and only falls back to a space past 220 characters', () => {
+    const long = 'Mashinaning holati juda yaxshi, hech qanday muammosi yo‘q, hujjatlari ham tayyor, faqat narxini kelishib olishimiz kerak xolos';
+    const r = takeSentences(long);
+    expect(r.sentences).toHaveLength(1);
+    expect(r.sentences[0]!.endsWith(',')).toBe(true);
+    expect(r.sentences[0]!.length).toBeLessThanOrEqual(86);
+    expect(takeSentences('qisqa gap, davomi')).toEqual({ sentences: [], rest: 'qisqa gap, davomi' });
+  });
+});
