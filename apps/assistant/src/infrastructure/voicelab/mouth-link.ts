@@ -69,6 +69,8 @@ export class VoiceLabMouthLink implements RealtimeLink {
   #audibleUntil = 0;
   #idle: NodeJS.Timeout | undefined;
   /** Consecutive synthesis failures; at DEGRADE_AFTER the brain's own voice (when it makes audio) takes over for the rest of the call. */
+  /** True until the first chunk of the current answer is voiced: that one may be cut at a comma so the caller hears the answer sooner. */
+  #first = true;
   #failures = 0;
   #degraded = false;
   #brainResampler: StreamingResampler | undefined;
@@ -96,7 +98,19 @@ export class VoiceLabMouthLink implements RealtimeLink {
       this.#buf += delta;
       const { sentences, rest } = takeSentences(this.#buf);
       this.#buf = rest;
-      for (const s of sentences) this.#enqueue(s);
+      for (const s of sentences) {
+        this.#first = false;
+        this.#enqueue(s);
+      }
+      if (this.#first && !sentences.length) {
+        // Time to first audio dominates how fast the answer feels: do not wait for a full stop before the first words of an answer.
+        const cut = this.#buf.indexOf(', ', 24);
+        if (cut > 0) {
+          this.#first = false;
+          this.#enqueue(this.#buf.slice(0, cut + 1));
+          this.#buf = this.#buf.slice(cut + 2);
+        }
+      }
       clearTimeout(this.#idle);
       if (done) this.#flush();
       else if (this.#buf.trim()) {
@@ -112,6 +126,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
     clearTimeout(this.#idle);
     const rest = this.#buf;
     this.#buf = '';
+    this.#first = true; // the answer is complete: the next one starts fresh
     this.#enqueue(rest);
   }
 
@@ -158,6 +173,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
   }
   interrupt(playedMs: number): void {
     clearTimeout(this.#idle);
+    this.#first = true;
     this.#epoch++;
     this.#audibleUntil = 0;
     this.#buf = '';

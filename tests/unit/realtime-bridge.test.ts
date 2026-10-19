@@ -643,3 +643,43 @@ describe('inbound audio evidence', () => {
     h.finish();
   });
 });
+
+describe('GeminiLiveLink: resuming a dropped session', () => {
+  it('reopens the socket with the last resumption handle after an unexpected close, then reports a second failure', async () => {
+    const socks: FakeSocket[] = [];
+    const link = new GeminiLiveLink({
+      apiKey: 'K',
+      model: 'm',
+      instructions: 'i',
+      socketFactory: () => {
+        const s = new FakeSocket();
+        socks.push(s);
+        return s as never;
+      },
+    });
+    const errs: string[] = [];
+    link.onError((m) => errs.push(m));
+    socks[0]!.emit('open');
+    socks[0]!.emit('message', Buffer.from(JSON.stringify({ setupComplete: {} })));
+    socks[0]!.emit('message', Buffer.from(JSON.stringify({ sessionResumptionUpdate: { newHandle: 'H1', resumable: true } })));
+    socks[0]!.emit('close', 1011, Buffer.from('Internal error'));
+    expect(socks).toHaveLength(2);
+    expect(errs).toEqual([]); // resumed, not reported
+    socks[1]!.emit('open');
+    expect(JSON.parse(socks[1]!.sent[0]!).setup.sessionResumption).toEqual({ handle: 'H1' });
+    socks[1]!.emit('message', Buffer.from(JSON.stringify({ setupComplete: {} })));
+    socks[1]!.emit('close', 1011, Buffer.from('again'));
+    socks[2]!.emit('close', 1011, Buffer.from('and again'));
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toContain('1011');
+  });
+  it('a normal close (1000) is never resumed', () => {
+    const socks: FakeSocket[] = [];
+    const link = new GeminiLiveLink({ apiKey: 'K', model: 'm', instructions: 'i', socketFactory: () => socks[socks.push(new FakeSocket()) - 1] as never });
+    link.onError(() => undefined);
+    socks[0]!.emit('open');
+    socks[0]!.emit('message', Buffer.from(JSON.stringify({ sessionResumptionUpdate: { newHandle: 'H' } })));
+    socks[0]!.emit('close', 1000, Buffer.from(''));
+    expect(socks).toHaveLength(1);
+  });
+});

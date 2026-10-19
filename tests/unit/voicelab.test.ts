@@ -302,3 +302,24 @@ describe('VoiceReplies', () => {
     await expect(bad.speak('1', 'Salom.', 'k')).resolves.toBeUndefined();
   });
 });
+
+describe('VoiceLabMouthLink: first words sooner', () => {
+  it('the first chunk of an answer is cut at a comma instead of waiting for the full stop; later chunks follow normal sentences', async () => {
+    const brain = new FakeBrain();
+    const spoken: string[] = [];
+    const tts = {
+      synthesize: async (t: string) => {
+        spoken.push(t);
+        return { pcm: new Uint8Array(9600), rateHz: 24000 };
+      },
+    };
+    const link = new VoiceLabMouthLink(brain, tts, { idleFlushMs: { sentence: 5000, other: 5000 } });
+    link.onAudio(() => undefined);
+    brain.textCb('Xo‘p, tushundim, hozir egangizga aytib qo‘yaman, keyin javob olib kelaman', false);
+    await waitFor(() => spoken.length >= 1);
+    expect(spoken[0]).toBe('Xo‘p, tushundim, hozir egangizga aytib qo‘yaman,');
+    brain.textCb(' xo‘pmi? ', false);
+    await waitFor(() => spoken.length >= 2);
+    expect(spoken[1]).toBe('keyin javob olib kelaman xo‘pmi?');
+  });
+});

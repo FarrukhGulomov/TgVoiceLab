@@ -51,6 +51,7 @@ const DEFAULT_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.genera
 
 export function geminiSetup(
   o: Pick<GeminiLiveOptions, 'model' | 'voice' | 'instructions' | 'googleSearch' | 'languageCode' | 'tools' | 'textOutput' | 'vad'>,
+  resumeHandle?: string,
 ): Record<string, unknown> {
   return {
     setup: {
@@ -87,6 +88,8 @@ export function geminiSetup(
             },
           }
         : {}),
+      // Session resumption: the server hands out handles, so a dropped socket (e.g. close 1011) can continue the same conversation.
+      sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
       systemInstruction: { parts: [{ text: o.instructions }] },
       inputAudioTranscription: {},
       ...(o.textOutput === true ? {} : { outputAudioTranscription: {} }),
@@ -110,6 +113,7 @@ export function describe(m: ServerMessage): string {
 }
 
 interface ServerMessage {
+  sessionResumptionUpdate?: { newHandle?: string; resumable?: boolean };
   setupComplete?: unknown;
   toolCall?: { functionCalls?: Array<{ id?: string; name?: string; args?: Record<string, unknown> }> };
   serverContent?: {
@@ -143,16 +147,26 @@ export class GeminiLiveLink implements RealtimeLink {
   readonly #viaTranscript: boolean;
   readonly #debug: ((line: string) => void) | undefined;
   #setupTimer: NodeJS.Timeout | undefined;
+  #handle: string | undefined;
+  #reconnects = 0;
+  readonly #o: GeminiLiveOptions;
+  readonly #url: string;
 
   constructor(o: GeminiLiveOptions) {
+    this.#o = o;
     this.#textMode = o.textMode ?? 'realtime';
     this.#viaTranscript = o.textOutput === 'transcript';
     this.#debug = o.debug;
-    const url = `${o.baseUrl ?? DEFAULT_URL}?key=${encodeURIComponent(o.apiKey)}`;
-    this.#ws = o.socketFactory ? o.socketFactory(url) : new WebSocket(url);
-    this.#ws.on('open', () => {
+    this.#url = `${o.baseUrl ?? DEFAULT_URL}?key=${encodeURIComponent(o.apiKey)}`;
+    this.#ws = this.#open();
+  }
+
+  #open(): WebSocket {
+    const o = this.#o;
+    const ws = o.socketFactory ? o.socketFactory(this.#url) : new WebSocket(this.#url);
+    ws.on('open', () => {
       this.#debug?.('socket open; setup sent');
-      this.#ws.send(JSON.stringify(geminiSetup(o)));
+      ws.send(JSON.stringify(geminiSetup(o, this.#handle)));
       const ms = o.setupTimeoutMs ?? 8000;
       this.#setupTimer = setTimeout(() => {
         if (!this.#ready && !this.#closed)
@@ -161,13 +175,24 @@ export class GeminiLiveLink implements RealtimeLink {
           );
       }, ms);
     });
-    this.#ws.on('message', (raw: WebSocket.RawData) => this.#onMessage(raw.toString()));
-    this.#ws.on('error', (e: Error) => this.#emitError(`websocket: ${e.message.replace(o.apiKey, '***')}`));
-    this.#ws.on('close', (code: number, reason: Buffer) => {
+    ws.on('message', (raw: WebSocket.RawData) => this.#onMessage(raw.toString()));
+    ws.on('error', (e: Error) => this.#emitError(`websocket: ${e.message.replace(o.apiKey, '***')}`));
+    ws.on('close', (code: number, reason: Buffer) => {
       clearTimeout(this.#setupTimer);
       this.#debug?.(`socket closed (${code})`);
-      if (!this.#closed) this.#emitError(`websocket closed (${code}) ${reason.toString().replace(o.apiKey, '***').slice(0, 300)}`.trim());
+      if (this.#closed || ws !== this.#ws) return;
+      // An unexpected close in the middle of a conversation (e.g. 1011 "Internal error") is resumed from the last handle, up to twice.
+      if (code !== 1000 && this.#handle && this.#reconnects < 2) {
+        this.#reconnects++;
+        this.#ready = false;
+        this.#speaking = false;
+        this.#debug?.(`resuming the session (attempt ${this.#reconnects})`);
+        this.#ws = this.#open();
+        return;
+      }
+      this.#emitError(`websocket closed (${code}) ${reason.toString().replace(o.apiKey, '***').slice(0, 300)}`.trim());
     });
+    return ws;
   }
 
   #emitError(m: string): void {
@@ -193,6 +218,7 @@ export class GeminiLiveLink implements RealtimeLink {
       return;
     }
     this.#debug?.(describe(m));
+    if (m.sessionResumptionUpdate?.newHandle && m.sessionResumptionUpdate.resumable !== false) this.#handle = m.sessionResumptionUpdate.newHandle;
     if (m.setupComplete !== undefined) {
       clearTimeout(this.#setupTimer);
       this.#ready = true;
