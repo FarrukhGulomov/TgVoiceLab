@@ -376,3 +376,58 @@ describe('CachingSynthesizer', () => {
     expect(calls).toBe(7);
   });
 });
+
+describe('VoiceLabMouthLink: instant reaction', () => {
+  const loud = (ms: number) => {
+    const b = new Uint8Array(((16000 * ms) / 1000) * 2);
+    const v = new DataView(b.buffer);
+    for (let i = 0; i < b.length / 2; i++) v.setInt16(i * 2, i % 2 ? 3000 : -3000, true);
+    return b;
+  };
+  const quiet = (ms: number) => new Uint8Array(((16000 * ms) / 1000) * 2);
+  const mk = () => {
+    const brain = new FakeBrain();
+    const spoken: string[] = [];
+    const tts = {
+      synthesize: async (t: string) => {
+        spoken.push(t);
+        return { pcm: new Uint8Array(4800), rateHz: 24000 };
+      },
+    };
+    let clock = 10_000;
+    const link = new VoiceLabMouthLink(brain, tts, { fillers: ['Xo‘p.', 'Ha.'], now: () => clock });
+    link.onAudio(() => undefined);
+    const turn = async (speechMs: number) => {
+      for (let i = 0; i < speechMs / 100; i++) link.sendAudio(loud(100));
+      for (let i = 0; i < 5; i++) link.sendAudio(quiet(100));
+      await new Promise((r) => setTimeout(r, 30));
+    };
+    return { link, spoken, turn, advance: (ms: number) => (clock += ms) };
+  };
+
+  it('reacts as soon as a real sentence ends, ignores coughs, and does not react twice in a row', async () => {
+    const { spoken, turn, advance } = mk();
+    await new Promise((r) => setTimeout(r, 20));
+    const warm = spoken.length; // the stock words are warmed on creation
+    await turn(300); // a cough
+    expect(spoken.length).toBe(warm);
+    await turn(1200);
+    expect(spoken.length).toBe(warm + 1);
+    expect(spoken[warm]).toMatch(/^(Xo‘p|Ha)\./);
+    advance(10_000);
+    await turn(1200); // the next turn is skipped (every other turn)
+    expect(spoken.length).toBe(warm + 1);
+    advance(10_000);
+    await turn(1200);
+    expect(spoken.length).toBe(warm + 2);
+  });
+  it('is off without fillers', async () => {
+    const brain = new FakeBrain();
+    const spoken: string[] = [];
+    const link = new VoiceLabMouthLink(brain, { synthesize: async (t: string) => (spoken.push(t), { pcm: new Uint8Array(4800), rateHz: 24000 }) });
+    for (let i = 0; i < 12; i++) link.sendAudio(loud(100));
+    for (let i = 0; i < 5; i++) link.sendAudio(quiet(100));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(spoken).toEqual([]);
+  });
+});

@@ -47,6 +47,8 @@ const EnvSchema = z
     TTS_PROVIDER: z.enum(['voicelab']).optional(),
     /** Also speak the reply to an owner's voice note (needs TTS_PROVIDER=voicelab and `ffmpeg`). */
     VOICE_REPLIES: bool.default(true),
+    /** VoiceLab voice: say a short "Xo'p." the moment the caller stops talking, before the model's answer is ready. */
+    VOICELAB_FILLER: bool.default(true),
     VOICELAB_API_KEY: opt(z.string()),
     /** The voice's id from `pnpm voicelab:check` (e.g. the one named Nozima). */
     VOICELAB_VOICE_ID: opt(z.string()),

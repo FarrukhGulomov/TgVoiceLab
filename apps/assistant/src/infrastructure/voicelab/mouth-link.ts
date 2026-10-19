@@ -9,6 +9,9 @@ export interface TextBrain extends RealtimeLink {
 
 const OUT_RATE = 24_000;
 const DEGRADE_AFTER = 2;
+const FILLER_LEVEL = 450; // RMS of s16le samples that counts as speech on the phone line
+const FILLER_QUIET_MS = 280;
+const FILLER_MIN_SPEECH_MS = 600;
 
 const EMOJI = new RegExp(String.raw`\p{Extended_Pictographic}|\u200d|\ufe0f`, 'gu');
 
@@ -89,16 +92,24 @@ export class VoiceLabMouthLink implements RealtimeLink {
       log?: ((line: string) => void) | undefined;
       /** How long the text may stay quiet before the unfinished rest is voiced anyway (after a full stop / otherwise). */
       idleFlushMs?: { sentence: number; other: number } | undefined;
+      /**
+       * Short stock words ("Xo'p.", "Ha.") voiced the moment the caller stops talking, long before the model's answer exists: the caller hears a
+       * reaction at once and the real answer follows. Detected here from the caller's own audio level. Off when empty.
+       */
+      fillers?: string[] | undefined;
+      now?: (() => number) | undefined;
     } = {},
   ) {
     this.inputRateHz = brain.inputRateHz;
+    // Warm the stock words (the cache turns every later use into an instant playback).
+    for (const f of this.o.fillers ?? []) void this.tts.synthesize(f, languageOf(f)).catch(() => undefined);
     // Fallback voice: a brain that also produces audio (Gemini in 'transcript' mode) keeps talking in ITS voice once VoiceLab is out of
     // service (e.g. no credits left). Normally that audio is dropped. A brain that answers in text only can not do this.
     if (brain.outputRateHz !== OUT_RATE) this.#brainResampler = new StreamingResampler(brain.outputRateHz, OUT_RATE);
     brain.onAudio((pcm) => {
       if (!this.#degraded) return;
       const out = this.#brainResampler ? this.#brainResampler.process(pcm) : pcm;
-      this.#audibleUntil = Math.max(this.#audibleUntil, Date.now()) + (out.length / 2 / OUT_RATE) * 1000;
+      this.#audibleUntil = Math.max(this.#audibleUntil, this.#now()) + (out.length / 2 / OUT_RATE) * 1000;
       for (const cb of this.#audio) cb(out);
     });
     brain.onText((delta, done) => {
@@ -148,13 +159,13 @@ export class VoiceLabMouthLink implements RealtimeLink {
     this.#chain = this.#chain.then(async () => {
       if (epoch !== this.#epoch) return;
       try {
-        const t0 = Date.now();
+        const t0 = this.#now();
         const a = await pending;
         if (epoch !== this.#epoch) return;
         this.#failures = 0;
-        this.o.log?.(`voicelab: ${text.length} chars voiced (waited ${Date.now() - t0} ms for the synthesis)`);
+        this.o.log?.(`voicelab: ${text.length} chars voiced (waited ${this.#now() - t0} ms for the synthesis)`);
         const pcm = a.rateHz === OUT_RATE ? a.pcm : new StreamingResampler(a.rateHz, OUT_RATE).process(a.pcm);
-        this.#audibleUntil = Math.max(this.#audibleUntil, Date.now()) + (pcm.length / 2 / OUT_RATE) * 1000;
+        this.#audibleUntil = Math.max(this.#audibleUntil, this.#now()) + (pcm.length / 2 / OUT_RATE) * 1000;
         // ~100 ms pieces keep barge-in responsive
         for (let i = 0; i < pcm.length; i += 4800) {
           if (epoch !== this.#epoch) return;
@@ -174,6 +185,47 @@ export class VoiceLabMouthLink implements RealtimeLink {
 
   sendAudio(pcm: Uint8Array): void {
     this.brain.sendAudio(pcm);
+    if (this.o.fillers?.length) this.#watchCaller(pcm);
+  }
+
+  // ---- instant reaction: the caller just finished a sentence -------------------------------------------------------------------
+  #now = (): number => (this.o.now ?? Date.now)();
+  #heardMs = 0; // loud audio of the current utterance
+  #quietMs = 0; // silence since it
+  #talking = false;
+  #lastFillerAt = 0;
+  #fillerTurn = 0;
+  #watchCaller(pcm: Uint8Array): void {
+    const n = Math.floor(pcm.length / 2);
+    if (!n) return;
+    const v = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      const x = v.getInt16(i * 2, true);
+      sum += x * x;
+    }
+    const ms = (n / this.inputRateHz) * 1000;
+    if (Math.sqrt(sum / n) > FILLER_LEVEL) {
+      this.#heardMs += ms;
+      this.#quietMs = 0;
+      this.#talking = true;
+      return;
+    }
+    if (!this.#talking) return;
+    this.#quietMs += ms;
+    if (this.#quietMs < FILLER_QUIET_MS) return;
+    const heard = this.#heardMs;
+    this.#talking = false;
+    this.#heardMs = 0;
+    this.#quietMs = 0;
+    const now = this.#now();
+    // Only after a real sentence (not a cough), never over audible speech, not twice in a row and not more often than every 4 s.
+    if (heard < FILLER_MIN_SPEECH_MS || this.#degraded || now < this.#audibleUntil || now - this.#lastFillerAt < 4000) return;
+    if (this.#fillerTurn++ % 2 === 1) return;
+    this.#lastFillerAt = now;
+    const f = this.o.fillers![Math.floor(this.#fillerTurn / 2) % this.o.fillers!.length]!;
+    this.o.log?.('voicelab: instant reaction');
+    this.#enqueue(f);
   }
   respond(instructions?: string): void {
     this.brain.respond(instructions);
@@ -209,7 +261,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
       // The model reports "the caller started talking" as soon as it hears it; this voice lags the model by a second or two. When the caller
       // has not heard anything of the answer yet there is nothing to cut off: dropping it would leave the caller in silence (then talking
       // again, and again interrupting). Only speech over audible audio is a real barge-in.
-      if (Date.now() >= this.#audibleUntil) {
+      if (this.#now() >= this.#audibleUntil) {
         this.o.log?.('voicelab: caller speech before anything was audible, nothing to stop');
         return;
       }

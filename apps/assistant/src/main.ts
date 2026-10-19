@@ -131,7 +131,8 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const { OpenAiRealtimeLink } = await import('./infrastructure/openai/realtime.js');
   const { VoiceLabTts } = await import('./infrastructure/voicelab/tts.js');
   const { VoiceLabMouthLink } = await import('./infrastructure/voicelab/mouth-link.js');
-  const { VOICE_TEXT_OUTPUT_RULE } = await import('./modules/calls/conversation/language-rule.js');
+  const { VOICE_TEXT_OUTPUT_RULE: RULE_PLAIN, VOICE_TEXT_OUTPUT_RULE_WITH_REACTIONS } = await import('./modules/calls/conversation/language-rule.js');
+  const VOICE_TEXT_OUTPUT_RULE = cfg.VOICELAB_FILLER ? VOICE_TEXT_OUTPUT_RULE_WITH_REACTIONS : RULE_PLAIN;
   const voicelab = cfg.TTS_PROVIDER === 'voicelab';
   const { CachingSynthesizer } = await import('./infrastructure/voicelab/tts.js');
   // One cache for all calls of this process: stock phrases and openers are voiced instantly after the first time.
@@ -153,7 +154,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     return new VoiceLabMouthLink(
       brain,
       callTts,
-      { log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
+      { fillers: cfg.VOICELAB_FILLER ? ["Xo'p.", 'Ha.', 'Mayli.', 'Tushundim.'] : [], log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
     );
   };
   const makeOpenAi = (o: ConstructorParameters<typeof OpenAiRealtimeLink>[0]) =>

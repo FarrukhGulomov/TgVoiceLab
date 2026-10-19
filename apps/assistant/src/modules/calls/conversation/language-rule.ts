@@ -22,7 +22,7 @@ export const CONTENT_BOUNDARY_RULE =
 export const VOICE_TEXT_OUTPUT_RULE =
   "JAVOB SHAKLI: sen yozgan matn aynan ovoz chiqarib o'qiladi. Faqat gapirish kerak bo'lgan so'zlarni yoz: emoji, belgi, qavs, ro'yxat, sarlavha, markdown ishlatma. " +
   'Qisqa jumlalar yoz. Raqam va vaqtni so\'z bilan yoz (masalan "o\'n ming dollar", "soat o\'n besh nol nolda"). Gap oxirida nuqta qo\'y. ' +
-  'TEZKOR BOSHLASH: har javobingni 2-4 so\'zli qisqa ibora va VERGUL bilan boshla, keyin asosiy gapni ayt (masalan: "Xo\'p, tushundim, ...", "Ha, albatta, ...", "Mayli, ...", "Yaxshi, ...", "Tushunarli, ...", "Ha, eshityapman, ..."). Shu bilan suhbatdosh javobni darrov eshita boshlaydi. Asosiy gapni qisqa qil: bir-ikki jumla.';
+  'TEZKOR BOSHLASH: har javobingni 2-4 so\'zli qisqa ibora va VERGUL bilan boshla, keyin asosiy gapni ayt (masalan: "Tushundim, ...", "Albatta, ...", "Mayli, ...", "Yaxshi, ...", "Tushunarli, ...", "Tushunarli, ..."). Shu bilan suhbatdosh javobni darrov eshita boshlaydi. Asosiy gapni qisqa qil: bir-ikki jumla.';
 
 /** The assistant's name when it speaks to a contact. */
 export const ASSISTANT_PERSONA_NAME = 'Madina';
@@ -35,3 +35,11 @@ export const HONESTY_RULE =
   'HALOLLIK: o\'zingni hech qachon inson deb ko\'rsatma. Suhbatdosh jiddiy so\'rasa ("siz odammisiz?", "robotmisiz?", "AI mi?"), qisqa va rost javob ber: sen ' +
   'egasining AI yordamchisisan. "Yozib olinyaptimi?" deb so\'rasa, rost ayt: suhbat ovozi saqlanmaydi, faqat qisqa xulosa egasiga yetkaziladi. ' +
   "Buni o'zing boshlamaysan, lekin so'ralsa yashirmaysan va yolg'on gapirmaysan.";
+
+/**
+ * With instant reactions on, "Xo'p." / "Ha." is voiced by the system the moment the caller stops talking, so the model must not open with
+ * those words itself; it still starts with a short phrase and a comma so its first chunk is ready early.
+ */
+export const VOICE_TEXT_OUTPUT_RULE_WITH_REACTIONS =
+  VOICE_TEXT_OUTPUT_RULE.slice(0, VOICE_TEXT_OUTPUT_RULE.indexOf('TEZKOR BOSHLASH')) +
+  'TEZKOR BOSHLASH: "Xo\'p", "Ha", "Mayli" kabi qisqa reaksiyalarni tizim o\'zi aytadi, sen ularni takrorlama. Javobingni darrov mazmundan boshla, lekin birinchi 3-5 so\'zdan keyin VERGUL qo\'y (masalan: "Narxi o\'n ming dollar, ..."). Asosiy gapni qisqa qil: bir-ikki jumla.';
