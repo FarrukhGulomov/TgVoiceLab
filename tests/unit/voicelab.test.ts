@@ -58,7 +58,7 @@ describe('VoiceLabTts', () => {
     expect(a.pcm.length).toBe(480);
     expect(seen[0]!.url).toBe('https://api.voicelab.uz/v1/tts');
     expect((seen[0]!.init.headers as Record<string, string>).Authorization).toBe('Bearer vlk_x');
-    expect(JSON.parse(String(seen[0]!.init.body))).toEqual({ text: 'Salom', language: 'uz', voice_id: 'v1' });
+    expect(JSON.parse(String(seen[0]!.init.body))).toEqual({ text: 'Salom', language: 'uz', voice_id: 'v1', use_cache: true });
     await new VoiceLabTts({ apiKey: 'k', voiceId: 'v1', model: 'lison-v1', fetchImpl }).synthesize('Salom', 'uz');
     expect(JSON.parse(String(seen[1]!.init.body)).model_id).toBe('lison-v1');
   });
@@ -162,11 +162,11 @@ describe('VoiceLabMouthLink', () => {
   it('the last sentence is voiced when the text goes quiet, without waiting for the turn-complete signal', async () => {
     const { brain, chunks, spoken } = mk({}, { sentence: 20, other: 60 });
     brain.textCb('Assalomu alaykum, men yordamchiman.', false); // no space after the full stop, no "done" yet
-    await waitFor(() => chunks.length >= 2);
-    expect(spoken).toEqual(['Assalomu alaykum, men yordamchiman.']);
+    await waitFor(() => chunks.length >= 4);
+    expect(spoken).toEqual(['Assalomu alaykum,', 'men yordamchiman.']); // the opener is voiced first, at its comma
     brain.textCb('Sizga qanday', false); // unfinished and quiet: still voiced after the longer pause
-    await waitFor(() => spoken.length === 2);
-    expect(spoken[1]).toBe('Sizga qanday');
+    await waitFor(() => spoken.length === 3);
+    expect(spoken[2]).toBe('Sizga qanday');
   });
 
   it('the caller speaking before anything was audible stops nothing; speaking over audible audio does', async () => {
@@ -317,10 +317,10 @@ describe('VoiceLabMouthLink: first words sooner', () => {
     link.onAudio(() => undefined);
     brain.textCb('Xo‘p, tushundim, hozir egangizga aytib qo‘yaman, keyin javob olib kelaman', false);
     await waitFor(() => spoken.length >= 1);
-    expect(spoken[0]).toBe('Xo‘p, tushundim, hozir egangizga aytib qo‘yaman,');
+    expect(spoken[0]).toBe('Xo‘p, tushundim,');
     brain.textCb(' xo‘pmi? ', false);
     await waitFor(() => spoken.length >= 2);
-    expect(spoken[1]).toBe('keyin javob olib kelaman xo‘pmi?');
+    expect(spoken[1]).toBe('hozir egangizga aytib qo‘yaman, keyin javob olib kelaman xo‘pmi?');
   });
 });
 
@@ -353,5 +353,26 @@ describe('VoiceReplies: hourly cap', () => {
     clock = 3_600_001;
     await v.speak('1', 'Yana bitta.', 'k');
     expect(n).toBe(41);
+  });
+});
+
+describe('CachingSynthesizer', () => {
+  it('serves a repeated short phrase from memory, keeps long text out of the cache and evicts the oldest', async () => {
+    const { CachingSynthesizer } = await import('../../apps/assistant/src/infrastructure/voicelab/tts.js');
+    let calls = 0;
+    const c = new CachingSynthesizer({ synthesize: async () => ({ pcm: new Uint8Array(2), rateHz: (calls++, 24000) }) }, { maxEntries: 2, maxChars: 20 });
+    await c.synthesize('Xo‘p, tushundim,', 'uz');
+    await c.synthesize('Xo‘p, tushundim,', 'uz');
+    expect(calls).toBe(1);
+    await c.synthesize('Xo‘p, tushundim,', 'ru'); // another language is another entry
+    expect(calls).toBe(2);
+    const long = 'Bu juda uzun gap, keshga tushmasligi kerak.';
+    await c.synthesize(long, 'uz');
+    await c.synthesize(long, 'uz');
+    expect(calls).toBe(4);
+    await c.synthesize('Ha, albatta,', 'uz');
+    await c.synthesize('Mayli,', 'uz'); // evicts the oldest
+    await c.synthesize('Xo‘p, tushundim,', 'uz');
+    expect(calls).toBe(7);
   });
 });

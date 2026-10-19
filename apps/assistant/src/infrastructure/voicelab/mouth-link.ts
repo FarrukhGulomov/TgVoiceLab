@@ -111,7 +111,7 @@ export class VoiceLabMouthLink implements RealtimeLink {
       }
       if (this.#first && !sentences.length) {
         // Time to first audio dominates how fast the answer feels: do not wait for a full stop before the first words of an answer.
-        const cut = this.#buf.indexOf(', ', 24);
+        const cut = this.#buf.indexOf(', ', 8);
         if (cut > 0) {
           this.#first = false;
           this.#enqueue(this.#buf.slice(0, cut + 1));

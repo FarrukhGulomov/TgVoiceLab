@@ -21,7 +21,8 @@ export const CONTENT_BOUNDARY_RULE =
 /** Added when the model's TEXT is read aloud by a separate voice: it must write what is to be said, nothing else. */
 export const VOICE_TEXT_OUTPUT_RULE =
   "JAVOB SHAKLI: sen yozgan matn aynan ovoz chiqarib o'qiladi. Faqat gapirish kerak bo'lgan so'zlarni yoz: emoji, belgi, qavs, ro'yxat, sarlavha, markdown ishlatma. " +
-  'Qisqa jumlalar yoz. Raqam va vaqtni so\'z bilan yoz (masalan "o\'n ming dollar", "soat o\'n besh nol nolda"). Gap oxirida nuqta qo\'y.';
+  'Qisqa jumlalar yoz. Raqam va vaqtni so\'z bilan yoz (masalan "o\'n ming dollar", "soat o\'n besh nol nolda"). Gap oxirida nuqta qo\'y. ' +
+  'TEZKOR BOSHLASH: har javobingni 2-4 so\'zli qisqa ibora va VERGUL bilan boshla, keyin asosiy gapni ayt (masalan: "Xo\'p, tushundim, ...", "Ha, albatta, ...", "Mayli, ...", "Yaxshi, ...", "Tushunarli, ...", "Ha, eshityapman, ..."). Shu bilan suhbatdosh javobni darrov eshita boshlaydi. Asosiy gapni qisqa qil: bir-ikki jumla.';
 
 /** The assistant's name when it speaks to a contact. */
 export const ASSISTANT_PERSONA_NAME = 'Madina';

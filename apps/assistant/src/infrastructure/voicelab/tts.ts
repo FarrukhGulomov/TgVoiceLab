@@ -77,6 +77,7 @@ export class VoiceLabTts implements Synthesizer {
         voice_id: this.o.voiceId,
         ...(this.o.speed ? { speed: this.o.speed } : {}),
         ...(this.o.model ? { model_id: this.o.model } : {}),
+        use_cache: true, // the same short phrase (an opener, a greeting) is answered from VoiceLab's cache, far faster than a fresh synthesis
       }),
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
@@ -95,5 +96,33 @@ export class VoiceLabTts implements Synthesizer {
     if (!res.ok) throw new Error(`voicelab voices HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
     const j = (await res.json()) as { data?: Array<{ id: string; display_name: string; description?: string; language: string }> };
     return j.data ?? [];
+  }
+}
+
+/**
+ * Remembers what was already synthesised (short phrases only), so the openers and stock phrases a call repeats are voiced at once, with no
+ * network round trip and no credit spent. In memory only; it holds assistant-written text, never anything a person said.
+ */
+export class CachingSynthesizer implements Synthesizer {
+  readonly #cache = new Map<string, Synthesized>();
+  constructor(
+    private readonly inner: Synthesizer,
+    private readonly o: { maxEntries?: number; maxChars?: number } = {},
+  ) {}
+
+  async synthesize(text: string, language: TtsLanguage, signal?: AbortSignal): Promise<Synthesized> {
+    const key = `${language}|${text}`;
+    const hit = this.#cache.get(key);
+    if (hit) {
+      this.#cache.delete(key);
+      this.#cache.set(key, hit); // most recently used last
+      return hit;
+    }
+    const out = await this.inner.synthesize(text, language, signal);
+    if (text.length <= (this.o.maxChars ?? 60)) {
+      this.#cache.set(key, out);
+      while (this.#cache.size > (this.o.maxEntries ?? 200)) this.#cache.delete(this.#cache.keys().next().value as string);
+    }
+    return out;
   }
 }

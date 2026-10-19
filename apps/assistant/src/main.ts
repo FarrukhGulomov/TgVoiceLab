@@ -133,6 +133,17 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const { VoiceLabMouthLink } = await import('./infrastructure/voicelab/mouth-link.js');
   const { VOICE_TEXT_OUTPUT_RULE } = await import('./modules/calls/conversation/language-rule.js');
   const voicelab = cfg.TTS_PROVIDER === 'voicelab';
+  const { CachingSynthesizer } = await import('./infrastructure/voicelab/tts.js');
+  // One cache for all calls of this process: stock phrases and openers are voiced instantly after the first time.
+  const callTts = new CachingSynthesizer(
+    new VoiceLabTts({
+      apiKey: cfg.VOICELAB_API_KEY!,
+      voiceId: cfg.VOICELAB_VOICE_ID!,
+      baseUrl: cfg.VOICELAB_BASE_URL,
+      model: cfg.VOICELAB_TTS_MODEL,
+      speed: cfg.VOICELAB_SPEED,
+    }),
+  );
   // VoiceLab only speaks: the model that listens and decides answers in text (tools, memory and negotiation limits work as before).
   const voiced = <T extends import('./infrastructure/voicelab/mouth-link.js').TextBrain>(brain: T) => {
     log.info(
@@ -141,13 +152,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     );
     return new VoiceLabMouthLink(
       brain,
-      new VoiceLabTts({
-        apiKey: cfg.VOICELAB_API_KEY!,
-        voiceId: cfg.VOICELAB_VOICE_ID!,
-        baseUrl: cfg.VOICELAB_BASE_URL,
-        model: cfg.VOICELAB_TTS_MODEL,
-        speed: cfg.VOICELAB_SPEED,
-      }),
+      callTts,
       { log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
     );
   };
@@ -176,8 +181,8 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
           textMode: cfg.GEMINI_TEXT_MODE,
           googleSearch: cfg.GEMINI_GOOGLE_SEARCH,
           languageCode: cfg.GEMINI_LANGUAGE_CODE,
-          // Faster turn-taking by default (answer after ~0.5 s of silence); raise GEMINI_VAD_SILENCE_MS if people get cut off.
-          vad: { silenceMs: cfg.GEMINI_VAD_SILENCE_MS ?? 500, start: cfg.GEMINI_VAD_START, end: cfg.GEMINI_VAD_END ?? 'high' },
+          // Faster turn-taking by default (answer after ~0.35 s of silence); raise GEMINI_VAD_SILENCE_MS if people get cut off.
+          vad: { silenceMs: cfg.GEMINI_VAD_SILENCE_MS ?? 350, start: cfg.GEMINI_VAD_START, end: cfg.GEMINI_VAD_END ?? 'high' },
           ...(cfg.GEMINI_DEBUG ? { debug: (line: string) => log.info({ gemini: true }, line.slice(0, 200)) } : {}),
         })
       : makeOpenAi({
