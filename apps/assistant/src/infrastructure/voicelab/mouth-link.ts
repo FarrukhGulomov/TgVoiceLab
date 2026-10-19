@@ -1,6 +1,7 @@
 import type { RealtimeLink, ToolCall } from '../../modules/calls/audio/realtime-bridge.js';
 import { StreamingResampler } from '../../modules/calls/audio/resampler.js';
 import type { Synthesizer, TtsLanguage } from './tts.js';
+import { TTS_STREAM_MAX_TEXT_BYTES, TTS_STREAM_RATE_HZ, type StreamingSynthesizer } from './tts-stream.js';
 import type { TurnTimer } from './turn-timer.js';
 
 /** A realtime session that answers in TEXT (the "brain": it listens, decides, calls tools) and streams the text as it is written. */
@@ -8,11 +9,59 @@ export interface TextBrain extends RealtimeLink {
   onText(cb: (delta: string, done: boolean) => void): void;
 }
 
-const OUT_RATE = 24_000;
+const OUT_RATE = TTS_STREAM_RATE_HZ;
 const DEGRADE_AFTER = 2;
 const FILLER_LEVEL = 450; // RMS of s16le samples that counts as speech on the phone line
 const FILLER_QUIET_MS = 280;
 const FILLER_MIN_SPEECH_MS = 600;
+
+/** Audio of one sentence waiting for its turn to be played (a later sentence is synthesised while an earlier one is still being heard). */
+const MAX_FEED_BYTES = OUT_RATE * 2 * 60;
+
+/** The audio of one sentence, filled as the synthesis delivers it and drained in playing order. */
+class Feed {
+  #chunks: Uint8Array[] = [];
+  #bytes = 0;
+  #done = false;
+  #err: Error | undefined;
+  #wake: (() => void) | undefined;
+  /** True once any audio was pushed. */
+  started = false;
+  push(c: Uint8Array): void {
+    if (this.#done) return;
+    if (this.#bytes + c.length > MAX_FEED_BYTES) return this.end(new Error('synthesised audio exceeds the buffer limit'));
+    this.started = true;
+    this.#bytes += c.length;
+    this.#chunks.push(c);
+    this.#notify();
+  }
+  end(err?: Error): void {
+    if (this.#done) return;
+    this.#done = true;
+    this.#err = err;
+    this.#notify();
+  }
+  #notify(): void {
+    const w = this.#wake;
+    this.#wake = undefined;
+    w?.();
+  }
+  async *drain(): AsyncGenerator<Uint8Array> {
+    for (;;) {
+      const c = this.#chunks.shift();
+      if (c) {
+        this.#bytes -= c.length;
+        yield c;
+        continue;
+      }
+      if (this.#done) {
+        if (this.#err) throw this.#err;
+        return;
+      }
+      await new Promise<void>((r) => (this.#wake = r));
+    }
+  }
+}
 
 const EMOJI = new RegExp(String.raw`\p{Extended_Pictographic}|\u200d|\ufe0f`, 'gu');
 
@@ -101,6 +150,11 @@ export class VoiceLabMouthLink implements RealtimeLink {
       now?: (() => number) | undefined;
       /** Times each turn (needs the ears to mark the turn's start). */
       timer?: TurnTimer | undefined;
+      /**
+       * Streaming synthesis: audio is played as it arrives instead of after the whole sentence is done. Every sentence has its own connection.
+       * A sentence whose stream fails before any audio is voiced by the REST synthesizer instead; a half-played one is never replayed.
+       */
+      stream?: StreamingSynthesizer | undefined;
     } = {},
   ) {
     this.inputRateHz = brain.inputRateHz;
@@ -150,6 +204,39 @@ export class VoiceLabMouthLink implements RealtimeLink {
     this.#enqueue(rest);
   }
 
+  /** Starts producing the audio of one sentence right away and returns where it appears. */
+  #produce(text: string, filler: boolean, signal: AbortSignal): Feed {
+    const feed = new Feed();
+    const language = languageOf(text);
+    const rest = async (): Promise<void> => {
+      const a = await this.tts.synthesize(text, language, signal);
+      feed.push(a.rateHz === OUT_RATE ? a.pcm : new StreamingResampler(a.rateHz, OUT_RATE).process(a.pcm));
+      feed.end();
+    };
+    const streamed = !filler && !this.#degraded && this.o.stream && Buffer.byteLength(text) <= TTS_STREAM_MAX_TEXT_BYTES;
+    if (!streamed) {
+      rest().catch((e: unknown) => feed.end(e instanceof Error ? e : new Error(String(e))));
+      return feed;
+    }
+    this.o
+      .stream!.synthesizeStream(text, language, signal, (pcm) => {
+        if (!feed.started && !filler) this.o.timer?.mark('ttsChunk');
+        feed.push(pcm);
+      })
+      .then(
+        () => feed.end(),
+        (e: unknown) => {
+          if (signal.aborted) return feed.end(e instanceof Error ? e : new Error(String(e)));
+          if (feed.started) return feed.end(e instanceof Error ? e : new Error(String(e))); // part of it was already voiced: no restart, no repeat
+          this.o.log?.(
+            `voicelab: streaming synthesis failed before any audio (${String((e as Error)?.message ?? e).slice(0, 120)}), using the REST synthesis for this sentence`,
+          );
+          rest().catch((e2: unknown) => feed.end(e2 instanceof Error ? e2 : new Error(String(e2))));
+        },
+      );
+    return feed;
+  }
+
   #enqueue(raw: string, filler = false): void {
     const text = speakable(raw);
     if (!/[\p{L}\p{N}]/u.test(text)) return;
@@ -157,32 +244,45 @@ export class VoiceLabMouthLink implements RealtimeLink {
     const epoch = this.#epoch;
     const signal = this.#abort.signal;
     if (!filler) this.o.timer?.mark('ttsStart');
-    const pending = this.tts.synthesize(text, languageOf(text), signal);
-    pending.catch(() => undefined); // reported where it is awaited; a dropped one must not become an unhandled rejection
+    const feed = this.#produce(text, filler, signal);
     this.#chain = this.#chain.then(async () => {
       if (epoch !== this.#epoch) return;
+      const t0 = this.#now();
+      let voiced = false;
+      let carry: Uint8Array = new Uint8Array(0);
       try {
-        const t0 = this.#now();
-        const a = await pending;
-        if (epoch !== this.#epoch) return;
-        if (!filler) this.o.timer?.mark('ttsDone');
-        this.#failures = 0;
-        this.o.log?.(`voicelab: ${text.length} chars voiced (waited ${this.#now() - t0} ms for the synthesis)`);
-        const pcm = a.rateHz === OUT_RATE ? a.pcm : new StreamingResampler(a.rateHz, OUT_RATE).process(a.pcm);
-        this.#audibleUntil = Math.max(this.#audibleUntil, this.#now()) + (pcm.length / 2 / OUT_RATE) * 1000;
-        // ~100 ms pieces keep barge-in responsive
-        for (let i = 0; i < pcm.length; i += 4800) {
+        for await (const chunk of feed.drain()) {
           if (epoch !== this.#epoch) return;
-          if (!filler && i === 0) this.o.timer?.mark('firstAudio');
-          for (const cb of this.#audio) cb(pcm.subarray(i, i + 4800));
-        }
-      } catch (e) {
-        if (epoch === this.#epoch) {
-          for (const cb of this.#errors) cb(`voicelab tts: ${String((e as Error)?.message ?? e)}`);
-          if (++this.#failures >= DEGRADE_AFTER && !this.#degraded) {
-            this.#degraded = true;
-            this.o.log?.("voicelab: unavailable, switching to the AI model's own voice for the rest of the call");
+          if (!voiced) {
+            voiced = true;
+            this.#failures = 0;
+            this.o.log?.(
+              `voicelab: ${text.length} chars voiced (waited ${this.#now() - t0} ms for the ${this.o.stream && !filler ? 'first audio, streaming' : 'synthesis'})`,
+            );
+            if (!filler) {
+              this.o.timer?.mark('ttsChunk'); // REST: the whole sentence arrives as one chunk
+              this.o.timer?.mark('firstAudio');
+            }
           }
+          const pcm = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+          const even = pcm.length - (pcm.length % 2);
+          carry = pcm.subarray(even);
+          // ~100 ms pieces keep barge-in responsive
+          for (let i = 0; i < even; i += 4800) {
+            if (epoch !== this.#epoch) return;
+            const piece = pcm.subarray(i, Math.min(i + 4800, even));
+            this.#audibleUntil = Math.max(this.#audibleUntil, this.#now()) + (piece.length / 2 / OUT_RATE) * 1000;
+            for (const cb of this.#audio) cb(piece);
+          }
+        }
+        if (epoch === this.#epoch && !filler) this.o.timer?.mark('ttsDone');
+      } catch (e) {
+        if (epoch !== this.#epoch) return;
+        for (const cb of this.#errors) cb(`voicelab tts: ${String((e as Error)?.message ?? e)}`);
+        // a sentence that failed after some of it was voiced is not repeated, and does not count towards giving up on VoiceLab
+        if (!voiced && ++this.#failures >= DEGRADE_AFTER && !this.#degraded) {
+          this.#degraded = true;
+          this.o.log?.("voicelab: unavailable, switching to the AI model's own voice for the rest of the call");
         }
       }
     });

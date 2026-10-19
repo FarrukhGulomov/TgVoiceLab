@@ -92,3 +92,10 @@ non-interactive use. Rotation: runbooks `key-rotation`, `session-compromise`.
 - Nothing is recorded or stored here; logs carry timings and lengths only (`turn timing: ...` lines), never the words or keys; error text is scrubbed of the key.
 - The integration was written from the vendor's documentation as given to us and is NOT live verified (voicelab.uz is unreachable from the build sandbox). The JSON field names of the file-API job id and transcript are read defensively; an unrecognised shape is reported by key names only.
 - Accuracy and speed are not claimed: measure with `pnpm voicelab:stt-bench -- <folder>` on your own recordings, and read the `turn timing` log lines (synthesis time is reported separately from recognition time).
+
+## VoiceLab streaming speech (VOICELAB_TTS_STREAM=true)
+
+- Each spoken sentence opens its own WebSocket to `wss://api.voicelab.uz/v1/tts/stream` (header `xvl-api-key`, key permission `tts:realtime`) and sends exactly one request: the sentence text, language, voice id and speed. The text is what the assistant is about to say, not what the other person said. Audio is played as it arrives and is not stored.
+- Barge-in sends `{"action":"interrupt"}` and closes the open connections; audio that arrives afterwards is discarded.
+- A stream that fails before any audio falls back to the REST synthesis for that sentence. A sentence that failed after part of it was heard is reported and not repeated.
+- Not verified against the live service from the build environment. The streaming endpoint has no model choice, so `VOICELAB_TTS_MODEL` applies only to the REST fallback.

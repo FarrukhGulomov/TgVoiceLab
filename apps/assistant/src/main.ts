@@ -157,6 +157,21 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
       speed: cfg.VOICELAB_SPEED,
     }),
   );
+  const { VoiceLabTtsStream } = await import('./infrastructure/voicelab/tts-stream.js');
+  const ttsStream =
+    voicelab && cfg.VOICELAB_TTS_STREAM
+      ? new VoiceLabTtsStream({
+          apiKey: cfg.VOICELAB_API_KEY!,
+          voiceId: cfg.VOICELAB_VOICE_ID!,
+          url:
+            cfg.VOICELAB_TTS_STREAM_URL ?? `${(cfg.VOICELAB_BASE_URL ?? 'https://api.voicelab.uz').replace(/\/+$/, '').replace(/^http/, 'ws')}/v1/tts/stream`,
+          speed: cfg.VOICELAB_SPEED,
+        })
+      : undefined;
+  if (ttsStream)
+    log.warn(
+      'VoiceLab streaming speech is on (not live verified): each sentence opens its own WebSocket; the streaming voice ignores VOICELAB_TTS_MODEL, the REST fallback uses it',
+    );
   if (voicelab && cfg.VOICELAB_FILLER) void callTts.warm(FILLERS.map((text) => ({ text, language: 'uz' as const })));
   // VoiceLab only speaks: the model that listens and decides answers in text (tools, memory and negotiation limits work as before).
   const voiced = <T extends import('./infrastructure/voicelab/mouth-link.js').TextBrain>(brain: T) => {
@@ -187,7 +202,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     return new VoiceLabMouthLink(
       ears ?? brain,
       callTts,
-      { timer, fillers: cfg.VOICELAB_FILLER ? FILLERS : [], log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
+      { timer, stream: ttsStream, fillers: cfg.VOICELAB_FILLER ? FILLERS : [], log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
     );
   };
   const makeOpenAi = (o: ConstructorParameters<typeof OpenAiRealtimeLink>[0]) =>

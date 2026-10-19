@@ -50,6 +50,9 @@ const EnvSchema = z
     VOICE_REPLIES: bool.default(true),
     /** VoiceLab voice: say a short "Xo'p." the moment the caller stops talking, before the model's answer is ready. */
     VOICELAB_FILLER: bool.default(true),
+    /** Streaming synthesis (WebSocket /v1/tts/stream): audio is played while it is still being produced. Needs a key with tts:realtime. The streaming endpoint has no model choice (VOICELAB_TTS_MODEL applies to the REST fallback only). Off by default. */
+    VOICELAB_TTS_STREAM: bool.default(false),
+    VOICELAB_TTS_STREAM_URL: opt(z.string()),
     /** Speech recognition. Unset: the AI voice model hears the call itself (and Gemini transcribes voice notes). `voicelab`: VoiceLab's Uzbek recogniser (key needs stt:realtime for calls, stt:write + stt:read for voice notes). */
     STT_PROVIDER: z.enum(['voicelab']).optional(),
     /** With STT_PROVIDER=voicelab: use it for live calls (needs TTS_PROVIDER=voicelab: the model then only reads and writes text) and for the owner's voice notes. */

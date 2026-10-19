@@ -322,6 +322,8 @@ describe('VoiceLabEars', () => {
     now = 2900;
     timer.mark('firstText');
     timer.mark('ttsStart');
+    now = 3100;
+    timer.mark('ttsChunk');
     now = 3400;
     timer.mark('ttsDone');
     now = 3500;
@@ -330,7 +332,9 @@ describe('VoiceLabEars', () => {
     expect(lines[0]).toContain('speech end -> commit 600 ms'); // 600 ms of silence were waited
     expect(lines[0]).toContain('commit -> final text 400 ms');
     expect(lines[0]).toContain('final -> first model text 500 ms');
-    expect(lines[0]).toContain('speech synthesis 500 ms');
+    expect(lines[0]).toContain('speech synthesis first chunk 200 ms');
+    expect(lines[0]).toContain('synthesis total 500 ms');
+    expect(lines[0]).toContain('first chunk -> first audio 400 ms');
     expect(lines[0]).toContain('TOTAL speech end -> first audio 2100 ms');
   });
 });

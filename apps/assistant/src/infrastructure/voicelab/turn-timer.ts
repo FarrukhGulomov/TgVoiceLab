@@ -1,10 +1,11 @@
 /**
  * Times one conversational turn end to end, in milliseconds, with no words in it:
- * speech end -> commit -> final transcript -> first model text -> speech synthesis done -> first audio handed to the call.
+ * speech end -> commit -> final transcript -> first model text -> first synthesised chunk -> first audio handed to the call.
  * The synthesis step is reported on its own so a slow voice model is not mistaken for slow recognition.
  */
-export type TurnMark = 'speechEnd' | 'commit' | 'final' | 'firstText' | 'ttsStart' | 'ttsDone' | 'firstAudio';
-const ORDER: TurnMark[] = ['speechEnd', 'commit', 'final', 'firstText', 'ttsStart', 'ttsDone', 'firstAudio'];
+export type TurnMark = 'speechEnd' | 'commit' | 'final' | 'firstText' | 'ttsStart' | 'ttsChunk' | 'ttsDone' | 'firstAudio';
+/** What must have happened before a mark counts. `ttsStart`, `ttsChunk` and `ttsDone` may come in any case (a turn can be voiced without a model text). */
+const NEEDS: Partial<Record<TurnMark, TurnMark>> = { commit: 'speechEnd', final: 'commit', firstText: 'final', firstAudio: 'ttsChunk' };
 
 export class TurnTimer {
   #t = new Map<TurnMark, number>();
@@ -25,8 +26,8 @@ export class TurnTimer {
       return;
     }
     if (!this.#t.has('speechEnd') || this.#t.has(m)) return;
-    const need = ORDER[ORDER.indexOf(m) - 1];
-    if (need && !this.#t.has(need) && m !== 'ttsStart' && m !== 'ttsDone') return;
+    const need = NEEDS[m];
+    if (need && !this.#t.has(need)) return;
     this.#t.set(m, at);
     if (m === 'firstAudio') this.#report();
   }
@@ -42,8 +43,8 @@ export class TurnTimer {
     const total = t.has('speechEnd') && t.has('firstAudio') ? `${t.get('firstAudio')! - t.get('speechEnd')!} ms` : 'n/a';
     this.log(
       `turn timing: speech end -> commit ${this.#gap('speechEnd', 'commit')}; commit -> final text ${this.#gap('commit', 'final')}; ` +
-        `final -> first model text ${this.#gap('final', 'firstText')}; speech synthesis ${this.#gap('ttsStart', 'ttsDone')}; ` +
-        `synthesis done -> first audio ${this.#gap('ttsDone', 'firstAudio')}; TOTAL speech end -> first audio ${total}`,
+        `final -> first model text ${this.#gap('final', 'firstText')}; speech synthesis first chunk ${this.#gap('ttsStart', 'ttsChunk')}; ` +
+        `synthesis total ${this.#gap('ttsStart', 'ttsDone')}; first chunk -> first audio ${this.#gap('ttsChunk', 'firstAudio')}; TOTAL speech end -> first audio ${total}`,
     );
     this.#t.clear();
   }
