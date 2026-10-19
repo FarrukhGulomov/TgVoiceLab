@@ -34,7 +34,8 @@ const greet = (first: boolean): string =>
   (first ? "Qisqa salom ber (bitta jumla), keyin darrov maqsadga o't. " : "Bugun allaqachon gaplashgansiz: SALOM BERMA, darrov maqsadga o't. ") + NO_SELF_INTRO;
 const GREETING_BRIEFING = (first: boolean): string => `Qo'ng'iroqqa hozir javob berildi. ${greet(first)} Vazifalarni qisqa o'qib ber.`;
 const GREETING_ASKED = (first: boolean): string =>
-  `Qo'ng'iroqqa hozir javob berildi. Egasining o'zi qo'ng'iroq so'ragan. ${greet(first)} 'Eshitaman, nima yordam kerak?' de. Eslatma haqida gapirma.`;
+  `Qo'ng'iroqqa hozir javob berildi. Egasining o'zi qo'ng'iroq so'ragan. ${greet(first)} 'Farruh, sizga biror topshiriq bormi?' de. Eslatma haqida gapirma.`;
+const NUDGE = "Egasi indamayapti. Qisqa qilib, bir jumlada so'ra: 'Farruh, eshityapsizmi? Sizga biror topshiriq bormi?' Boshqa narsa dema.";
 const GREETING_REMINDER = (first: boolean): string => `Qo'ng'iroqqa hozir javob berildi. ${greet(first)} Eslatmani ayt.`;
 
 /**
@@ -84,10 +85,43 @@ export class OwnerCallRunner implements CallSessionRunner {
     const first = !(await answeredEarlierToday(db, ownerId, plan.recipientTelegramId, ctx.callId, owner.timezone, this.d.clock.now()));
     bridge.start(asked ? GREETING_ASKED(first) : reminder ? GREETING_REMINDER(first) : GREETING_BRIEFING(first));
 
+    // The owner picks up and may say nothing: the assistant must speak first, quickly, and ask again if nobody answers.
+    const greeting = asked ? GREETING_ASKED(first) : reminder ? GREETING_REMINDER(first) : GREETING_BRIEFING(first);
+    let spoke = false;
+    let resent = 0;
+    let nudges = 0;
+    let lastActivity = Date.now();
+    let seenAudio = 0;
+    let seenVoice = 0;
+    const watcher = setInterval(() => {
+      const now = Date.now();
+      const s = bridge.stats;
+      if (s.modelAudioChunks !== seenAudio || s.nonSilentFramesIn !== seenVoice) {
+        if (!spoke && s.modelAudioChunks > 0) this.d.log?.(`owner call: first words ${now - started} ms after the call was answered`);
+        spoke = spoke || s.modelAudioChunks > 0;
+        seenAudio = s.modelAudioChunks;
+        seenVoice = s.nonSilentFramesIn;
+        lastActivity = now;
+        return;
+      }
+      if (!spoke && now - started >= 3500 && resent < 2) {
+        resent++;
+        this.d.log?.(`owner call: no voice ${Math.round((now - started) / 1000)} s after answering, asking the model again`);
+        link.respond(greeting);
+        lastActivity = now;
+      } else if (spoke && now - lastActivity >= 5000 && nudges < 3) {
+        // Nobody spoke for a while after the assistant's words: ask once more, briefly.
+        nudges++;
+        link.respond(NUDGE);
+        lastActivity = now;
+      }
+    }, 500);
+
     let timer: NodeJS.Timeout | undefined;
     const limit = new Promise<'limit'>((r) => (timer = setTimeout(() => r('limit'), plan.maxDurationSeconds * 1000)));
     const why = await Promise.race([endAsked.then(() => 'end' as const), bridge.finished.then(() => 'over' as const), limit]);
     clearTimeout(timer);
+    clearInterval(watcher);
     bridge.stop();
     const seconds = (Date.now() - started) / 1000;
     const usageMicroUsd = this.d.costUsdPerMinute ? Math.round((seconds / 60) * this.d.costUsdPerMinute * 1_000_000) : undefined;

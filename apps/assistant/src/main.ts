@@ -135,6 +135,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const VOICE_TEXT_OUTPUT_RULE = cfg.VOICELAB_FILLER ? VOICE_TEXT_OUTPUT_RULE_WITH_REACTIONS : RULE_PLAIN;
   const voicelab = cfg.TTS_PROVIDER === 'voicelab';
   const { CachingSynthesizer } = await import('./infrastructure/voicelab/tts.js');
+  const FILLERS = ["Xo'p.", 'Ha.', 'Mayli.', 'Tushundim.'];
   // One cache for all calls of this process: stock phrases and openers are voiced instantly after the first time.
   const callTts = new CachingSynthesizer(
     new VoiceLabTts({
@@ -145,6 +146,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
       speed: cfg.VOICELAB_SPEED,
     }),
   );
+  if (voicelab && cfg.VOICELAB_FILLER) void callTts.warm(FILLERS.map((text) => ({ text, language: 'uz' as const })));
   // VoiceLab only speaks: the model that listens and decides answers in text (tools, memory and negotiation limits work as before).
   const voiced = <T extends import('./infrastructure/voicelab/mouth-link.js').TextBrain>(brain: T) => {
     log.info(
@@ -154,7 +156,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     return new VoiceLabMouthLink(
       brain,
       callTts,
-      { fillers: cfg.VOICELAB_FILLER ? ["Xo'p.", 'Ha.', 'Mayli.', 'Tushundim.'] : [], log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
+      { fillers: cfg.VOICELAB_FILLER ? FILLERS : [], log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
     );
   };
   const makeOpenAi = (o: ConstructorParameters<typeof OpenAiRealtimeLink>[0]) =>
@@ -183,7 +185,12 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
           googleSearch: cfg.GEMINI_GOOGLE_SEARCH,
           languageCode: cfg.GEMINI_LANGUAGE_CODE,
           // Faster turn-taking by default (answer after ~0.35 s of silence); raise GEMINI_VAD_SILENCE_MS if people get cut off.
-          vad: { silenceMs: cfg.GEMINI_VAD_SILENCE_MS ?? 350, start: cfg.GEMINI_VAD_START, end: cfg.GEMINI_VAD_END ?? 'high' },
+          vad: {
+            silenceMs: cfg.GEMINI_VAD_SILENCE_MS ?? 350,
+            start: cfg.GEMINI_VAD_START ?? 'high',
+            end: cfg.GEMINI_VAD_END ?? 'high',
+            prefixMs: cfg.GEMINI_VAD_PREFIX_MS ?? 150,
+          },
           ...(cfg.GEMINI_DEBUG ? { debug: (line: string) => log.info({ gemini: true }, line.slice(0, 200)) } : {}),
         })
       : makeOpenAi({

@@ -34,6 +34,7 @@ const EnvSchema = z
     GEMINI_TEXT_OUTPUT: z.enum(['transcript', 'modality']).default('transcript'),
     /** Turn-taking tuning for Gemini Live (unset = defaults): how long a pause ends the caller's turn, and the start/end-of-speech sensitivity. */
     GEMINI_VAD_SILENCE_MS: opt(z.coerce.number().int().min(100).max(5000)),
+    GEMINI_VAD_PREFIX_MS: opt(z.coerce.number().int().min(0).max(1000)),
     GEMINI_VAD_START: opt(z.enum(['low', 'high'])),
     GEMINI_VAD_END: opt(z.enum(['low', 'high'])),
     GEMINI_TEXT_MODE: z.enum(['realtime', 'client_content']).default('realtime'),

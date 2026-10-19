@@ -101,8 +101,6 @@ export class VoiceLabMouthLink implements RealtimeLink {
     } = {},
   ) {
     this.inputRateHz = brain.inputRateHz;
-    // Warm the stock words (the cache turns every later use into an instant playback).
-    for (const f of this.o.fillers ?? []) void this.tts.synthesize(f, languageOf(f)).catch(() => undefined);
     // Fallback voice: a brain that also produces audio (Gemini in 'transcript' mode) keeps talking in ITS voice once VoiceLab is out of
     // service (e.g. no credits left). Normally that audio is dropped. A brain that answers in text only can not do this.
     if (brain.outputRateHz !== OUT_RATE) this.#brainResampler = new StreamingResampler(brain.outputRateHz, OUT_RATE);

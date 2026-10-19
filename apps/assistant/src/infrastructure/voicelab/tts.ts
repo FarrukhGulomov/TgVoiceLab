@@ -110,6 +110,11 @@ export class CachingSynthesizer implements Synthesizer {
     private readonly o: { maxEntries?: number; maxChars?: number } = {},
   ) {}
 
+  /** Fills the cache one phrase after another (never in parallel with a live call's own synthesis). */
+  async warm(phrases: Array<{ text: string; language: TtsLanguage }>): Promise<void> {
+    for (const p of phrases) await this.synthesize(p.text, p.language).catch(() => undefined);
+  }
+
   async synthesize(text: string, language: TtsLanguage, signal?: AbortSignal): Promise<Synthesized> {
     const key = `${language}|${text}`;
     const hit = this.#cache.get(key);

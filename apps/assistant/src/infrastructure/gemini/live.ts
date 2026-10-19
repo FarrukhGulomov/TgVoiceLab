@@ -35,7 +35,9 @@ export interface GeminiLiveOptions {
    * Turn-taking tuning (all optional; unset = the model's defaults). A caller on a phone line who pauses mid-sentence is otherwise answered too early
    * and then talked over: a longer `silenceMs` and LOW end-of-speech sensitivity make the model wait for the caller to finish.
    */
-  vad?: { silenceMs?: number | undefined; start?: 'low' | 'high' | undefined; end?: 'low' | 'high' | undefined } | undefined;
+  vad?: { silenceMs?: number | undefined; start?: 'low' | 'high' | undefined; end?: 'low' | 'high' | undefined; prefixMs?: number | undefined } | undefined;
+  /** Brings a quiet phone line up to a level the model hears well (default on); `false` sends the audio untouched. */
+  autoGain?: boolean | undefined;
   /** How long to wait for `setupComplete` before reporting that the setup was rejected or ignored. */
   setupTimeoutMs?: number | undefined;
   /** How a plain-text turn (the greeting) is sent. `realtime` = realtimeInput.text (newer), `client_content` = clientContent turn (older). */
@@ -47,6 +49,7 @@ export interface GeminiLiveOptions {
 
 export const GEMINI_INPUT_RATE = 16_000;
 export const GEMINI_OUTPUT_RATE = 24_000;
+const TARGET_LEVEL = 3000; // RMS of s16le speech the model hears well
 const DEFAULT_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 export function geminiSetup(
@@ -77,13 +80,14 @@ export function geminiSetup(
             ],
           }
         : {}),
-      ...(o.vad && (o.vad.silenceMs || o.vad.start || o.vad.end)
+      ...(o.vad && (o.vad.silenceMs || o.vad.start || o.vad.end || o.vad.prefixMs)
         ? {
             realtimeInputConfig: {
               automaticActivityDetection: {
                 ...(o.vad.start ? { startOfSpeechSensitivity: o.vad.start === 'low' ? 'START_SENSITIVITY_LOW' : 'START_SENSITIVITY_HIGH' } : {}),
                 ...(o.vad.end ? { endOfSpeechSensitivity: o.vad.end === 'low' ? 'END_SENSITIVITY_LOW' : 'END_SENSITIVITY_HIGH' } : {}),
                 ...(o.vad.silenceMs ? { silenceDurationMs: o.vad.silenceMs } : {}),
+                ...(o.vad.prefixMs ? { prefixPaddingMs: o.vad.prefixMs } : {}),
               },
             },
           }
@@ -279,9 +283,31 @@ export class GeminiLiveLink implements RealtimeLink {
     }
   }
 
+  #level = 0; // smoothed loudness of the caller's speech
   sendAudio(pcm: Uint8Array): void {
     if (!pcm.length) return;
-    this.#send({ realtimeInput: { audio: { data: Buffer.from(pcm).toString('base64'), mimeType: `audio/pcm;rate=${GEMINI_INPUT_RATE}` } } });
+    const out = this.#o.autoGain === false ? pcm : this.#gain(pcm);
+    this.#send({ realtimeInput: { audio: { data: Buffer.from(out).toString('base64'), mimeType: `audio/pcm;rate=${GEMINI_INPUT_RATE}` } } });
+  }
+
+  /** Speech on a phone line is often very quiet, and quiet speech is what the model mishears: raise it towards a steady level (at most 6x, never clipping). */
+  #gain(pcm: Uint8Array): Uint8Array {
+    const n = Math.floor(pcm.length / 2);
+    if (!n) return pcm;
+    const src = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      const x = src.getInt16(i * 2, true);
+      sum += x * x;
+    }
+    const rms = Math.sqrt(sum / n);
+    if (rms > 200) this.#level = this.#level ? this.#level * 0.9 + rms * 0.1 : rms; // only speech moves the estimate, never the noise floor
+    const g = this.#level ? Math.min(6, Math.max(1, TARGET_LEVEL / this.#level)) : 1;
+    if (g < 1.05) return pcm;
+    const out = new Uint8Array(pcm.length);
+    const dst = new DataView(out.buffer);
+    for (let i = 0; i < n; i++) dst.setInt16(i * 2, Math.max(-32768, Math.min(32767, Math.round(src.getInt16(i * 2, true) * g))), true);
+    return out;
   }
   respond(instructions?: string): void {
     if (!instructions) return;

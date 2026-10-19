@@ -346,7 +346,7 @@ const openGemini = (o: Partial<ConstructorParameters<typeof GeminiLiveLink>[0]> 
 
 describe('GeminiLiveLink', () => {
   it('sends setup first (model prefixed, audio out, instructions, transcription), and holds audio and text until setupComplete', () => {
-    const { link, sock, msg, url } = openGemini({ voice: 'v1' });
+    const { link, sock, msg, url } = openGemini({ voice: 'v1', autoGain: false });
     link.respond('say hi');
     link.sendAudio(new Uint8Array([1, 2]));
     sock.emit('open');
@@ -681,5 +681,50 @@ describe('GeminiLiveLink: resuming a dropped session', () => {
     socks[0]!.emit('message', Buffer.from(JSON.stringify({ sessionResumptionUpdate: { newHandle: 'H' } })));
     socks[0]!.emit('close', 1000, Buffer.from(''));
     expect(socks).toHaveLength(1);
+  });
+});
+
+describe('GeminiLiveLink: quiet phone lines are brought up before the model hears them', () => {
+  const sampleOf = (b: Uint8Array) =>
+    Math.max(...Array.from({ length: b.length / 2 }, (_, i) => Math.abs(new DataView(b.buffer, b.byteOffset).getInt16(i * 2, true))));
+  const tone = (amp: number) => {
+    const b = new Uint8Array(3200);
+    const v = new DataView(b.buffer);
+    for (let i = 0; i < 1600; i++) v.setInt16(i * 2, i % 2 ? amp : -amp, true);
+    return b;
+  };
+  const mk = (o: Partial<ConstructorParameters<typeof GeminiLiveLink>[0]> = {}) => {
+    const sock = new FakeSocket();
+    const link = new GeminiLiveLink({ apiKey: 'K', model: 'm', instructions: 'i', socketFactory: () => sock as never, ...o });
+    sock.emit('open');
+    sock.emit('message', Buffer.from(JSON.stringify({ setupComplete: {} })));
+    const sent = () => sock.sent.slice(1).map((s) => Buffer.from(JSON.parse(s).realtimeInput.audio.data, 'base64'));
+    return { link, sent };
+  };
+  it('raises quiet speech (up to 6x), leaves loud speech and silence alone, and can be turned off', () => {
+    const q = mk();
+    for (let i = 0; i < 20; i++) q.link.sendAudio(tone(600)); // speech level 600
+    const last = q.sent().at(-1)!;
+    expect(sampleOf(last)).toBeGreaterThan(2400); // 600 * ~5x
+    expect(sampleOf(last)).toBeLessThan(32767);
+    const loud = mk();
+    for (let i = 0; i < 20; i++) loud.link.sendAudio(tone(6000));
+    expect(sampleOf(loud.sent().at(-1)!)).toBe(6000);
+    const hush = mk();
+    for (let i = 0; i < 5; i++) hush.link.sendAudio(tone(40)); // line noise only
+    expect(sampleOf(hush.sent().at(-1)!)).toBe(40);
+    const off = mk({ autoGain: false });
+    for (let i = 0; i < 20; i++) off.link.sendAudio(tone(600));
+    expect(sampleOf(off.sent().at(-1)!)).toBe(600);
+  });
+  it('sends the speech padding to the model when configured', async () => {
+    const { geminiSetup } = await import('../../apps/assistant/src/infrastructure/gemini/live.js');
+    const setup = geminiSetup({ model: 'm', instructions: 'i', vad: { prefixMs: 150, start: 'high' } }) as {
+      setup: { realtimeInputConfig: { automaticActivityDetection: Record<string, unknown> } };
+    };
+    expect(setup.setup.realtimeInputConfig.automaticActivityDetection).toMatchObject({
+      prefixPaddingMs: 150,
+      startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
+    });
   });
 });
