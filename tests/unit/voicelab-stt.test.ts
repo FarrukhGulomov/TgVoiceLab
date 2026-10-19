@@ -151,6 +151,21 @@ describe('VoiceLabSttStream (realtime protocol)', () => {
     expect(s.commit()).toBe(false);
   });
 
+  it('treats no_speech_detected as an empty result, not an error, and is ready for the next utterance', () => {
+    const { s, socks } = mk();
+    const errors: string[] = [];
+    s.onError((m) => errors.push(m));
+    const { sock } = socks[0]!;
+    sock.say({ event: 'ready' });
+    s.sendAudio(frames(200, 3000));
+    sock.say({ event: 'started' });
+    s.commit();
+    sock.say({ event: 'error', code: 'no_speech_detected', message: 'No speech was detected in the audio.' });
+    expect(errors).toHaveLength(0);
+    s.sendAudio(frames(200, 3000));
+    expect(sock.json().filter((j) => j.type === 'start')).toHaveLength(2);
+  });
+
   it('reconnects after an unexpected close (twice at most) and then reports it', () => {
     const { s, socks } = mk();
     const errors: string[] = [];

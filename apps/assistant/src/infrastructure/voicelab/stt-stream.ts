@@ -225,6 +225,12 @@ export class VoiceLabSttStream implements SttStream {
           }
           break;
         }
+        if (m.code === 'no_speech_detected') {
+          // noise or a click was committed: that is an empty result, not a failure
+          this.#resetSession();
+          this.#pump();
+          break;
+        }
         if (m.code === 'busy') break; // our commit/audio crossed a running transcription; the queue holds the rest
         if (typeof m.code === 'string' && m.code.includes('already')) {
           this.#open = true;
