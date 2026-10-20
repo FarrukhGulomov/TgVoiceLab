@@ -77,6 +77,8 @@ const EnvSchema = z
     /** Escape hatch for single-login development databases. Never set in production deployments (audit F11). */
     DB_ALLOW_PRIVILEGED_ROLE: bool.default(false),
     CALLS_ENABLED: bool.default(false),
+    /** Answer calls the OWNER makes to the assistant's Telegram account (phase 1 of incoming calls; everyone else is declined as busy). Needs CALL_ADAPTER=ntgcalls and CALLS_ENABLED. */
+    ANSWER_OWNER_CALLS: bool.default(false),
     CALL_ADAPTER: z.enum(['disabled', 'ntgcalls', 'fake']).default('disabled'),
     MESSAGING_ADAPTER: z.enum(['disabled', 'telegram', 'fake']).default('disabled'),
     TEXT_AI_ADAPTER: z.enum(['disabled', 'rules', 'openai']).default('rules'),
@@ -115,6 +117,8 @@ const EnvSchema = z
           'live-call recognition by VoiceLab needs TTS_PROVIDER=voicelab (the thinking model then works in text only); set VOICELAB_STT_CALLS=false to use it for voice notes only',
         );
     }
+    if (e.ANSWER_OWNER_CALLS && (!e.CALLS_ENABLED || e.CALL_ADAPTER !== 'ntgcalls'))
+      bad('ANSWER_OWNER_CALLS', 'answering the owner needs CALLS_ENABLED=true and CALL_ADAPTER=ntgcalls');
     if (e.CALLS_ENABLED) {
       if (e.CALL_ADAPTER === 'disabled') bad('CALL_ADAPTER', 'CALLS_ENABLED=true requires a real call adapter');
       if (!e.CALL_FEASIBILITY_EVIDENCE_PATH) bad('CALL_FEASIBILITY_EVIDENCE_PATH', 'calling requires a feasibility evidence artifact');

@@ -33,6 +33,14 @@ class FakeTransport implements CallTransport {
       });
     return { ref: REF, adminId: SELF, participantId: PEER };
   }
+  async receivedCall() {
+    this.log.push('received');
+  }
+  acceptMode: 'ok' | 'gone' = 'ok';
+  async acceptCall() {
+    this.log.push('accept');
+    if (this.acceptMode === 'gone') throw Object.assign(new Error('rpc'), { errorMessage: 'CALL_ALREADY_DECLINED' });
+  }
   async confirmCall(): Promise<ConfirmedCall> {
     this.log.push('confirm');
     return { servers: [], versions: ['8.0.0'], p2pAllowed: false, customParameters: '{}' };
@@ -65,9 +73,14 @@ class FakeMedia implements MediaSession {
     this.log.push('prepare');
     return new Uint8Array([1, 2, 3]);
   }
+  async answer() {
+    this.log.push('answer');
+    return new Uint8Array([4, 5, 6]);
+  }
+  fingerprint = 5n;
   async exchangeKeys() {
     this.log.push('exchangeKeys');
-    return { gA: new Uint8Array([9]), keyFingerprint: 5n };
+    return { gA: new Uint8Array([9]), keyFingerprint: this.fingerprint };
   }
   async connect() {
     this.log.push('connect');
@@ -395,5 +408,129 @@ describe('NtgcallsCallAdapter', () => {
     await flush();
     expect(s.transport.signalingSent).toEqual([new Uint8Array([4, 5])]);
     expect(s.media.log).toContain('signaling-in');
+  });
+});
+
+describe('NtgcallsCallAdapter: answering an incoming call', () => {
+  const CALLER = PEER;
+  const IN_REF = { id: '555', accessHash: '444' };
+  const ring = (s: ReturnType<typeof setup>, over: Partial<{ video: boolean; adminId: string; participantId: string }> = {}) =>
+    s.transport.emit({
+      kind: 'requested',
+      id: IN_REF.id,
+      accessHash: IN_REF.accessHash,
+      gAHash: new Uint8Array([1, 1]),
+      video: over.video ?? false,
+      adminId: over.adminId ?? CALLER,
+      participantId: over.participantId ?? SELF,
+    });
+  const inPlan = (): ApprovedCallPlan => ({ ...plan(), recipientTelegramId: CALLER });
+
+  it("hands a ring to the application, answers it through dial, derives the key from the caller's g_a and connects", async () => {
+    const s = setup();
+    const seen: string[] = [];
+    s.adapter.listenForIncoming((c) => {
+      seen.push(c.callerId);
+      s.adapter.registerIncoming(inPlan().callRequestId, c);
+    });
+    ring(s);
+    await flush();
+    expect(seen).toEqual([CALLER]);
+    const handle = await s.adapter.dial(inPlan(), new AbortController().signal);
+    expect(s.transport.log).toEqual(['dh', 'received', 'accept']);
+    expect(s.media.log).toEqual(['answer']);
+    s.transport.emit({
+      kind: 'confirmed',
+      id: IN_REF.id,
+      gAOrB: new Uint8Array([8]),
+      keyFingerprint: 5n,
+      servers: [],
+      versions: ['8.0.0'],
+      p2pAllowed: false,
+      customParameters: '{}',
+      adminId: CALLER,
+      participantId: SELF,
+    });
+    await flush();
+    s.media.setState('connected');
+    await flush();
+    expect(s.media.log).toEqual(['answer', 'exchangeKeys', 'connect', 'attachPlayback']);
+    expect(s.transport.log).not.toContain('confirm'); // the answering side never confirms
+    const evs = await nextEvents(handle, 3);
+    expect(evs.map((e) => e.type)).toEqual(['heartbeat', 'ringing', 'connected']);
+  });
+
+  it('hangs up when the key fingerprint does not match what the caller announced', async () => {
+    const s = setup();
+    s.adapter.listenForIncoming((c) => s.adapter.registerIncoming(inPlan().callRequestId, c));
+    ring(s);
+    await flush();
+    await s.adapter.dial(inPlan(), new AbortController().signal);
+    s.media.fingerprint = 6n;
+    s.transport.emit({
+      kind: 'confirmed',
+      id: IN_REF.id,
+      gAOrB: new Uint8Array([8]),
+      keyFingerprint: 5n,
+      servers: [],
+      versions: [],
+      p2pAllowed: false,
+      customParameters: '{}',
+      adminId: CALLER,
+      participantId: SELF,
+    });
+    await flush();
+    expect(s.media.log).not.toContain('connect');
+    expect(s.transport.log).toContain('discard');
+  });
+
+  it('declines video rings and rings that arrive while a call is going on, and ignores rings meant for someone else', async () => {
+    const s = setup();
+    const taken: string[] = [];
+    s.adapter.listenForIncoming((c) => {
+      taken.push(c.ref.id);
+      s.adapter.registerIncoming(inPlan().callRequestId, c);
+    });
+    ring(s, { video: true });
+    await flush();
+    expect(taken).toEqual([]);
+    expect(s.transport.discards).toEqual([{ kind: 'hangup', durationSeconds: 0 }]);
+    ring(s, { participantId: '1234' });
+    await flush();
+    expect(taken).toEqual([]);
+    expect(s.transport.discards).toHaveLength(1);
+    ring(s); // a normal ring is taken ...
+    await flush();
+    expect(taken).toEqual([IN_REF.id]);
+    ring(s); // ... a second one while the first waits is busy
+    await flush();
+    expect(taken).toHaveLength(1);
+    expect(s.transport.discards.at(-1)).toEqual({ kind: 'busy', durationSeconds: 0 });
+  });
+
+  it('refuses to answer for a plan that belongs to someone else, and a caller who already hung up is a rejected dial', async () => {
+    const s = setup();
+    s.adapter.listenForIncoming((c) => s.adapter.registerIncoming(inPlan().callRequestId, c));
+    ring(s);
+    await flush();
+    await expect(s.adapter.dial({ ...inPlan(), recipientTelegramId: '999' }, new AbortController().signal)).rejects.toBeInstanceOf(DialRejectedError);
+    expect(s.transport.discards.at(-1)?.kind).toBe('hangup'); // the ring is not left ringing
+    const s2 = setup();
+    s2.adapter.listenForIncoming((c) => s2.adapter.registerIncoming(inPlan().callRequestId, c));
+    ring(s2);
+    await flush();
+    s2.transport.acceptMode = 'gone';
+    await expect(s2.adapter.dial(inPlan(), new AbortController().signal)).rejects.toBeInstanceOf(DialRejectedError);
+    expect(s2.media.stopped).toBe(true);
+  });
+
+  it('releaseIncoming gives back a ring that no dial took', () => {
+    const s = setup();
+    s.adapter.listenForIncoming((c) => s.adapter.registerIncoming('req-1', c));
+    ring(s);
+    return flush().then(() => {
+      expect(s.adapter.releaseIncoming('req-1')?.callerId).toBe(CALLER);
+      expect(s.adapter.releaseIncoming('req-1')).toBeUndefined();
+    });
   });
 });

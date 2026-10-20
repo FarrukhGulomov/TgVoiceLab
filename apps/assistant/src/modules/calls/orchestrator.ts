@@ -86,7 +86,7 @@ export class CallOrchestrator {
     q: Queryable,
     ownerId: string,
     callRequestId: string,
-    o: { budgetReserved: boolean; excludeCallId?: string },
+    o: { budgetReserved: boolean; excludeCallId?: string; inbound?: boolean },
   ): Promise<DialPolicyInput | null> {
     const req = await q.query<{ plan: unknown; plan_enc: string | null; authorization_id: string; contact_id: string; status: string }>(
       'SELECT plan, plan_enc, authorization_id, contact_id, status FROM call_requests WHERE id=$1 AND owner_id=$2',
@@ -204,6 +204,7 @@ export class CallOrchestrator {
       killSwitchOn: ks.rows[0]?.calling_kill_switch ?? true,
       activeCallExists: !!active.rowCount,
       budgetReserved: o.budgetReserved,
+      ...(o.inbound ? { inbound: true } : {}),
     };
   }
 
@@ -235,12 +236,13 @@ export class CallOrchestrator {
     return { status: 'rejected', reason };
   }
 
-  async dial(ownerId: string, callRequestId: string): Promise<DialOutcome> {
+  /** `inbound`: the owner is calling the assistant and the adapter answers it (the adapter's `dial` takes the ring instead of placing a call). */
+  async dial(ownerId: string, callRequestId: string, opts: { inbound?: boolean } = {}): Promise<DialOutcome> {
     const { db, clock } = this.d;
     // Pass 1 (read-only, no side effects): fail fast.
     let pre: DialPolicyInput | null;
     try {
-      pre = await this.loadInput(db, ownerId, callRequestId, { budgetReserved: true });
+      pre = await this.loadInput(db, ownerId, callRequestId, { budgetReserved: true, ...(opts.inbound ? { inbound: true } : {}) });
     } catch (e) {
       if (e instanceof PolicyDenied) return this.reject(ownerId, callRequestId, e.reason);
       throw e;
@@ -283,7 +285,11 @@ export class CallOrchestrator {
         const reserved = await reserveBudget(c, ownerId, day, this.d.callBudgetMicroUsd);
         if (reserved) await c.query('UPDATE calls SET budget_day=$2::date, budget_reserved_micro=$3 WHERE id=$1', [id, day, this.d.callBudgetMicroUsd]);
         // Re-evaluate EVERY check with fresh data, after taking the call row and before the external side effect.
-        const fresh = await this.loadInput(c, ownerId, callRequestId, { budgetReserved: reserved, excludeCallId: id });
+        const fresh = await this.loadInput(c, ownerId, callRequestId, {
+          budgetReserved: reserved,
+          excludeCallId: id,
+          ...(opts.inbound ? { inbound: true } : {}),
+        });
         const second = evaluateDialPolicy(fresh!);
         if (!second.allowed) throw new PolicyDenied(second.reasonCode);
         const consumed = await c.query(`UPDATE authorizations SET state='consumed', consumed_at=$2 WHERE id=$1 AND owner_id=$3 AND state='approved'`, [

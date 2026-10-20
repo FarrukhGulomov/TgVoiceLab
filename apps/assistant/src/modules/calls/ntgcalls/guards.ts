@@ -1,3 +1,5 @@
+import type { RtcServer } from './ports.js';
+
 // Placement and update-binding safety for the production ntgcalls adapter (port of experiments/telegram-calls/call-guards.mjs, audit F05/F06).
 
 export const PHASE = {
@@ -47,7 +49,22 @@ export type TransportUpdate =
   | { kind: 'waiting'; id: string; delivered: boolean; adminId?: string | undefined; participantId?: string | undefined }
   | { kind: 'accepted'; id: string; gB: Uint8Array; adminId?: string | undefined; participantId?: string | undefined }
   | { kind: 'discarded'; id: string; reason: string; adminId?: string | undefined; participantId?: string | undefined }
-  | { kind: 'signaling'; id: string; data: Uint8Array };
+  | { kind: 'signaling'; id: string; data: Uint8Array }
+  /** Someone is calling this account (incoming ring). `gAHash` commits the caller to its half of the key exchange. */
+  | { kind: 'requested'; id: string; accessHash: string; gAHash: Uint8Array; video: boolean; adminId?: string | undefined; participantId?: string | undefined }
+  /** The final call object: for the party that ACCEPTED, it carries the caller's `g_a`, the key fingerprint and the relay servers. */
+  | {
+      kind: 'confirmed';
+      id: string;
+      gAOrB: Uint8Array;
+      keyFingerprint: bigint;
+      servers: RtcServer[];
+      versions: string[];
+      p2pAllowed: boolean;
+      customParameters: string;
+      adminId?: string | undefined;
+      participantId?: string | undefined;
+    };
 
 /**
  * Binds incoming updates to the ONE call this process placed. Until RequestCall returns our call id, relevant updates are held in a
@@ -58,15 +75,16 @@ export class CallUpdateGate {
   bound: CallRef | null = null;
   droppedEarly = 0;
   #early: TransportUpdate[] = [];
+  /** `adminId` is who placed the call, `participantId` who was called: (us, recipient) for our own calls, (caller, us) for one we answer. */
   constructor(
-    private readonly selfId: string,
-    private readonly recipientId: string,
+    private readonly adminId: string,
+    private readonly participantId: string,
     private readonly maxBuffered = 20,
   ) {}
   #participantsOk(u: TransportUpdate): boolean {
     if (u.kind === 'signaling') return true;
-    if (u.adminId !== undefined && u.adminId !== this.selfId) return false;
-    if (u.participantId !== undefined && u.participantId !== this.recipientId) return false;
+    if (u.adminId !== undefined && u.adminId !== this.adminId) return false;
+    if (u.participantId !== undefined && u.participantId !== this.participantId) return false;
     return true;
   }
   classify(u: TransportUpdate): 'accept' | 'buffer' | 'ignore' {

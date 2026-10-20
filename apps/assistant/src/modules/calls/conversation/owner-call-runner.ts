@@ -1,6 +1,6 @@
 import type { RecallService } from '../../memory/recall.js';
 import { answeredEarlierToday } from './daily.js';
-import { OWNER_REQUESTED_CALL } from '../../../application/intent.js';
+import { OWNER_CALLED_IN, OWNER_REQUESTED_CALL } from '../../../application/intent.js';
 import type { CallEndReason } from '@tgvl/contracts';
 import type { Db } from '../../../infrastructure/db/db.js';
 import type { Clock } from '../../../application/clock.js';
@@ -36,6 +36,8 @@ const GREETING_BRIEFING = (first: boolean): string => `Qo'ng'iroqqa hozir javob 
 const GREETING_ASKED = (first: boolean): string =>
   `Qo'ng'iroqqa hozir javob berildi. Egasining o'zi qo'ng'iroq so'ragan. ${greet(first)} 'Farruh, sizga biror topshiriq bormi?' de. Eslatma haqida gapirma.`;
 const NUDGE = "Egasi indamayapti. Qisqa qilib, bir jumlada so'ra: 'Farruh, eshityapsizmi? Sizga biror topshiriq bormi?' Boshqa narsa dema.";
+const GREETING_INBOUND = (first: boolean): string =>
+  `Egasining o'zi senga qo'ng'iroq qildi va sen javob berding. ${first ? "Qisqa javob ber (bitta jumla): 'Labbay, Farruh, eshitaman.'" : "Bugun allaqachon gaplashgansiz: SALOM BERMA, faqat qisqa 'Eshitaman' de."} ${NO_SELF_INTRO} Keyin egasini tinglab, topshirig'ini kut; o'zing mavzu boshlama.`;
 const GREETING_REMINDER = (first: boolean): string => `Qo'ng'iroqqa hozir javob berildi. ${greet(first)} Eslatmani ayt.`;
 
 /**
@@ -70,7 +72,8 @@ export class OwnerCallRunner implements CallSessionRunner {
     });
     await tools.load();
     const asked = plan.topic === 'reminder' && plan.allowedContext[0] === OWNER_REQUESTED_CALL;
-    const reminder = plan.topic === 'reminder' && !asked ? (plan.allowedContext[0] ?? undefined) : undefined;
+    const calledIn = plan.topic === 'reminder' && plan.allowedContext[0] === OWNER_CALLED_IN; // the owner rang the assistant
+    const reminder = plan.topic === 'reminder' && !asked && !calledIn ? (plan.allowedContext[0] ?? undefined) : undefined;
     const knowledge = this.d.recall ? await this.d.recall.recall(db, ownerId, '', this.d.clock.now(), { calls: 5, memories: 12 }) : undefined;
     const instructions = buildOwnerCallInstructions({
       ...(knowledge ? { knowledge } : {}),
@@ -83,10 +86,10 @@ export class OwnerCallRunner implements CallSessionRunner {
     const bridge = new RealtimeCallBridge(handle, link, { ...(this.d.log ? { log: this.d.log } : {}), onTool: (c) => tools.execute(c) });
     const started = Date.now();
     const first = !(await answeredEarlierToday(db, ownerId, plan.recipientTelegramId, ctx.callId, owner.timezone, this.d.clock.now()));
-    bridge.start(asked ? GREETING_ASKED(first) : reminder ? GREETING_REMINDER(first) : GREETING_BRIEFING(first));
+    const greeting = calledIn ? GREETING_INBOUND(first) : asked ? GREETING_ASKED(first) : reminder ? GREETING_REMINDER(first) : GREETING_BRIEFING(first);
+    bridge.start(greeting);
 
     // The owner picks up and may say nothing: the assistant must speak first, quickly, and ask again if nobody answers.
-    const greeting = asked ? GREETING_ASKED(first) : reminder ? GREETING_REMINDER(first) : GREETING_BRIEFING(first);
     let spoke = false;
     let resent = 0;
     let nudges = 0;

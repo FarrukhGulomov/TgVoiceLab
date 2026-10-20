@@ -45,8 +45,15 @@ export function createNtgcallsMedia(): MediaSession {
       await ntg.setStreamSources(id, StreamMode.CAPTURE, { microphone: MIC });
       return Uint8Array.from(await ntg.initExchange(id, { g: dh.g, p: arr(dh.p), random: arr(dh.random) }, undefined));
     },
-    async exchangeKeys(gB) {
-      const r = await ntg.exchangeKeys(id, arr(gB), 0n);
+    async answer(dh: DhConfig, gAHash: Uint8Array) {
+      await ntg.createP2pCall(id);
+      created = true;
+      await ntg.setStreamSources(id, StreamMode.CAPTURE, { microphone: MIC });
+      // With the caller's g_a_hash given, ntgcalls takes the answering role and returns our g_b.
+      return Uint8Array.from(await ntg.initExchange(id, { g: dh.g, p: arr(dh.p), random: arr(dh.random) }, arr(gAHash)));
+    },
+    async exchangeKeys(gB, fingerprint = 0n) {
+      const r = await ntg.exchangeKeys(id, arr(gB), fingerprint);
       return { gA: Uint8Array.from(r.gAOrB), keyFingerprint: BigInt(r.keyFingerprint) };
     },
     async connect(c: ConfirmedCall) {

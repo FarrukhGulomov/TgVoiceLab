@@ -45,6 +45,8 @@ export interface DialPolicyInput {
     thirdPartyConsentMechanismProven: boolean;
     buildFingerprintMatches: boolean;
   };
+  /** The OWNER called the assistant and it is answering. The owner's own call needs no opt-out or quiet-hours check (those limit what the assistant starts). */
+  inbound?: boolean;
   accountHealthy: boolean;
   killSwitchOn: boolean;
   activeCallExists: boolean;
@@ -117,10 +119,10 @@ export function evaluateDialPolicy(i: DialPolicyInput): PolicyDecision {
   if (i.requestStatus !== 'queued') return deny('request_not_dialable');
 
   // "Stop calling me" is a durable owner switch for EVERY call the assistant would place (owner and contact calls alike).
-  if (i.owner.callOptOut) return deny('owner_opted_out');
+  if (i.owner.callOptOut && !(i.inbound && i.kind === 'owner_call')) return deny('owner_opted_out');
 
   if (i.kind === 'owner_call') {
-    if (inQuietHours(i.now, i.owner.timezone, i.owner.quietHours)) return deny('quiet_hours');
+    if (!i.inbound && inQuietHours(i.now, i.owner.timezone, i.owner.quietHours)) return deny('quiet_hours');
   } else {
     const c = i.contact;
     if (!c) return deny('recipient_missing');

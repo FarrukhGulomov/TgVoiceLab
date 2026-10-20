@@ -88,6 +88,7 @@ if (cfg.MESSAGING_ADAPTER === 'telegram') {
 }
 
 let callAdapter: TelegramCallAdapter;
+let ntgAdapter: import('./modules/calls/ntgcalls/adapter.js').NtgcallsCallAdapter | undefined;
 if (cfg.CALL_ADAPTER === 'ntgcalls') {
   if (!gateway) {
     log.fatal('CALL_ADAPTER=ntgcalls requires MESSAGING_ADAPTER=telegram: calls share the one Telegram client that owns the assistant session');
@@ -96,12 +97,13 @@ if (cfg.CALL_ADAPTER === 'ntgcalls') {
   const { NtgcallsCallAdapter } = await import('./modules/calls/ntgcalls/adapter.js');
   const { createNtgcallsMedia, ntgcallsProtocol } = await import('./infrastructure/telegram/ntgcalls-media.js');
   // Even a real adapter is wrapped: the evidence artifact (bound to this build, produced by this adapter) decides whether it may dial.
+  ntgAdapter = new NtgcallsCallAdapter({
+    transport: gateway.callTransport(ntgcallsProtocol()),
+    media: createNtgcallsMedia,
+    buildFingerprint: cfg.BUILD_FINGERPRINT,
+  });
   callAdapter = new EvidenceGatedCallAdapter(
-    new NtgcallsCallAdapter({
-      transport: gateway.callTransport(ntgcallsProtocol()),
-      media: createNtgcallsMedia,
-      buildFingerprint: cfg.BUILD_FINGERPRINT,
-    }),
+    ntgAdapter,
     () => deriveCapabilities(cfg.CALL_FEASIBILITY_EVIDENCE_PATH, cfg.BUILD_FINGERPRINT),
     cfg.OWNER_TELEGRAM_USER_ID ?? null,
   );
@@ -399,6 +401,24 @@ const sealed = await sealLegacyPlaintext(db, crypto);
 if (Object.values(sealed).some(Boolean)) log.info(sealed, 'sealed plaintext copies written before field-level sealing existed');
 const rec = await app.recoverCalls();
 if (rec.recovered) log.warn({ recovered: rec.recovered }, 'reconciled calls orphaned by a previous crash (no redial performed)');
+
+if (cfg.ANSWER_OWNER_CALLS && ntgAdapter) {
+  const { InboundCallService } = await import('./modules/calls/inbound-calls.js');
+  const inbound = new InboundCallService({
+    db,
+    authorizations: app.authorizations,
+    orchestrator: app.orchestrator,
+    adapter: ntgAdapter,
+    clock: app.clock,
+    callsEnabled: cfg.CALLS_ENABLED,
+    derive,
+    log: (line) => log.info({ call: true, inbound: true }, line),
+  });
+  ntgAdapter.listenForIncoming((c) => inbound.handle(c));
+  log.warn(
+    'ANSWER_OWNER_CALLS=true: calls from the owner to this account are answered (the answering side of the call is not live verified); every other caller is declined as busy',
+  );
+}
 
 const server = await buildServer({
   app,

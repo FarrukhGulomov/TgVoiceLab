@@ -99,3 +99,10 @@ non-interactive use. Rotation: runbooks `key-rotation`, `session-compromise`.
 - Barge-in sends `{"action":"interrupt"}` and closes the open connections; audio that arrives afterwards is discarded.
 - A stream that fails before any audio falls back to the REST synthesis for that sentence. A sentence that failed after part of it was heard is reported and not repeated.
 - Not verified against the live service from the build environment. The streaming endpoint has no model choice, so `VOICELAB_TTS_MODEL` applies only to the REST fallback.
+
+## Answering the owner's calls (ANSWER_OWNER_CALLS=true)
+
+- Phase 1 answers a call to the assistant's Telegram account only when the caller's numeric id is the owner's. Everyone else is declined as busy: no conversation, no recording, no contact row, no log of who called. More than five declines a minute from one id are ignored.
+- The owner's ring becomes an owner-approved call request and runs through the same orchestrator as every other call: kill switch, verified-build gate (`ownerCallingAllowed`), single active call, call budget, durable call state, events and report. Only the owner's opt-out and quiet hours are skipped, because they limit calls the assistant starts, not calls the owner makes.
+- Key exchange: the assistant answers with its half (`g_b`) and checks that the key derived from the caller's `g_a` carries the fingerprint the caller announced; a mismatch hangs up. Audio is not stored.
+- Not verified against the live service. Strangers and contacts calling in are a later phase.

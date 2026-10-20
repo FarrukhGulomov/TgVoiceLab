@@ -127,3 +127,5 @@ export interface InterpretContext {
 
 /** Title of the call reminder created by "call me now"; the owner call recognises it and just asks how it can help. */
 export const OWNER_REQUESTED_CALL = "Siz so'ragan qo'ng'iroq";
+/** Marks a call the OWNER placed to the assistant (the assistant answered it). */
+export const OWNER_CALLED_IN = "Egasi o'zi qo'ng'iroq qildi";

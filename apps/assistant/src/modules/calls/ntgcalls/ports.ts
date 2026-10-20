@@ -37,6 +37,10 @@ export interface CallTransport {
     adminId: string;
     participantId: string;
   }>;
+  /** Tells the caller that this account is ringing (the caller's app then shows "ringing" instead of "connecting"). */
+  receivedCall(ref: CallRef): Promise<void>;
+  /** Answers an incoming call with our half of the key exchange (`g_b`). */
+  acceptCall(ref: CallRef, args: { gB: Uint8Array }): Promise<void>;
   confirmCall(ref: CallRef, args: { gA: Uint8Array; keyFingerprint: bigint }): Promise<ConfirmedCall>;
   discardCall(ref: CallRef, args: { durationSeconds: number; kind: DiscardKind }): Promise<void>;
   sendSignaling(ref: CallRef, data: Uint8Array): Promise<void>;
@@ -50,7 +54,10 @@ export type MediaState = 'connecting' | 'connected' | 'failed';
 export interface MediaSession {
   /** Prepares capture and returns the DH `g_a_hash`. */
   prepare(dh: DhConfig): Promise<Uint8Array>;
-  exchangeKeys(gB: Uint8Array): Promise<{ gA: Uint8Array; keyFingerprint: bigint }>;
+  /** Answering side of the key exchange: starts it from the caller's `g_a_hash` and returns our `g_b`. */
+  answer(dh: DhConfig, gAHash: Uint8Array): Promise<Uint8Array>;
+  /** Calling side: `gB` is the callee's half and the fingerprint is unknown (0). Answering side: `gB` is the caller's `g_a` with its fingerprint. */
+  exchangeKeys(gB: Uint8Array, fingerprint?: bigint): Promise<{ gA: Uint8Array; keyFingerprint: bigint }>;
   connect(confirmed: ConfirmedCall): Promise<void>;
   /** Attach the playback side after the connection is up (the documented-looking early attach does NOT receive audio; F-7/F-8). */
   attachPlayback(): Promise<void>;

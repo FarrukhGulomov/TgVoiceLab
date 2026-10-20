@@ -60,7 +60,21 @@ export function normalizeUpdate(update: unknown): TransportUpdate | null {
   if (pc instanceof Api.PhoneCallWaiting) return { kind: 'waiting', id: str(pc.id), delivered: pc.receiveDate !== undefined, ...parties };
   if (pc instanceof Api.PhoneCallAccepted) return { kind: 'accepted', id: str(pc.id), gB: bytes(pc.gB), ...parties };
   if (pc instanceof Api.PhoneCallDiscarded) return { kind: 'discarded', id: str(pc.id), reason: pc.reason?.className ?? 'unknown', ...parties };
-  return null; // PhoneCallRequested (we never answer incoming calls), PhoneCall (the confirm response carries what we need), PhoneCallEmpty
+  if (pc instanceof Api.PhoneCallRequested)
+    return { kind: 'requested', id: str(pc.id), accessHash: str(pc.accessHash), gAHash: bytes(pc.gAHash), video: !!pc.video, ...parties };
+  if (pc instanceof Api.PhoneCall)
+    return {
+      kind: 'confirmed',
+      id: str(pc.id),
+      gAOrB: bytes(pc.gAOrB),
+      keyFingerprint: BigInt(pc.keyFingerprint.toString()),
+      servers: toRtcServers(pc.connections),
+      versions: pc.protocol.libraryVersions ?? [],
+      p2pAllowed: !!pc.p2pAllowed,
+      customParameters: pc.customParameters?.data || '{}',
+      ...parties,
+    };
+  return null; // PhoneCallEmpty
 }
 
 const DISCARD: Record<DiscardKind, () => Api.TypePhoneCallDiscardReason> = {
@@ -101,6 +115,14 @@ export class GramjsCallTransport implements CallTransport {
     );
     const pc = res.phoneCall as Api.PhoneCallWaiting;
     return { ref: { id: str(pc.id), accessHash: str(pc.accessHash) }, adminId: str(pc.adminId), participantId: str(pc.participantId) };
+  }
+
+  async receivedCall(ref: CallRef): Promise<void> {
+    await this.client.invoke(new Api.phone.ReceivedCall({ peer: this.peer(ref) }));
+  }
+
+  async acceptCall(ref: CallRef, a: { gB: Uint8Array }): Promise<void> {
+    await this.client.invoke(new Api.phone.AcceptCall({ peer: this.peer(ref), gB: Buffer.from(a.gB), protocol: this.protocolOf() }));
   }
 
   async confirmCall(ref: CallRef, a: { gA: Uint8Array; keyFingerprint: bigint }): Promise<ConfirmedCall> {

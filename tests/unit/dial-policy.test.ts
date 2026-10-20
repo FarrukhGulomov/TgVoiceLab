@@ -145,6 +145,19 @@ describe('dial policy (spec §9.1)', () => {
     expect(evaluateDialPolicy({ ...contact, owner: { ...contact.owner, callOptOut: true } }).reasonCode).toBe('owner_opted_out');
   });
 
+  it('an owner calling in is not blocked by opt-out or quiet hours, but every other check (kill switch, verified build, authorization) still applies', () => {
+    const b = baseline({ kind: 'owner_call', contact: null, permission: null, inbound: true }, { expiresAt: '2026-10-16T00:00:00.000Z' });
+    const night = new Date('2026-10-15T18:30:00Z'); // 23:30 local
+    expect(evaluateDialPolicy({ ...b, now: night, owner: { ...b.owner, callOptOut: true } }).allowed).toBe(true);
+    expect(evaluateDialPolicy({ ...b, killSwitchOn: true }).reasonCode).toBe('kill_switch_on');
+    expect(evaluateDialPolicy({ ...b, capability: { ...b.capability, ownerCallingAllowed: false } }).reasonCode).toBe('calling_not_verified');
+    expect(evaluateDialPolicy({ ...b, authorization: null }).reasonCode).toBe('authorization_missing');
+    expect(evaluateDialPolicy({ ...b, activeCallExists: true }).reasonCode).toBe('active_call_exists');
+    // the flag changes nothing for contact calls
+    const contact = baseline({ inbound: true });
+    expect(evaluateDialPolicy({ ...contact, owner: { ...contact.owner, callOptOut: true } }).reasonCode).toBe('owner_opted_out');
+  });
+
   it('kill switch outranks everything else', () => {
     const b = baseline();
     expect(evaluateDialPolicy({ ...b, killSwitchOn: true, authorization: null, contact: null }).reasonCode).toBe('kill_switch_on');

@@ -78,10 +78,21 @@ export function mapRequestCallError(e: unknown): DialRejectedError | null {
   return new DialRejectedError('transport_error', `telegram rejected the call: ${m}`);
 }
 
+/** An incoming ring the adapter has not answered yet. */
+export interface IncomingCall {
+  ref: CallRef;
+  /** Numeric Telegram id of the caller (identity is the id, never a name). */
+  callerId: string;
+  gAHash: Uint8Array;
+}
+
 export class NtgcallsCallAdapter implements TelegramCallAdapter {
   readonly #o: Required<Omit<NtgcallsAdapterOptions, 'transport' | 'media' | 'buildFingerprint'>> & NtgcallsAdapterOptions;
   #active: ActiveCall | null = null;
   readonly #ended = new Set<string>();
+  /** Incoming rings that were handed to the application and wait to be answered by `dial` (keyed by the call request made for them). */
+  readonly #pendingIncoming = new Map<string, IncomingCall>();
+  #listening: (() => void) | null = null;
 
   constructor(options: NtgcallsAdapterOptions) {
     this.#o = {
@@ -98,7 +109,7 @@ export class NtgcallsCallAdapter implements TelegramCallAdapter {
   async capabilities(): Promise<CallAdapterCapabilities> {
     return {
       privateOutbound: true,
-      privateInbound: false,
+      privateInbound: true,
       pcmSend: true,
       pcmReceive: true,
       evidenceArtifact: null,
@@ -113,7 +124,54 @@ export class NtgcallsCallAdapter implements TelegramCallAdapter {
     return 'unknown';
   }
 
+  /**
+   * Starts watching for incoming rings. `onIncoming` is called for a ring this adapter is free to take (audio only, nothing else going on); it
+   * must either `registerIncoming` the call for a later `dial` or `declineIncoming` it. Rings that arrive while a call is active or another ring
+   * is waiting are declined as busy here. The adapter never answers by itself.
+   */
+  listenForIncoming(onIncoming: (c: IncomingCall) => void | Promise<void>): void {
+    if (this.#listening) return;
+    const o = this.#o;
+    this.#listening = o.transport.subscribe((u) => {
+      if (u.kind !== 'requested') return;
+      if (u.participantId !== undefined && u.participantId !== o.transport.selfId) return; // not addressed to this account
+      if (!u.adminId) return;
+      const call: IncomingCall = { ref: { id: u.id, accessHash: u.accessHash }, callerId: u.adminId, gAHash: u.gAHash };
+      if (u.video || this.#active || this.#pendingIncoming.size > 0) {
+        void this.declineIncoming(call, u.video ? 'hangup' : 'busy');
+        return;
+      }
+      void Promise.resolve(onIncoming(call)).catch(() => this.declineIncoming(call, 'hangup'));
+    });
+  }
+
+  stopListening(): void {
+    this.#listening?.();
+    this.#listening = null;
+  }
+
+  /** Reserves a ring for the call request that will answer it; `dial` of that request's plan answers instead of placing a call. */
+  registerIncoming(callRequestId: string, call: IncomingCall): void {
+    this.#pendingIncoming.set(callRequestId, call);
+  }
+
+  /** Takes back a ring that was never answered (the request was refused before `dial`). Returns it so the caller can decline it. */
+  releaseIncoming(callRequestId: string): IncomingCall | undefined {
+    const c = this.#pendingIncoming.get(callRequestId);
+    this.#pendingIncoming.delete(callRequestId);
+    return c;
+  }
+
+  async declineIncoming(call: IncomingCall, kind: DiscardKind = 'busy'): Promise<void> {
+    await this.#o.transport.discardCall(call.ref, { durationSeconds: 0, kind }).catch(() => undefined);
+  }
+
   async dial(plan: ApprovedCallPlan, signal: AbortSignal): Promise<CallHandle> {
+    const incoming = this.#pendingIncoming.get(plan.callRequestId);
+    if (incoming) {
+      this.#pendingIncoming.delete(plan.callRequestId);
+      return this.#answer(plan, incoming, signal);
+    }
     if (this.#active) throw new DialRejectedError('transport_error', 'the call adapter already has an active call');
     if (signal.aborted) throw new DialRejectedError('cancelled');
     const o = this.#o;
@@ -197,6 +255,59 @@ export class NtgcallsCallAdapter implements TelegramCallAdapter {
     for (const u of early) call.onUpdate(u);
     return call.handle();
   }
+
+  /** Answers a ring: our half of the key exchange goes out with AcceptCall; the caller's half arrives later as a `confirmed` update. */
+  async #answer(plan: ApprovedCallPlan, incoming: IncomingCall, signal: AbortSignal): Promise<CallHandle> {
+    const o = this.#o;
+    if (plan.recipientTelegramId !== incoming.callerId) {
+      void this.declineIncoming(incoming, 'hangup');
+      throw new DialRejectedError('transport_error', 'the plan is for someone else than the caller');
+    }
+    if (this.#active || signal.aborted) {
+      void this.declineIncoming(incoming, 'busy');
+      throw new DialRejectedError(signal.aborted ? 'cancelled' : 'transport_error', signal.aborted ? undefined : 'the call adapter already has an active call');
+    }
+    const tracker = new PlacementTracker();
+    const gate = new CallUpdateGate(incoming.callerId, o.transport.selfId);
+    const media = o.media();
+    const call = new ActiveCall(plan, media, tracker, o, (id) => {
+      this.#ended.add(id);
+      if (this.#ended.size > 200) this.#ended.delete(this.#ended.values().next().value as string);
+      if (this.#active === call) this.#active = null;
+    });
+    this.#active = call;
+    gate.bind(incoming.ref);
+    call.attachUnsubscribe(
+      o.transport.subscribe((u) => {
+        if (gate.classify(u) === 'accept') call.onUpdate(u);
+      }),
+    );
+    const fail = async (why: string, e?: unknown): Promise<never> => {
+      call.releaseTransport();
+      await media.stop().catch(() => undefined);
+      this.#active = null;
+      void this.declineIncoming(incoming, 'hangup');
+      const rejected = e === undefined ? null : mapRequestCallError(e);
+      throw rejected ?? new DialRejectedError('transport_error', why);
+    };
+    let gB: Uint8Array;
+    try {
+      const dh = await o.transport.getDhConfig();
+      gB = await media.answer(dh, incoming.gAHash);
+    } catch (e) {
+      return fail('could not prepare to answer the call (DH config / media setup)', e);
+    }
+    if (signal.aborted) return fail('cancelled');
+    await o.transport.receivedCall(incoming.ref).catch(() => undefined); // best effort: only changes what the caller's app shows
+    try {
+      await o.transport.acceptCall(incoming.ref, { gB });
+    } catch (e) {
+      return fail('telegram did not accept the answer (the caller may have hung up)', e);
+    }
+    tracker.markConfirmed();
+    call.start(incoming.ref, 'answerer');
+    return call.handle();
+  }
 }
 
 class ActiveCall {
@@ -228,9 +339,15 @@ class ActiveCall {
   attachUnsubscribe(u: () => void): void {
     this.#unsubscribe = u;
   }
+  releaseTransport(): void {
+    this.#unsubscribe?.();
+  }
 
-  start(ref: CallRef): void {
+  #role: 'caller' | 'answerer' = 'caller';
+
+  start(ref: CallRef, role: 'caller' | 'answerer' = 'caller'): void {
     this.ref = ref;
+    this.#role = role;
     this.media.onSignaling((data) => {
       void this.o.transport.sendSignaling(ref, data).catch(() => undefined);
     });
@@ -251,6 +368,7 @@ class ActiveCall {
     });
     this.#heartbeat = setInterval(() => this.#emit('heartbeat'), this.o.heartbeatMs);
     this.#emit('heartbeat'); // the call exists and is under observation
+    if (role === 'answerer') this.#emit('ringing'); // we are the ones ringing until the media connects
   }
 
   onUpdate(u: TransportUpdate): void {
@@ -265,6 +383,11 @@ class ActiveCall {
       const keys = await this.media.exchangeKeys(u.gB);
       const confirmed = await this.o.transport.confirmCall(this.ref, keys);
       await this.media.connect(confirmed);
+    } else if (u.kind === 'confirmed' && this.#role === 'answerer') {
+      const keys = await this.media.exchangeKeys(u.gAOrB, u.keyFingerprint);
+      // The key both sides derived must carry the fingerprint the caller announced; anything else means the exchange was tampered with or broken.
+      if (keys.keyFingerprint !== u.keyFingerprint) throw new Error('key fingerprint mismatch');
+      await this.media.connect({ servers: u.servers, versions: u.versions, p2pAllowed: u.p2pAllowed, customParameters: u.customParameters });
     } else if (u.kind === 'signaling') {
       await this.media.receiveSignaling(u.data);
     } else if (u.kind === 'discarded') {
