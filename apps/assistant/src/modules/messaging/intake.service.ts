@@ -246,6 +246,8 @@ export class IntakeService {
         } else intent = proposed;
       } catch (e) {
         this.d.onFallbackError?.(e as Error);
+        // Say so, instead of the canned "not understood" that makes the assistant look dull when its language model is merely unreachable.
+        intent = { kind: 'clarify', question: t(p.locale, 'ai_unavailable') };
       }
     }
 

@@ -361,7 +361,7 @@ class ActiveCall {
       });
     });
     this.media.onState((s) => {
-      this.o.log?.(`media state: ${s}`);
+      this.o.log?.(`media state: ${s} (signaling in ${this.#sigIn}, out ${this.#sigOut})`);
       if (s === 'connected') void this.#onMediaConnected();
       else if (s === 'failed') void this.#fail('transport_error');
     });

@@ -34,7 +34,7 @@ interface Runtime {
 
 let nextId = 1n;
 
-export function createNtgcallsMedia(): MediaSession {
+export function createNtgcallsMedia(debug?: (line: string) => void): MediaSession {
   const ntg = new NTgCalls() as unknown as Runtime;
   const id = nextId++; // ntgcalls identifies a P2P call by a bigint of our choosing (a Telegram user id in the spike)
   let created = false;
@@ -57,6 +57,10 @@ export function createNtgcallsMedia(): MediaSession {
       return { gA: Uint8Array.from(r.gAOrB), keyFingerprint: BigInt(r.keyFingerprint) };
     },
     async connect(c: ConfirmedCall) {
+      const webrtc = c.servers.filter((x) => x.username !== undefined).length;
+      debug?.(
+        `ntgcalls connect: ${c.servers.length} servers (${webrtc} webrtc, ${c.servers.length - webrtc} reflector), p2p allowed=${c.p2pAllowed}, versions=[${c.versions.join(',')}], custom parameters ${c.customParameters.length} chars`,
+      );
       await ntg.connectP2p(id, c.servers, c.versions, c.p2pAllowed, c.customParameters || '{}');
     },
     async attachPlayback() {
@@ -75,6 +79,7 @@ export function createNtgcallsMedia(): MediaSession {
     onState(cb) {
       ntg.onConnectionChange((cid, s) => {
         if (cid !== id) return;
+        debug?.(`ntgcalls connection state: ${Object.entries(ConnectionState).find(([, v]) => v === s.state)?.[0] ?? s.state}`);
         const m: MediaState | null =
           s.state === ConnectionState.CONNECTED
             ? 'connected'

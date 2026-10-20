@@ -140,12 +140,14 @@ describe('free-form text fallback', () => {
     await s.app.close();
   });
 
-  it('a fallback failure is treated as unknown and nothing happens', async () => {
+  it('a fallback failure changes nothing and says that the language model could not be reached (not the dull "did not understand")', async () => {
     const s = setup(async () => {
       throw new Error('boom');
     });
     await s.say('nimadir tushunarsiz gap');
-    expect((await s.texts()).at(-1)).toContain('did not understand');
+    const last = (await s.texts()).at(-1)!;
+    expect(last).toContain('language model');
+    expect(last).not.toContain('did not understand');
     await s.app.close();
   });
 

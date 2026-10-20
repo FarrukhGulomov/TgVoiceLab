@@ -99,7 +99,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls') {
   // Even a real adapter is wrapped: the evidence artifact (bound to this build, produced by this adapter) decides whether it may dial.
   ntgAdapter = new NtgcallsCallAdapter({
     transport: gateway.callTransport(ntgcallsProtocol()),
-    media: createNtgcallsMedia,
+    media: () => createNtgcallsMedia((line) => log.info({ call: true }, line)),
     buildFingerprint: cfg.BUILD_FINGERPRINT,
     log: (line) => log.info({ call: true }, line),
   });
