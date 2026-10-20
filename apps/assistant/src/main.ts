@@ -414,7 +414,10 @@ if (cfg.ANSWER_OWNER_CALLS && ntgAdapter) {
     derive,
     log: (line) => log.info({ call: true, inbound: true }, line),
   });
-  ntgAdapter.listenForIncoming((c) => inbound.handle(c));
+  ntgAdapter.listenForIncoming((c) => {
+    log.info({ call: true, inbound: true }, 'inbound call: a ring reached the assistant'); // proves Telegram delivered it; who called is never logged
+    return inbound.handle(c);
+  });
   log.warn(
     'ANSWER_OWNER_CALLS=true: calls from the owner to this account are answered (the answering side of the call is not live verified); every other caller is declined as busy',
   );
