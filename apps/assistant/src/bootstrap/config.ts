@@ -3,6 +3,16 @@ import { TelegramUserIdSchema } from '@tgvl/contracts';
 
 const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
 const emptyToUndef = (v: unknown) => (v === '' ? undefined : v);
+/**
+ * TTS_PROVIDER / STT_PROVIDER pick VoiceLab. Writing the model that already speaks and listens (gemini, openai) or "none" means "no separate
+ * provider" and is read as unset; the case and stray spaces of a hand-edited .env do not matter either.
+ */
+const NO_SEPARATE_PROVIDER = new Set(['', 'gemini', 'openai', 'native', 'none', 'off', 'default']);
+const providerChoice = (v: unknown): unknown => {
+  if (typeof v !== 'string') return v;
+  const t = v.trim().toLowerCase();
+  return NO_SEPARATE_PROVIDER.has(t) ? undefined : t;
+};
 const opt = <T extends z.ZodType>(s: T) => z.preprocess(emptyToUndef, s.optional());
 
 /** Environment contract. Secrets are *references* (`file:/path` or `env:NAME`), never literal values. */
@@ -45,7 +55,7 @@ const EnvSchema = z
     /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset settles 0 (documented gap). */
     AI_VOICE_COST_USD_PER_MINUTE: opt(z.coerce.number().positive().max(100)),
     /** Who speaks on calls. Unset: the AI voice provider's own voice. `voicelab`: VoiceLab's Uzbek voice (the listening/thinking model answers in text). Needs AI_VOICE_PROVIDER=openai or gemini (the model answers in text; for gemini the Live model must support TEXT output). */
-    TTS_PROVIDER: z.enum(['voicelab']).optional(),
+    TTS_PROVIDER: z.preprocess(providerChoice, z.enum(['voicelab']).optional()),
     /** Also speak the reply to an owner's voice note (needs TTS_PROVIDER=voicelab and `ffmpeg`). */
     VOICE_REPLIES: bool.default(true),
     /** VoiceLab voice: say a short "Xo'p." the moment the caller stops talking, before the model's answer is ready. */
@@ -54,7 +64,7 @@ const EnvSchema = z
     VOICELAB_TTS_STREAM: bool.default(false),
     VOICELAB_TTS_STREAM_URL: opt(z.string()),
     /** Speech recognition. Unset: the AI voice model hears the call itself (and Gemini transcribes voice notes). `voicelab`: VoiceLab's Uzbek recogniser (key needs stt:realtime for calls, stt:write + stt:read for voice notes). */
-    STT_PROVIDER: z.enum(['voicelab']).optional(),
+    STT_PROVIDER: z.preprocess(providerChoice, z.enum(['voicelab']).optional()),
     /** With STT_PROVIDER=voicelab: use it for live calls (needs TTS_PROVIDER=voicelab: the model then only reads and writes text) and for the owner's voice notes. */
     VOICELAB_STT_CALLS: bool.default(true),
     VOICELAB_STT_NOTES: bool.default(true),

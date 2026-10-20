@@ -297,3 +297,14 @@ describe('streaming TTS configuration', () => {
     expect(loadConfig({ ...base, VOICELAB_TTS_STREAM: 'true' }).VOICELAB_TTS_STREAM).toBe(true);
   });
 });
+
+describe('TTS_PROVIDER / STT_PROVIDER spelling', () => {
+  const base = { NODE_ENV: 'test', DATABASE_URL: 'postgres://x', TELEGRAM_API_ID: '1', TELEGRAM_API_HASH: 'abcdefgh1234' } as Record<string, string>;
+  it('"gemini", "openai", "none" and an empty value mean no separate provider; VoiceLab is accepted in any case; anything else is refused', () => {
+    for (const v of ['gemini', 'OpenAI', ' none ', '', 'off'])
+      expect(loadConfig({ ...base, TTS_PROVIDER: v, STT_PROVIDER: v })).toMatchObject({ TTS_PROVIDER: undefined, STT_PROVIDER: undefined });
+    const vl = { ...base, VOICELAB_API_KEY: 'k', VOICELAB_VOICE_ID: 'v', AI_VOICE_PROVIDER: 'gemini' };
+    expect(loadConfig({ ...vl, TTS_PROVIDER: ' VoiceLab ' }).TTS_PROVIDER).toBe('voicelab');
+    expect(() => loadConfig({ ...base, TTS_PROVIDER: 'aisha' })).toThrow(/TTS_PROVIDER/);
+  });
+});
