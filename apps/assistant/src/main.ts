@@ -101,6 +101,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls') {
     transport: gateway.callTransport(ntgcallsProtocol()),
     media: createNtgcallsMedia,
     buildFingerprint: cfg.BUILD_FINGERPRINT,
+    log: (line) => log.info({ call: true }, line),
   });
   callAdapter = new EvidenceGatedCallAdapter(
     ntgAdapter,

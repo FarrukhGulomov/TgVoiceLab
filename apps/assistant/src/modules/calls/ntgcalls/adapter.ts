@@ -55,6 +55,8 @@ export interface NtgcallsAdapterOptions {
   startTicker?: StartTicker;
   now?: () => Date;
   randomId?: () => number;
+  /** Stage names and error messages of an answered call (never audio, ids or names). */
+  log?: ((line: string) => void) | undefined;
 }
 
 /** Maps Telegram's discard class to our end reason. Before the callee accepted, `Disconnect` is what a rejected ring looked like live (F-12). */
@@ -87,7 +89,7 @@ export interface IncomingCall {
 }
 
 export class NtgcallsCallAdapter implements TelegramCallAdapter {
-  readonly #o: Required<Omit<NtgcallsAdapterOptions, 'transport' | 'media' | 'buildFingerprint'>> & NtgcallsAdapterOptions;
+  readonly #o: Required<Omit<NtgcallsAdapterOptions, 'transport' | 'media' | 'buildFingerprint' | 'log'>> & NtgcallsAdapterOptions;
   #active: ActiveCall | null = null;
   readonly #ended = new Set<string>();
   /** Incoming rings that were handed to the application and wait to be answered by `dial` (keyed by the call request made for them). */
@@ -294,14 +296,18 @@ export class NtgcallsCallAdapter implements TelegramCallAdapter {
     try {
       const dh = await o.transport.getDhConfig();
       gB = await media.answer(dh, incoming.gAHash);
+      o.log?.('answer: key exchange prepared');
     } catch (e) {
+      o.log?.(`answer: could not prepare (${String((e as Error)?.message ?? e).slice(0, 120)})`);
       return fail('could not prepare to answer the call (DH config / media setup)', e);
     }
     if (signal.aborted) return fail('cancelled');
     await o.transport.receivedCall(incoming.ref).catch(() => undefined); // best effort: only changes what the caller's app shows
     try {
       await o.transport.acceptCall(incoming.ref, { gB });
+      o.log?.("answer: AcceptCall sent, waiting for the caller's key");
     } catch (e) {
+      o.log?.(`answer: AcceptCall failed (${serverErrorMessage(e) ?? String((e as Error)?.message ?? e).slice(0, 120)})`);
       return fail('telegram did not accept the answer (the caller may have hung up)', e);
     }
     tracker.markConfirmed();
@@ -352,6 +358,7 @@ class ActiveCall {
       void this.o.transport.sendSignaling(ref, data).catch(() => undefined);
     });
     this.media.onState((s) => {
+      this.o.log?.(`media state: ${s}`);
       if (s === 'connected') void this.#onMediaConnected();
       else if (s === 'failed') void this.#fail('transport_error');
     });
@@ -372,7 +379,10 @@ class ActiveCall {
   }
 
   onUpdate(u: TransportUpdate): void {
-    void this.#handle(u).catch(() => this.#fail('transport_error'));
+    void this.#handle(u).catch((e: unknown) => {
+      this.o.log?.(`call update '${u.kind}' failed (${String((e as Error)?.message ?? e).slice(0, 120)})`);
+      return this.#fail('transport_error');
+    });
   }
 
   async #handle(u: TransportUpdate): Promise<void> {
@@ -384,13 +394,16 @@ class ActiveCall {
       const confirmed = await this.o.transport.confirmCall(this.ref, keys);
       await this.media.connect(confirmed);
     } else if (u.kind === 'confirmed' && this.#role === 'answerer') {
+      this.o.log?.("answer: the caller's key arrived");
       const keys = await this.media.exchangeKeys(u.gAOrB, u.keyFingerprint);
       // The key both sides derived must carry the fingerprint the caller announced; anything else means the exchange was tampered with or broken.
       if (keys.keyFingerprint !== u.keyFingerprint) throw new Error('key fingerprint mismatch');
       await this.media.connect({ servers: u.servers, versions: u.versions, p2pAllowed: u.p2pAllowed, customParameters: u.customParameters });
+      this.o.log?.('answer: media connecting');
     } else if (u.kind === 'signaling') {
       await this.media.receiveSignaling(u.data);
     } else if (u.kind === 'discarded') {
+      this.o.log?.(`call discarded by the other side (${u.reason})`);
       this.tracker.markEnded(); // the provider told us THIS call is over
       await this.#finish(mapDiscard(u.reason, this.#connected), 'ended');
     }

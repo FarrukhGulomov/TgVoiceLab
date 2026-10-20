@@ -83,7 +83,11 @@ export class InboundCallService {
       .dial(owner.id, callRequestId, { inbound: true })
       .then(
         (outcome) => {
-          if (outcome.status === 'rejected') this.d.log?.(`inbound call: refused by policy (${outcome.reason})`);
+          this.d.log?.(
+            outcome.status === 'rejected'
+              ? `inbound call: refused by policy (${outcome.reason})`
+              : `inbound call: over (${outcome.status}${'state' in outcome ? `, ${outcome.state}` : ''}${'endReason' in outcome ? `, ${outcome.endReason}` : ''})`,
+          );
         },
         (e: unknown) => this.d.log?.(`inbound call: failed (${String((e as Error)?.message ?? e).slice(0, 80)})`),
       )
