@@ -111,11 +111,6 @@ if (cfg.CALL_ADAPTER === 'ntgcalls') {
   callAdapter = new FakeCallAdapter();
 } else callAdapter = new DisabledCallAdapter(cfg.BUILD_FINGERPRINT);
 
-if (cfg.TEXT_AI_ADAPTER === 'openai') {
-  log.fatal('TEXT_AI_ADAPTER=openai is not implemented in this build; use "rules". (OpenAI docs could not be verified when this was written.)');
-  process.exit(1);
-}
-
 const derive = () => deriveCapabilities(cfg.CALL_FEASIBILITY_EVIDENCE_PATH, cfg.BUILD_FINGERPRINT);
 
 // The conversation layer for calls to the owner: an AI voice session (never defaulted; config validation requires a provider and model).
@@ -308,6 +303,13 @@ if (cfg.GEMINI_API_KEY && cfg.GEMINI_TEXT_MODEL && cfg.TEXT_AI_ADAPTER === 'rule
   );
 }
 
+if (cfg.TEXT_AI_ADAPTER === 'openai') {
+  // The rules still recognise what they can; OpenAI understands the rest (config requires OPENAI_API_KEY and OPENAI_TEXT_MODEL for this).
+  const { OpenAiTextFallback } = await import('./infrastructure/openai/text.js');
+  textFallback = new OpenAiTextFallback({ apiKey: cfg.OPENAI_API_KEY!, model: cfg.OPENAI_TEXT_MODEL! });
+  log.warn('free-form text understanding is on (OpenAI, not live verified): text the rules do not recognise is sent to OpenAI');
+}
+
 let voiceReplies: import('./application/ports.js').VoiceReplyPort | undefined;
 if (gateway && cfg.TTS_PROVIDER === 'voicelab' && cfg.VOICE_REPLIES) {
   const { VoiceReplies, ffmpegAvailable } = await import('./infrastructure/voicelab/voice-reply.js');
@@ -404,7 +406,7 @@ const server = await buildServer({
   adminTokens,
   runtime: {
     messagingAdapter: cfg.MESSAGING_ADAPTER,
-    interpreterAdapter: cfg.TEXT_AI_ADAPTER,
+    interpreterAdapter: cfg.TEXT_AI_ADAPTER === 'openai' ? 'rules' : cfg.TEXT_AI_ADAPTER, // 'openai' = the rules interpreter with OpenAI as its free-form fallback
     callAdapter: cfg.CALL_ADAPTER,
     evidencePath: cfg.CALL_FEASIBILITY_EVIDENCE_PATH ?? null,
     buildFingerprint: cfg.BUILD_FINGERPRINT,
