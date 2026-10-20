@@ -355,7 +355,10 @@ class ActiveCall {
     this.ref = ref;
     this.#role = role;
     this.media.onSignaling((data) => {
-      void this.o.transport.sendSignaling(ref, data).catch(() => undefined);
+      if (this.#sigOut++ === 0) this.o.log?.('signaling: first packet to the other side');
+      void this.o.transport.sendSignaling(ref, data).catch((e: unknown) => {
+        this.o.log?.(`signaling: sending failed (${serverErrorMessage(e) ?? String((e as Error)?.message ?? e).slice(0, 100)})`);
+      });
     });
     this.media.onState((s) => {
       this.o.log?.(`media state: ${s}`);
@@ -378,11 +381,20 @@ class ActiveCall {
     if (role === 'answerer') this.#emit('ringing'); // we are the ones ringing until the media connects
   }
 
+  /**
+   * Updates of one call are handled strictly one after another, in the order they arrived: the caller's connection data (signaling) comes
+   * right behind its key, and handing it to the media layer before the key exchange and `connect` finished loses it, so the two sides never meet.
+   */
+  #updates: Promise<void> = Promise.resolve();
+  #sigIn = 0;
+  #sigOut = 0;
   onUpdate(u: TransportUpdate): void {
-    void this.#handle(u).catch((e: unknown) => {
-      this.o.log?.(`call update '${u.kind}' failed (${String((e as Error)?.message ?? e).slice(0, 120)})`);
-      return this.#fail('transport_error');
-    });
+    this.#updates = this.#updates.then(() =>
+      this.#handle(u).catch((e: unknown) => {
+        this.o.log?.(`call update '${u.kind}' failed (${String((e as Error)?.message ?? e).slice(0, 120)})`);
+        return this.#fail('transport_error');
+      }),
+    );
   }
 
   async #handle(u: TransportUpdate): Promise<void> {
@@ -401,6 +413,7 @@ class ActiveCall {
       await this.media.connect({ servers: u.servers, versions: u.versions, p2pAllowed: u.p2pAllowed, customParameters: u.customParameters });
       this.o.log?.('answer: media connecting');
     } else if (u.kind === 'signaling') {
+      if (this.#sigIn++ === 0) this.o.log?.('signaling: first packet from the other side');
       await this.media.receiveSignaling(u.data);
     } else if (u.kind === 'discarded') {
       this.o.log?.(`call discarded by the other side (${u.reason})`);

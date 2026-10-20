@@ -78,7 +78,9 @@ class FakeMedia implements MediaSession {
     return new Uint8Array([4, 5, 6]);
   }
   fingerprint = 5n;
+  hold: Promise<void> | null = null;
   async exchangeKeys() {
+    if (this.hold) await this.hold;
     this.log.push('exchangeKeys');
     return { gA: new Uint8Array([9]), keyFingerprint: this.fingerprint };
   }
@@ -532,5 +534,35 @@ describe('NtgcallsCallAdapter: answering an incoming call', () => {
       expect(s.adapter.releaseIncoming('req-1')?.callerId).toBe(CALLER);
       expect(s.adapter.releaseIncoming('req-1')).toBeUndefined();
     });
+  });
+
+  it("hands the caller's connection data to the media layer only after the key exchange and connect, even when it arrives right behind the key", async () => {
+    const s = setup();
+    s.adapter.listenForIncoming((c) => s.adapter.registerIncoming(inPlan().callRequestId, c));
+    ring(s);
+    await flush();
+    await s.adapter.dial(inPlan(), new AbortController().signal);
+    let release!: () => void;
+    s.media.hold = new Promise<void>((r) => (release = r)); // the key exchange is slow
+    s.transport.emit({
+      kind: 'confirmed',
+      id: IN_REF.id,
+      gAOrB: new Uint8Array([8]),
+      keyFingerprint: 5n,
+      servers: [],
+      versions: [],
+      p2pAllowed: false,
+      customParameters: '{}',
+      adminId: CALLER,
+      participantId: SELF,
+    });
+    s.transport.emit({ kind: 'signaling', id: IN_REF.id, data: new Uint8Array([1]) });
+    s.transport.emit({ kind: 'signaling', id: IN_REF.id, data: new Uint8Array([2]) });
+    await flush();
+    expect(s.media.log).toEqual(['answer']); // nothing reached the media layer yet
+    release();
+    await flush();
+    await flush();
+    expect(s.media.log).toEqual(['answer', 'exchangeKeys', 'connect', 'signaling-in', 'signaling-in']);
   });
 });
