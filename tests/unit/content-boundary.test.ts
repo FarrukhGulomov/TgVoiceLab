@@ -16,12 +16,12 @@ describe('content boundary (no religion, no politically dangerous material)', ()
 
 describe('persona and daily greeting', () => {
   const base = { ownerName: 'Farruh', contactName: 'Akmal', brief: 'salom', forbidden: [], questions: [] };
-  it('first call of the day introduces Madina once; later calls the same day skip the greeting', () => {
+  it('first call of the day introduces Zubayr once; later calls the same day skip the greeting', () => {
     const first = buildContactCallInstructions({ ...base, firstCallToday: true });
     const again = buildContactCallInstructions({ ...base, firstCallToday: false });
-    expect(first).toContain('mening ismim Madina');
+    expect(first).toContain('mening ismim Zubayr');
     expect(again).toContain('SALOM BERMA');
-    expect(again).not.toContain('mening ismim Madina');
+    expect(again).not.toContain('mening ismim Zubayr');
   });
   it('never claims to be human and does not announce recording', () => {
     const p = buildContactCallInstructions(base);

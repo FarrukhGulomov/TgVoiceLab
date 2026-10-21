@@ -1,7 +1,7 @@
 import { DateTime } from 'luxon';
 import type { IntentFallbackPort, MessageComposerPort } from '../../application/ports.js';
 import type { Intent, InterpretContext, LocalDateTime } from '../../application/intent.js';
-import { CONTENT_BOUNDARY_RULE } from '../../modules/calls/conversation/language-rule.js';
+import { ASSISTANT_PERSONA_NAME, CONTENT_BOUNDARY_RULE, OWNER_PERSONA_RULE } from '../../modules/calls/conversation/language-rule.js';
 
 /**
  * Free-form understanding of the owner's text through the Gemini `generateContent` REST API. It is consulted ONLY when the
@@ -113,7 +113,7 @@ export function buildPrompt(text: string, ctx: InterpretContext): string {
   const bg = ctx.background;
   const hist = bg?.history?.length ? bg.history.map((h) => `${h.from === 'owner' ? 'Egasi' : 'Yordamchi'}: ${h.text.replace(/\s+/g, ' ')}`).join('\n') : '';
   return [
-    "Sen Farruhning shaxsiy yordamchisisan, tirik, e'tiborli odam kabi: egasining gapini oldingi suhbat va oxirgi qo'ng'iroq natijasi bilan birga tushun, so'zma-so'z emas, ma'nosiga qarab. Egasi asosan o'zbekcha (lotin), ba'zan ruscha yoki inglizcha yozadi; yozuv xatolari va qisqa gaplar tabiiy (\"yuq\" = \"yo'q\", \"junat\" = \"jo'nat\").",
+    `Sen ${ASSISTANT_PERSONA_NAME}san, Farruhning shaxsiy yordamchisisan, tirik, e'tiborli odam kabi: egasining gapini oldingi suhbat va oxirgi qo'ng'iroq natijasi bilan birga tushun, so'zma-so'z emas, ma'nosiga qarab. Egasi asosan o'zbekcha (lotin), ba'zan ruscha yoki inglizcha yozadi; yozuv xatolari va qisqa gaplar tabiiy ("yuq" = "yo'q", "junat" = "jo'nat").`,
     `Hozir: ${now.toFormat('yyyy-LL-dd HH:mm')} (${ctx.timezone}), hafta kuni: ${now.toFormat('cccc')}. Nisbiy sanalarni (ertaga, indinga, 2 soatdan keyin) shu vaqtga nisbatan YYYY-MM-DD va HH:mm ga aylantir.`,
     'Egasining oxirgi xabarini quyidagi JSON buyruqlardan BIRIGA aylantir (faqat bitta JSON obyekt, boshqa matn yozma):',
     '{"kind":"create_task","title":string,"due":{"date":"YYYY-MM-DD","time":"HH:mm"}?}',
@@ -128,7 +128,8 @@ export function buildPrompt(text: string, ctx: InterpretContext): string {
     '{"kind":"clarify","question":string}  // haqiqatan noaniq bo\'lsa, bitta qisqa savol (egasi tilida)',
     '{"kind":"reply","text":string}  // oddiy suhbat, savol, maslahat, salomlashish, tushuntirish, ma\'lumot so\'rash (vazifalar, eslatmalar, qo\'ng\'iroq hisobotlari, xotira haqida) — ya\'ni hech narsani o\'zgartirmaydigan javob',
     '{"kind":"unknown"}  // faqat gap umuman mazmunsiz bo\'lsa',
-    "SUHBAT USLUBI (reply uchun): sen tirik, e'tiborli, iliq va aqlli yordamchisan, robot emas. Egasi qaysi tilda yozsa shu tilda (asosan o'zbekcha) javob ber. Qisqa va aniq gapir (odatda 1-4 jumla); batafsil so'ralsa kengroq yoz. Tabiiy, hurmat bilan, ortiqcha rasmiyatchiliksiz. Bilmasang, bilmasligingni ayt va taxmin qilma.",
+    "SUHBAT USLUBI (reply uchun): sen tirik, e'tiborli, iliq va aqlli yordamchisan, robot emas. Egasi qaysi tilda yozsa shu tilda (asosan o'zbekcha) javob ber. Qisqa va aniq gapir (odatda 1-4 jumla); batafsil so'ralsa kengroq yoz. Tabiiy, hurmat bilan, ortiqcha rasmiyatchiliksiz. Bilmasang, bilmasligingni ayt va taxmin qilma. Oddiy suhbatda (salomlashish, kayfiyat, savol, fikr so'rash) shablon jumlalar yozma: odam kabi javob ber, egasining oldingi gaplariga tayan, kerak bo'lsa qisqa qarshi savol ber. Noaniq gapni \"tushunmadim\" deb rad etma, eng ehtimoliy ma'noni tanlab javob ber yoki bitta aniq savol ber.",
+    OWNER_PERSONA_RULE,
     CONTENT_BOUNDARY_RULE + " Bunday savolga reply buyrug'i bilan qisqa rad javobi ber.",
     "XOTIRA: egasi o'tgan suhbatlar haqida so'rasa (\"Onixni qancha baholadi?\", \"Test2 nima dedi?\"), kontakt nomi aytilmasa ham, quyidagi qo'ng'iroq hisobotlari va xotiradan MAVZU bo'yicha izla va aniq javob ber (summa, vaqt, shart). Topsang \"eslolmayman\" dema; haqiqatan yo'q bo'lsa, shuni ayt.",
     "FAKTLAR: vazifalar, eslatmalar, qo'ng'iroqlar, kontaktlar va egasi haqida FAQAT quyida berilgan ma'lumotlarga tayan. Ularda yo'q narsani o'ylab topma (kim nima degan, qo'ng'iroq bo'ldimi, summa). Umumiy bilim savollariga (tushuntirish, maslahat, matn yozish, tarjima) o'z bilimingdan javob ber.",
@@ -171,7 +172,7 @@ export class GeminiTextFallback implements IntentFallbackPort, MessageComposerPo
         contents: [{ parts: [{ text: buildPrompt(text, ctx) }] }],
         generationConfig: { temperature: 0.3, maxOutputTokens: 1200 },
       }),
-      signal: AbortSignal.timeout(this.o.timeoutMs ?? 20_000),
+      signal: AbortSignal.timeout(this.o.timeoutMs ?? 45_000),
     });
     if (!res.ok) throw new Error(`text AI request failed: HTTP ${res.status}`);
     const body = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> };

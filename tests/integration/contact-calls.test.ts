@@ -155,7 +155,7 @@ describe('calls to owner-vouched contacts', () => {
     for (let i = 0; i < 100 && s.links.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
     const { link, instructions, tools } = s.links[0]!;
     expect(instructions).toContain('Farrux');
-    expect(instructions).toContain('Madina');
+    expect(instructions).toContain('Zubayr');
     expect(instructions).not.toContain('Suhbat AI xizmati');
     expect(instructions).toContain("«hisobot tayyor bo'lganini ayt»");
     expect(tools.map((x) => x.name)).toEqual(['submit_report', 'check_offer', 'end_call']); // no access to any owner data
