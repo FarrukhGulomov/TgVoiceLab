@@ -566,3 +566,32 @@ describe('NtgcallsCallAdapter: answering an incoming call', () => {
     expect(s.media.log).toEqual(['answer', 'exchangeKeys', 'connect', 'signaling-in', 'signaling-in']);
   });
 });
+
+describe('audit F-07: a barge-in flush also cancels a frame that was waiting for room', () => {
+  it('a frame blocked on the high-water mark is dropped when the output is flushed meanwhile', async () => {
+    const s = setup();
+    const handle = await connectedCall(s);
+    const big = new Uint8Array(FRAME * 10);
+    // fill the outbound buffer beyond the 30 s high-water mark (96 bytes per ms)
+    const limit = 30_000 * 96;
+    const fillFrames = Math.ceil(limit / big.length) + 1;
+    const frame = (samples: Uint8Array) => ({
+      callId: handle.callId,
+      sequence: 0,
+      monotonicTimestampUs: 0,
+      sampleRateHz: 48000,
+      channels: 1,
+      encoding: 's16le' as const,
+      samples,
+    });
+    for (let i = 0; i < fillFrames; i++) await handle.sendAudio(frame(big));
+    const stale = new Uint8Array(FRAME).fill(7);
+    const waiting = handle.sendAudio(frame(stale)); // blocks: buffer above the high-water mark
+    await flush();
+    await handle.flushOutput(); // barge-in
+    await waiting;
+    // drain what the pump sends from now on: the stale frame must not be among it
+    for (let i = 0; i < 5; i++) s.tick.fn!();
+    expect(s.media.sent.some((b) => b.length === FRAME && b.every((x) => x === 7))).toBe(false);
+  });
+});

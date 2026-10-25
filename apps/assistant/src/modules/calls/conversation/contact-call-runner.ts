@@ -24,6 +24,8 @@ export interface ContactCallRunnerDeps {
   clock?: { now(): Date } | undefined;
   costUsdPerMinute?: number | undefined;
   log?: ((line: string) => void) | undefined;
+  /** Put what was said and tool arguments into log lines (development only). */
+  logContent?: boolean | undefined;
   /** Content-free end-of-call diagnostics (counters and error strings; never speech or transcripts). */
   onDone?: ((d: { stats: Record<string, unknown>; errors: string[]; endReason: string; seconds: number }) => void) | undefined;
 }
@@ -280,7 +282,7 @@ export class ContactCallRunner implements CallSessionRunner {
       lessons,
     });
     const link = this.d.makeLink({ instructions, tools: CONTACT_CALL_TOOL_DECLARATIONS });
-    const bridge = new RealtimeCallBridge(handle, link, { ...(this.d.log ? { log: this.d.log } : {}), onTool });
+    const bridge = new RealtimeCallBridge(handle, link, { ...(this.d.log ? { log: this.d.log } : {}), logContent: this.d.logContent, onTool });
     const started = Date.now();
     bridge.start("Qo'ng'iroqqa hozir javob berildi. O'zingni AI yordamchi deb tanishtir va topshiriqni boshla.");
 

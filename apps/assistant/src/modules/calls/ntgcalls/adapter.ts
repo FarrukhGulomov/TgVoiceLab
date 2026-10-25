@@ -322,6 +322,7 @@ class ActiveCall {
   readonly #incoming = new AsyncQueue<PcmFrame>(500);
   #outbound: Uint8Array[] = [];
   #outboundBytes = 0;
+  #flushGeneration = 0;
   #drainWaiters: Array<() => void> = [];
   #seq = 0;
   #eventSeq = 0;
@@ -522,11 +523,13 @@ class ActiveCall {
       events: this.#events,
       sendAudio: async (frame) => {
         if (this.#finished) return;
+        const generation = this.#flushGeneration; // a barge-in flush that happens while this frame waits must also cancel THIS frame
         if (frame.sampleRateHz !== SAMPLE_RATE || frame.channels !== 1 || frame.encoding !== 's16le')
           throw new Error('adapter audio must be 48 kHz mono s16le (resample in the audio bridge)');
         if (frame.samples.length === 0 || frame.samples.length % FRAME_BYTES !== 0)
           throw new Error(`adapter audio must be a multiple of 10 ms (${FRAME_BYTES} bytes)`);
         while (this.#outboundBytes > this.o.maxOutboundMs * 96 && !this.#finished) await new Promise<void>((r) => this.#drainWaiters.push(r));
+        if (this.#finished || generation !== this.#flushGeneration) return;
         this.#outbound.push(frame.samples);
         this.#outboundBytes += frame.samples.length;
       },
@@ -535,6 +538,7 @@ class ActiveCall {
         while (this.#outboundBytes >= FRAME_BYTES && !this.#finished && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
       },
       flushOutput: async () => {
+        this.#flushGeneration++;
         this.#outbound = [];
         this.#outboundBytes = 0;
         this.#releaseDrain();

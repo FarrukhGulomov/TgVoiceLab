@@ -177,7 +177,7 @@ describe('RealtimeCallBridge', () => {
     expect(link.responses).toEqual(['Salom']);
     link.transcript!('assistant', 'Salom!');
     link.error!('invalid_value: bad field');
-    expect(lines).toEqual(['assistant: Salom!', 'realtime error: invalid_value: bad field']);
+    expect(lines).toEqual(['assistant: [6 characters]', 'realtime error: invalid_value: bad field']); // the words themselves are not logged by default
     expect(b.stats.errors).toEqual(['invalid_value: bad field']);
     b.stop();
     expect(link.closed).toBe(true);
@@ -726,5 +726,91 @@ describe('GeminiLiveLink: quiet phone lines are brought up before the model hear
       prefixPaddingMs: 150,
       startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
     });
+  });
+});
+
+describe('audit F-06: a tool whose arguments cannot be read is never run', () => {
+  it('OpenAI: invalid or non-object arguments are not dispatched (not even as {}); the model is told the tool did not run', () => {
+    const { link, sock } = open();
+    sock.emit('open');
+    const calls: unknown[] = [];
+    const errors: string[] = [];
+    link.onToolCall((c) => calls.push(c));
+    link.onError((m) => errors.push(m));
+    for (const [i, args] of ['{"reason":', '[1,2]', 'null', '"text"'].entries())
+      sock.emit(
+        'message',
+        Buffer.from(
+          JSON.stringify({ type: 'response.output_item.done', item: { type: 'function_call', name: 'end_call', call_id: `c${i}`, arguments: args } }),
+        ),
+      );
+    expect(calls).toEqual([]); // end_call was NOT run on an empty object
+    expect(errors).toHaveLength(4);
+    const outputs = sock.sent.map((x) => JSON.parse(x)).filter((m) => m.type === 'conversation.item.create');
+    expect(outputs).toHaveLength(4);
+    expect(JSON.parse(outputs[0].item.output).error).toContain('not valid JSON');
+    expect(sock.sent.map((x) => JSON.parse(x).type)).toContain('response.create');
+    // an empty argument string is still a valid no-argument call
+    sock.emit(
+      'message',
+      Buffer.from(JSON.stringify({ type: 'response.output_item.done', item: { type: 'function_call', name: 'list_tasks', call_id: 'ok', arguments: '' } })),
+    );
+    expect(calls).toEqual([{ id: 'ok', name: 'list_tasks', args: {} }]);
+  });
+});
+
+describe('audit F-07: the output chain survives a rejected send', () => {
+  it('a rejected sendAudio does not stop later frames and produces no unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    const h = fakeHandle();
+    let n = 0;
+    const handle = {
+      ...h.handle,
+      sendAudio: async (f: PcmFrame) => {
+        if (n++ === 0) throw new Error('send failed');
+        h.sent.push(f);
+      },
+    } as unknown as CallHandle;
+    const link = new FakeLink();
+    const b = new RealtimeCallBridge(handle, link);
+    b.start();
+    link.audio!(tone(2400));
+    link.audio!(tone(2400));
+    await flush();
+    await flush();
+    process.off('unhandledRejection', onUnhandled);
+    expect(h.sent.length).toBeGreaterThan(3); // frames after the failed one were still sent
+    expect(b.stats.errors.some((e) => e.includes('send failed'))).toBe(true);
+    expect(unhandled).toEqual([]);
+    b.stop();
+    h.finish();
+  });
+});
+
+describe('audit F-05: what was said stays out of the log unless explicitly allowed', () => {
+  it('logs lengths and argument counts by default, the content only with logContent', async () => {
+    const run = async (logContent: boolean) => {
+      const h = fakeHandle();
+      const link = new FakeLink();
+      const lines: string[] = [];
+      const b = new RealtimeCallBridge(h.handle, link, { log: (l) => lines.push(l), logContent, onTool: async () => ({ result: { ok: true } }) });
+      b.start();
+      link.transcript!('caller', 'maxfiy gap: karta raqami 1234');
+      link.toolCall!({ id: '1', name: 'remember', args: { text: 'sir-so-zlar' } });
+      await flush();
+      b.stop();
+      h.finish();
+      return lines.join('\n');
+    };
+    const hidden = await run(false);
+    expect(hidden).not.toContain('maxfiy gap');
+    expect(hidden).not.toContain('sir-so-zlar');
+    expect(hidden).toContain('caller: [29 characters]');
+    expect(hidden).toContain('tool remember(1 argument(s))');
+    const shown = await run(true);
+    expect(shown).toContain('caller: maxfiy gap: karta raqami 1234');
+    expect(shown).toContain('sir-so-zlar');
   });
 });

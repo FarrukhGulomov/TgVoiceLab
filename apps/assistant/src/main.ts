@@ -249,6 +249,9 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const { MemoryService } = await import('./modules/memory/memory.service.js');
   const { RecallService } = await import('./modules/memory/recall.js');
   const recall = new RecallService(crypto, new MemoryService(crypto));
+  // What was said on a call is private. It reaches the log (at debug level) only in development with LOG_LEVEL=debug|trace.
+  const logContent = cfg.NODE_ENV !== 'production' && (cfg.LOG_LEVEL === 'debug' || cfg.LOG_LEVEL === 'trace');
+  const callLog = (line: string) => (/^(realtime error|error): /.test(line) ? log.warn : log.debug).call(log, { call: true }, line.slice(0, 300)); // provider errors must be visible
   const ownerRunner = new OwnerCallRunner({
     db,
     recall,
@@ -259,7 +262,8 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     contacts: new ContactService(crypto),
     contactCalls: cfg.CALLS_ENABLED ? new ContactCallService(new AuthorizationService(db, systemClock, crypto), systemClock) : undefined,
     costUsdPerMinute: cfg.AI_VOICE_COST_USD_PER_MINUTE,
-    log: (line) => (/^(realtime error|error): /.test(line) ? log.warn : log.debug).call(log, { call: true }, line.slice(0, 300)), // provider errors must be visible; transcripts stay at debug // transcripts are never persisted or logged above debug level
+    log: callLog,
+    logContent,
     makeLink,
   });
   const { ContactCallRunner, RoutingCallRunner } = await import('./modules/calls/conversation/contact-call-runner.js');
@@ -270,7 +274,8 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     clock: systemClock,
     makeLink,
     costUsdPerMinute: cfg.AI_VOICE_COST_USD_PER_MINUTE,
-    log: (line) => (/^(realtime error|error): /.test(line) ? log.warn : log.debug).call(log, { call: true }, line.slice(0, 300)), // provider errors must be visible; transcripts stay at debug
+    log: callLog,
+    logContent,
     onDone: (d) =>
       (d.errors.length || !('callFramesOut' in d.stats) || d.stats.callFramesOut === 0 ? log.warn : log.info).call(
         log,

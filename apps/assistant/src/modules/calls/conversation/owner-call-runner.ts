@@ -27,6 +27,8 @@ export interface OwnerCallRunnerDeps {
   /** Estimated provider cost, used only to settle the call budget. Unset => settles 0 (documented gap). */
   costUsdPerMinute?: number | undefined;
   log?: ((line: string) => void) | undefined;
+  /** Put what was said and tool arguments into log lines (development only). */
+  logContent?: boolean | undefined;
 }
 
 const NO_SELF_INTRO = "O'zingni tanishtirma (egasi seni biladi), 'men sizning yordamchingizman' dema.";
@@ -83,7 +85,11 @@ export class OwnerCallRunner implements CallSessionRunner {
       ...(reminder ? { reminder } : {}),
     });
     const link = this.d.makeLink({ instructions, tools: OWNER_CALL_TOOL_DECLARATIONS });
-    const bridge = new RealtimeCallBridge(handle, link, { ...(this.d.log ? { log: this.d.log } : {}), onTool: (c) => tools.execute(c) });
+    const bridge = new RealtimeCallBridge(handle, link, {
+      ...(this.d.log ? { log: this.d.log } : {}),
+      logContent: this.d.logContent,
+      onTool: (c) => tools.execute(c),
+    });
     const started = Date.now();
     const first = !(await answeredEarlierToday(db, ownerId, plan.recipientTelegramId, ctx.callId, owner.timezone, this.d.clock.now()));
     const greeting = calledIn ? GREETING_INBOUND(first) : asked ? GREETING_ASKED(first) : reminder ? GREETING_REMINDER(first) : GREETING_BRIEFING(first);

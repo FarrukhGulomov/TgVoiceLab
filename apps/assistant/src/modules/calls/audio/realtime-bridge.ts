@@ -63,6 +63,8 @@ const FRAME_BYTES = (CALL_RATE / 100) * 2; // 10 ms
 
 export interface BridgeOptions {
   log?: ((line: string) => void) | undefined;
+  /** Put what was said and the tool arguments into log lines. Off by default: those are private conversation content. */
+  logContent?: boolean | undefined;
   /** How long a requested greeting may stay unanswered before the silence is reported as an error. */
   silenceMs?: number | undefined;
   /** Extra time after the output buffer drained, for the last audio to reach the caller before an after-playout action. */
@@ -90,6 +92,7 @@ export class RealtimeCallBridge {
   readonly stats: BridgeStats = { callFramesIn: 0, nonSilentFramesIn: 0, modelAudioChunks: 0, callFramesOut: 0, bargeIns: 0, errors: [] };
   readonly log: (line: string) => void;
   readonly silenceMs: number;
+  readonly logContent: boolean;
   readonly playoutGraceMs: number;
   readonly onTool: BridgeOptions['onTool'];
   /** Resolves when the call's incoming audio ends, i.e. the call is over (hung up by either side, or ended by the orchestrator). */
@@ -113,6 +116,7 @@ export class RealtimeCallBridge {
   ) {
     this.log = o.log ?? (() => undefined);
     this.silenceMs = o.silenceMs ?? 15_000;
+    this.logContent = o.logContent === true;
     this.playoutGraceMs = o.playoutGraceMs ?? 400;
     this.onTool = o.onTool;
     this.finished = new Promise<void>((r) => (this.#finish = r));
@@ -127,20 +131,25 @@ export class RealtimeCallBridge {
       const epoch = this.#epoch;
       const frames = this.#assembler.push(this.#down.process(pcm));
       for (const samples of frames) {
-        this.#outChain = this.#outChain.then(async () => {
-          if (this.#stopped || epoch !== this.#epoch) return; // dropped by a barge-in
-          await this.handle.sendAudio({
-            callId: this.handle.callId,
-            sequence: this.stats.callFramesOut,
-            monotonicTimestampUs: 0,
-            sampleRateHz: CALL_RATE,
-            channels: 1,
-            encoding: 's16le',
-            samples,
+        this.#outChain = this.#outChain
+          .then(async () => {
+            if (this.#stopped || epoch !== this.#epoch) return; // dropped by a barge-in
+            await this.handle.sendAudio({
+              callId: this.handle.callId,
+              sequence: this.stats.callFramesOut,
+              monotonicTimestampUs: 0,
+              sampleRateHz: CALL_RATE,
+              channels: 1,
+              encoding: 's16le',
+              samples,
+            });
+            this.stats.callFramesOut++;
+            this.#playedFrames++;
+          })
+          // One rejected send must not poison the chain (the next frame would never be attempted and the rejection would go unhandled).
+          .catch((e: unknown) => {
+            if (this.stats.errors.length < 20) this.stats.errors.push(`audio out: ${String((e as Error)?.message ?? e)}`);
           });
-          this.stats.callFramesOut++;
-          this.#playedFrames++;
-        });
       }
     });
     this.link.onSpeechStarted(() => {
@@ -171,7 +180,7 @@ export class RealtimeCallBridge {
           out = { result: { error: String((e as Error)?.message ?? e).slice(0, 200) } };
         }
         if (this.#stopped) return;
-        this.log(`tool ${call.name}(${JSON.stringify(call.args)})`);
+        this.log(this.logContent ? `tool ${call.name}(${JSON.stringify(call.args)})` : `tool ${call.name}(${Object.keys(call.args ?? {}).length} argument(s))`);
         this.link.sendToolResult(call, out.result, { respond: out.respond ?? true });
         if (out.afterPlayout) {
           const token = ++this.#actionToken;
@@ -185,7 +194,7 @@ export class RealtimeCallBridge {
         }
       })().catch((e: unknown) => this.stats.errors.push(`tool: ${String((e as Error)?.message ?? e)}`));
     });
-    this.link.onTranscript((who, text) => this.log(`${who}: ${text}`));
+    this.link.onTranscript((who, text) => this.log(this.logContent ? `${who}: ${text}` : `${who}: [${text.length} characters]`));
     this.link.onError((m) => {
       this.stats.errors.push(m);
       this.log(`realtime error: ${m}`);

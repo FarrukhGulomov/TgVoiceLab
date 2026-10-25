@@ -155,11 +155,21 @@ export class OpenAiRealtimeLink implements RealtimeLink {
         break;
       case 'response.output_item.done':
         if (e.item?.type === 'function_call' && e.item.name && e.item.call_id) {
-          let args: Record<string, unknown> = {};
+          let args: Record<string, unknown>;
           try {
-            args = JSON.parse(e.item.arguments || '{}') as Record<string, unknown>;
+            const parsed: unknown = JSON.parse(e.item.arguments || '{}');
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+            args = parsed as Record<string, unknown>;
           } catch {
-            this.#emitError(`tool ${e.item.name}: arguments were not valid JSON`);
+            // Never run a tool on arguments that could not be read (an empty object would still run no-argument tools such as end_call):
+            // tell the model it failed, so it can try again or say so.
+            this.#emitError(`tool ${e.item.name}: arguments were not valid JSON, the tool was not run`);
+            this.sendToolResult(
+              { id: e.item.call_id, name: e.item.name, args: {} },
+              { error: 'the tool arguments were not valid JSON; the tool was not run' },
+              { respond: true },
+            );
+            break;
           }
           for (const cb of this.#toolCalls) cb({ id: e.item.call_id, name: e.item.name, args });
         }

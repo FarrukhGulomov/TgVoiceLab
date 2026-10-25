@@ -127,6 +127,8 @@ const EnvSchema = z
           'live-call recognition by VoiceLab needs TTS_PROVIDER=voicelab (the thinking model then works in text only); set VOICELAB_STT_CALLS=false to use it for voice notes only',
         );
     }
+    if (e.NODE_ENV === 'production' && (e.LOG_LEVEL === 'debug' || e.LOG_LEVEL === 'trace'))
+      bad('LOG_LEVEL', 'debug and trace are refused in production: they can carry conversation content');
     if (e.ANSWER_OWNER_CALLS && (!e.CALLS_ENABLED || e.CALL_ADAPTER !== 'ntgcalls'))
       bad('ANSWER_OWNER_CALLS', 'answering the owner needs CALLS_ENABLED=true and CALL_ADAPTER=ntgcalls');
     if (e.CALLS_ENABLED) {

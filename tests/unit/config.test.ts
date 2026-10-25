@@ -90,4 +90,10 @@ describe('config validation', () => {
   it('rejects non-numeric owner id (usernames are not identity)', () => {
     expect(() => loadConfig({ ...base, OWNER_TELEGRAM_USER_ID: '@javlon' })).toThrow();
   });
+
+  it('audit F-05: debug and trace logging are refused in production (they can carry conversation content)', () => {
+    expect(() => loadConfig({ ...base, NODE_ENV: 'production', LOG_LEVEL: 'debug' })).toThrow(/LOG_LEVEL/);
+    expect(() => loadConfig({ ...base, NODE_ENV: 'production', LOG_LEVEL: 'trace' })).toThrow(/LOG_LEVEL/);
+    expect(loadConfig({ ...base, LOG_LEVEL: 'debug' }).LOG_LEVEL).toBe('debug'); // development is fine
+  });
 });
