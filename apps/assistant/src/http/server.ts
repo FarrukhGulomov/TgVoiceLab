@@ -90,7 +90,7 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
     const supplied = m ? digest(m[1]!) : null;
     const good = supplied ? tokenDigests.some((t) => timingSafeEqual(t, supplied)) : false;
     if (!good) {
-      const act = failedAuth.onFailure(app.clock.now().getTime());
+      const act = failedAuth.onFailure(app.clock.now().getTime(), req.ip);
       if (act.flushSuppressed)
         await writeAudit(app.db, {
           actorType: 'unknown',
@@ -453,24 +453,48 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
     return ok(req, rep, await capabilities(o.rows[0]?.id ?? null));
   });
   srv.get('/health/ready', async (req, rep) => {
+    // "Ready" means the assistant can actually do its work, not merely that the process is up: the database answers, the job and
+    // outbox lanes are not stuck behind overdue work, and (with Telegram) the missed-message recovery is complete.
+    const OVERDUE_LIMIT = 25;
     let dbOk = true;
     try {
       await app.db.query('SELECT 1');
     } catch {
       dbOk = false;
     }
-    const pending = dbOk
+    const overdueJobs = dbOk
       ? (await app.db.query<{ n: number }>(`SELECT count(*)::int n FROM jobs WHERE status='pending' AND due_at < now() - interval '5 minutes'`)).rows[0]!.n
       : null;
-    const messaging = d.runtime.messagingStatus?.();
+    const overdueOutbox = dbOk
+      ? (
+          await app.db.query<{ n: number }>(
+            `SELECT count(*)::int n FROM outbox WHERE delivery_state='pending' AND next_attempt_at < now() - interval '5 minutes'`,
+          )
+        ).rows[0]!.n
+      : null;
+    const messaging = d.runtime.messagingStatus?.() as { recovery?: unknown } | undefined;
+    const recoveryState =
+      messaging && typeof messaging.recovery === 'string'
+        ? messaging.recovery
+        : messaging && typeof messaging.recovery === 'object' && messaging.recovery
+          ? (messaging.recovery as { recovery?: unknown }).recovery
+          : undefined;
+    const reasons: string[] = [];
+    if (!dbOk) reasons.push('database_unreachable');
+    if (overdueJobs !== null && overdueJobs > OVERDUE_LIMIT) reasons.push('jobs_overdue');
+    if (overdueOutbox !== null && overdueOutbox > OVERDUE_LIMIT) reasons.push('outbox_overdue');
+    if (recoveryState === 'incomplete') reasons.push('telegram_recovery_incomplete');
+    const status = !dbOk ? 'unavailable' : reasons.length ? 'degraded' : 'ready';
     const body = {
-      status: dbOk ? 'ready' : 'unavailable',
+      status,
+      reasons,
       database: dbOk,
-      overdueJobs: pending,
+      overdueJobs,
+      overdueOutbox,
       ...(messaging !== undefined ? { messaging } : {}),
       capabilities: await capabilities(null),
     };
-    return rep.status(dbOk ? 200 : 503).send({ requestId: req.id, data: body });
+    return rep.status(status === 'ready' ? 200 : 503).send({ requestId: req.id, data: body });
   });
 
   return srv;

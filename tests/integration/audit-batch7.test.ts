@@ -439,6 +439,32 @@ describe('F15 — restart recovery pages back to a durable watermark and retries
     });
     const body = (await srv3.inject({ method: 'GET', url: '/health/ready', headers: { authorization: `Bearer ${TOKEN}` } })).json().data;
     expect(body.messaging).toEqual({ recovery: 'incomplete', lastError: 'transient intake failure' });
+    // audit F-10: an incomplete recovery means some owner instruction may be unprocessed, so the assistant is not "ready"
+    expect(body.status).toBe('degraded');
+    expect(body.reasons).toContain('telegram_recovery_incomplete');
+    expect((await srv3.inject({ method: 'GET', url: '/health/ready', headers: { authorization: `Bearer ${TOKEN}` } })).statusCode).toBe(503);
     await srv3.close();
+  });
+
+  it('audit F-10: readiness reports overdue jobs and overdue outbox rows, and is ready again when they clear', async () => {
+    const ready = () => get('/health/ready');
+    expect((await ready()).statusCode).toBe(200);
+    for (let i = 0; i < 30; i++)
+      await t.db.query(
+        `INSERT INTO jobs (owner_id, kind, payload, due_at, dedupe_key, max_attempts) VALUES ($1,'x.test','{}', now() - interval '1 hour', $2, 1)`,
+        [o.ownerId, `late-${i}`],
+      );
+    const late = await ready();
+    expect(late.statusCode).toBe(503);
+    expect(late.json().data).toMatchObject({ status: 'degraded', overdueJobs: 30 });
+    expect(late.json().data.reasons).toContain('jobs_overdue');
+    await t.db.query(`DELETE FROM jobs WHERE kind='x.test'`);
+    expect((await ready()).statusCode).toBe(200);
+    for (let i = 0; i < 30; i++)
+      await t.db.query(
+        `INSERT INTO outbox (owner_id, aggregate_type, aggregate_id, type, delivery_state, next_attempt_at) VALUES ($1,'thing',gen_random_uuid(),'x.test','pending', now() - interval '1 hour')`,
+        [o.ownerId],
+      );
+    expect((await ready()).json().data.reasons).toContain('outbox_overdue');
   });
 });
