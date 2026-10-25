@@ -814,3 +814,75 @@ describe('audit F-05: what was said stays out of the log unless explicitly allow
     expect(shown).toContain('sir-so-zlar');
   });
 });
+
+describe('audit F-02: a lost AI session is reported as fatal', () => {
+  it('only a closed socket or a missing setup acknowledgement is fatal, and never while the bridge is stopping', async () => {
+    const h = fakeHandle();
+    const link = new FakeLink();
+    const b = new RealtimeCallBridge(h.handle, link);
+    b.start();
+    let fatal = '';
+    void b.fatal.then((m) => (fatal = m));
+    link.error!('invalid_value: bad field'); // survivable
+    await flush();
+    expect(fatal).toBe('');
+    link.error!('websocket closed (1006) ');
+    await flush();
+    expect(fatal).toContain('websocket closed (1006)');
+    b.stop();
+    h.finish();
+
+    const h2 = fakeHandle();
+    const link2 = new FakeLink();
+    const b2 = new RealtimeCallBridge(h2.handle, link2);
+    b2.start();
+    let fatal2 = '';
+    void b2.fatal.then((m) => (fatal2 = m));
+    b2.stop(); // we closed the link ourselves: its close is not a failure
+    link2.error!('websocket closed (1000) ');
+    await flush();
+    expect(fatal2).toBe('');
+    h2.finish();
+  });
+
+  it('counts only caller transcripts that contain words', async () => {
+    const h = fakeHandle();
+    const link = new FakeLink();
+    const b = new RealtimeCallBridge(h.handle, link);
+    b.start();
+    link.transcript!('caller', '  ... ');
+    link.transcript!('assistant', 'Salom');
+    expect(b.stats.callerTranscripts).toBe(0);
+    link.transcript!('caller', 'Salom');
+    expect(b.stats.callerTranscripts).toBe(1);
+    b.stop();
+    h.finish();
+  });
+});
+
+describe('audit F-02: audio sent before the session opens is bounded', () => {
+  it('keeps control messages, drops the OLDEST audio beyond the bound', async () => {
+    const { PreOpenQueue } = await import('../../apps/assistant/src/infrastructure/audio/pre-open-queue.js');
+    const q = new PreOpenQueue(10);
+    q.push('{"type":"setup"}');
+    q.push('AAAAA', true);
+    q.push('BBBBB', true);
+    q.push('{"type":"respond"}');
+    q.push('CCCCC', true); // 15 audio chars > 10: the oldest audio goes
+    expect(q.drain()).toEqual(['{"type":"setup"}', 'BBBBB', '{"type":"respond"}', 'CCCCC']);
+    expect(q.droppedAudio).toBe(1);
+    expect(q.drain()).toEqual([]);
+  });
+
+  it('OpenAI: a long wait before the socket opens does not queue unbounded audio', () => {
+    const { link, sock } = open();
+    const chunk = new Uint8Array(30_000).fill(1); // ~40 KB of base64 each
+    for (let i = 0; i < 100; i++) link.sendAudio(chunk); // ~4 MB offered
+    link.respond('hello');
+    sock.emit('open');
+    const audio = sock.sent.map((x) => JSON.parse(x)).filter((m) => m.type === 'input_audio_buffer.append');
+    const chars = audio.reduce((n, m) => n + m.audio.length, 0);
+    expect(chars).toBeLessThanOrEqual(1_500_000);
+    expect(sock.sent.map((x) => JSON.parse(x).type)).toContain('response.create'); // the control message survived
+  });
+});

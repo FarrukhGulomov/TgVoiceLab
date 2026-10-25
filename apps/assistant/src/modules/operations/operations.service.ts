@@ -147,8 +147,9 @@ export class OperationsService {
     const live = this.registry.list(ownerId);
     if (!live.length) return 0;
     const now = this.clock.now();
-    const killSwitch = (await this.db.query<{ calling_kill_switch: boolean }>('SELECT calling_kill_switch FROM operation_settings WHERE owner_id=$1', [ownerId]))
-      .rows[0]?.calling_kill_switch;
+    const killSwitch = (
+      await this.db.query<{ calling_kill_switch: boolean }>('SELECT calling_kill_switch FROM operation_settings WHERE owner_id=$1', [ownerId])
+    ).rows[0]?.calling_kill_switch;
     const optOut = (await this.db.query<{ call_opt_out: boolean }>('SELECT call_opt_out FROM owners WHERE id=$1', [ownerId])).rows[0]?.call_opt_out ?? false;
     let ended = 0;
     for (const call of live) {
@@ -162,7 +163,8 @@ export class OperationsService {
             [call.contactId, ownerId],
           )
         ).rows[0];
-        if (!p || !p.allow_call || p.expires_at.getTime() <= now.getTime() || (p.revoked_at && p.revoked_at.getTime() <= now.getTime())) reason = 'consent_withdrawn';
+        if (!p || !p.allow_call || p.expires_at.getTime() <= now.getTime() || (p.revoked_at && p.revoked_at.getTime() <= now.getTime()))
+          reason = 'consent_withdrawn';
       }
       if (!reason) continue;
       try {
@@ -281,12 +283,16 @@ export async function reserveBudget(q: Queryable, ownerId: string, day: string, 
  * clamped so reserved + actual never exceeds the day's cap (the cap is a hard ceiling; real overspend is kept in `calls.usage`).
  * Returns false when there was nothing to settle (already settled, or the call never reserved).
  */
-export async function settleCallBudget(q: Queryable, ownerId: string, callId: string, actualMicroUsd: number, now: Date): Promise<boolean> {
-  const claimed = await q.query<{ budget_day: string; budget_reserved_micro: string }>(
-    `UPDATE calls SET budget_settled_at=$3, usage = usage || jsonb_build_object('actualMicroUsd', $4::bigint)
+export async function settleCallBudget(q: Queryable, ownerId: string, callId: string, actualMicroUsd: number | null, now: Date): Promise<boolean> {
+  // `null` = the call ran with a paid provider and nobody can say what it cost: it is settled at the amount that was reserved for it
+  // (fail closed - an unknown cost never counts as free), and the call row says so (`usageUnknown`).
+  const actual = actualMicroUsd === null ? null : Math.max(0, Math.round(actualMicroUsd));
+  const claimed = await q.query<{ budget_day: string; budget_reserved_micro: string; actual: string }>(
+    `UPDATE calls SET budget_settled_at=$3,
+       usage = usage || jsonb_build_object('actualMicroUsd', COALESCE($4::bigint, budget_reserved_micro), 'usageUnknown', ($4::bigint IS NULL))
      WHERE id=$1 AND owner_id=$2 AND budget_settled_at IS NULL AND budget_day IS NOT NULL
-     RETURNING budget_day::text, budget_reserved_micro::text`,
-    [callId, ownerId, now, Math.max(0, Math.round(actualMicroUsd))],
+     RETURNING budget_day::text, budget_reserved_micro::text, (usage->>'actualMicroUsd') AS actual`,
+    [callId, ownerId, now, actual],
   );
   const row = claimed.rows[0];
   if (!row) return false;
@@ -295,7 +301,7 @@ export async function settleCallBudget(q: Queryable, ownerId: string, callId: st
        reserved_micro_usd = GREATEST(0, reserved_micro_usd - $3::bigint),
        actual_micro_usd = actual_micro_usd + GREATEST(0, LEAST($4::bigint, cap_micro_usd - GREATEST(0, reserved_micro_usd - $3::bigint) - actual_micro_usd))
      WHERE owner_id=$1 AND day=$2::date`,
-    [ownerId, row.budget_day, row.budget_reserved_micro, Math.max(0, Math.round(actualMicroUsd))],
+    [ownerId, row.budget_day, row.budget_reserved_micro, row.actual],
   );
   return true;
 }

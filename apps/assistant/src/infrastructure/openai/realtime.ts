@@ -1,3 +1,4 @@
+import { PreOpenQueue } from '../audio/pre-open-queue.js';
 import WebSocket from 'ws';
 import type { RealtimeLink, ToolCall, ToolDeclaration } from '../../modules/calls/audio/realtime-bridge.js';
 
@@ -76,7 +77,7 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   readonly outputRateHz: number;
   #ws: WebSocket;
   #open = false;
-  #queue: string[] = [];
+  #queue = new PreOpenQueue();
   #audio: Array<(pcm: Uint8Array) => void> = [];
   #speech: Array<() => void> = [];
   #transcript: Array<(who: 'assistant' | 'caller', text: string) => void> = [];
@@ -98,8 +99,7 @@ export class OpenAiRealtimeLink implements RealtimeLink {
     this.#ws.on('open', () => {
       this.#open = true;
       this.#send(sessionUpdate(o));
-      for (const m of this.#queue) this.#ws.send(m);
-      this.#queue = [];
+      for (const m of this.#queue.drain()) this.#ws.send(m);
     });
     this.#ws.on('message', (raw: WebSocket.RawData) => this.#onMessage(raw.toString()));
     this.#ws.on('error', (e: Error) => this.#emitError(`websocket: ${e.message}`));
@@ -112,10 +112,10 @@ export class OpenAiRealtimeLink implements RealtimeLink {
   }
   #closed = false;
 
-  #send(obj: Record<string, unknown>): void {
+  #send(obj: Record<string, unknown>, audio = false): void {
     const s = JSON.stringify(obj);
     if (this.#open) this.#ws.send(s);
-    else this.#queue.push(s); // anything sent before the socket opens is delivered after session.update
+    else this.#queue.push(s, audio); // anything sent before the socket opens is delivered after session.update (audio only up to a bound)
   }
 
   #onMessage(raw: string): void {
@@ -195,7 +195,7 @@ export class OpenAiRealtimeLink implements RealtimeLink {
 
   sendAudio(pcm: Uint8Array): void {
     if (!pcm.length) return;
-    this.#send({ type: 'input_audio_buffer.append', audio: Buffer.from(pcm).toString('base64') });
+    this.#send({ type: 'input_audio_buffer.append', audio: Buffer.from(pcm).toString('base64') }, true);
   }
   /** The caller's words as TEXT (when another recogniser does the listening): a user message, then an answer. */
   sendUserText(text: string): void {

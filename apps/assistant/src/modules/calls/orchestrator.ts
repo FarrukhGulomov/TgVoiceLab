@@ -30,9 +30,11 @@ export interface CallSessionRunner {
     usageMicroUsd?: number;
     /** Contact calls: what the AI reports back to the owner (the narrative is stored sealed). */
     report?: { outcome: string; summary: string };
+    /** Did the other person actually take part (proven by what the recogniser heard, not by line noise)? Reports must not claim otherwise. */
+    conversationHeld?: boolean;
   }>;
 }
-export const noSessionRunner: CallSessionRunner = { run: async () => ({ endReason: 'cancelled' }) };
+export const noSessionRunner: CallSessionRunner = { run: async () => ({ endReason: 'cancelled', usageMicroUsd: 0, conversationHeld: false }) };
 
 export type DialOutcome =
   | { status: 'rejected'; reason: string }
@@ -437,7 +439,8 @@ export class CallOrchestrator {
     let ending = false;
     let providerCallId: string | undefined;
     let terminalSeen = false;
-    let usageMicroUsd = 0;
+    let usageMicroUsd: number | null = 0; // null = a paid conversation ran and its usage is unknown (settled at the reserved amount, see settleCallBudget)
+    let conversationHeld: boolean | undefined;
     let report: { outcome: string; summary: string } | undefined;
     const endAttempt = async (reason: CallEndReason) => {
       endReason ??= reason;
@@ -506,11 +509,15 @@ export class CallOrchestrator {
           // Conversation (consent gate, Realtime, tools) is Phase 3/4. With no runner this ends the call at once.
           void this.runner.run({ callId, ownerId, plan, handle }).then(
             (r) => {
-              usageMicroUsd = r.usageMicroUsd ?? 0;
+              usageMicroUsd = r.usageMicroUsd ?? null;
               report = r.report;
+              conversationHeld = r.conversationHeld;
               return endOnce(r.endReason);
             },
-            () => endOnce('transport_error'),
+            () => {
+              usageMicroUsd = null; // the conversation ran (or tried to) and we do not know what it cost
+              return endOnce('transport_error');
+            },
           );
         } else if (ev.type === 'ended' || ev.type === 'error') {
           terminalSeen = true;
@@ -560,7 +567,7 @@ export class CallOrchestrator {
           [
             callId,
             ownerId,
-            JSON.stringify({ outcome: report.outcome, endReason: final, conversationHeld: true }),
+            JSON.stringify({ outcome: report.outcome, endReason: final, conversationHeld: conversationHeld ?? true }),
             this.d.crypto.enc(ownerId, 'call_reports.narrative', report.summary),
           ],
         );
@@ -574,7 +581,16 @@ export class CallOrchestrator {
       // Truthful minimal report: no conversation took place.
       await c.query(
         `INSERT INTO call_reports (call_id, owner_id, status, structured_result, complete) VALUES ($1,$2,'generated',$3,false) ON CONFLICT (call_id) DO NOTHING`,
-        [callId, ownerId, JSON.stringify({ outcome: terminalState, endReason: final, conversationHeld: false, note: 'no conversation layer ran' })],
+        [
+          callId,
+          ownerId,
+          JSON.stringify({
+            outcome: terminalState,
+            endReason: final,
+            conversationHeld: conversationHeld ?? false,
+            note: conversationHeld ? 'conversation held; no written report for owner calls' : 'no conversation took place',
+          }),
+        ],
       );
       await emitOutbox(c, { ownerId, aggregateType: 'call', aggregateId: callId, type: 'call.notify', payload: { variant: 'ended', reason: final } }, now);
     });
@@ -615,7 +631,8 @@ export async function recoverOrphanedCalls(d: {
           if (r.state !== 'ending') await transitionCall(c, r.owner_id, r.id, 'ending', { now });
           await transitionCall(c, r.owner_id, r.id, 'ended', { endReason: 'transport_error', now });
         }
-        await settleCallBudget(c, r.owner_id, r.id, 0, now); // the ORIGINAL reservation (day and amount are on the call row)
+        // A call that had connected may have spent money before the crash: settle it at the reservation. One that never connected spent nothing.
+        await settleCallBudget(c, r.owner_id, r.id, r.state === 'dialing' || r.state === 'ringing' ? 0 : null, now); // the ORIGINAL reservation (day and amount are on the call row)
       } else {
         // The provider did not confirm the end (active or unknown): the call may be live. Keep the account occupied and the
         // reservation reserved until an operator resolves it.

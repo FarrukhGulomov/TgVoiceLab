@@ -440,3 +440,49 @@ describe('A13 / state-machine robustness', () => {
     await w.app.close();
   });
 });
+
+describe('audit F-03: a paid conversation of unknown cost is never settled as free', () => {
+  const spent = async () => (await t.db.query('SELECT reserved_micro_usd, actual_micro_usd FROM usage_budgets WHERE owner_id=$1', [o.ownerId])).rows[0];
+
+  it('a conversation that reports no usage is settled at the amount that was reserved for the call', async () => {
+    const w = await world({ script: { kind: 'answer' }, sessionRunner: { run: async () => ({ endReason: 'completed' }) } });
+    const req = await w.request();
+    expect(await w.app.orchestrator.dial(o.ownerId, req.callRequestId)).toMatchObject({ status: 'finished', state: 'ended' });
+    expect(await spent()).toMatchObject({ reserved_micro_usd: '0', actual_micro_usd: '1000000' });
+    const usage = (await t.db.query('SELECT usage FROM calls')).rows[0].usage;
+    expect(usage).toMatchObject({ actualMicroUsd: 1000000, usageUnknown: true });
+    await w.app.close();
+  });
+
+  it('a conversation that crashes is settled at the reservation too', async () => {
+    const crash = await world({
+      script: { kind: 'answer' },
+      sessionRunner: {
+        run: async () => {
+          throw new Error('runner crashed');
+        },
+      },
+    });
+    const r1 = await crash.request();
+    await crash.app.orchestrator.dial(o.ownerId, r1.callRequestId);
+    expect(await spent()).toMatchObject({ reserved_micro_usd: '0', actual_micro_usd: '1000000' });
+    await crash.app.close();
+  });
+
+  it('a reported usage is settled as reported', async () => {
+    const w = await world({ script: { kind: 'answer' }, sessionRunner: { run: async () => ({ endReason: 'completed', usageMicroUsd: 120_000 }) } });
+    const req = await w.request();
+    await w.app.orchestrator.dial(o.ownerId, req.callRequestId);
+    expect(await spent()).toMatchObject({ reserved_micro_usd: '0', actual_micro_usd: '120000' });
+    expect((await t.db.query('SELECT usage FROM calls')).rows[0].usage).toMatchObject({ actualMicroUsd: 120000, usageUnknown: false });
+    await w.app.close();
+  });
+
+  it('a call that never opened an AI session (no conversation layer) costs nothing', async () => {
+    const w = await world({ script: { kind: 'answer' } });
+    const req = await w.request();
+    await w.app.orchestrator.dial(o.ownerId, req.callRequestId);
+    expect(await spent()).toMatchObject({ reserved_micro_usd: '0', actual_micro_usd: '0' });
+    await w.app.close();
+  });
+});

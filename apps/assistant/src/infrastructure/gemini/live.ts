@@ -1,3 +1,4 @@
+import { PreOpenQueue } from '../audio/pre-open-queue.js';
 import WebSocket from 'ws';
 import { AutoGain } from '../audio/auto-gain.js';
 import type { RealtimeLink, ToolCall, ToolDeclaration } from '../../modules/calls/audio/realtime-bridge.js';
@@ -136,7 +137,7 @@ export class GeminiLiveLink implements RealtimeLink {
   readonly outputRateHz = GEMINI_OUTPUT_RATE;
   #ws: WebSocket;
   #ready = false;
-  #queue: string[] = [];
+  #queue = new PreOpenQueue();
   #closed = false;
   #heard = '';
   #said = '';
@@ -203,10 +204,10 @@ export class GeminiLiveLink implements RealtimeLink {
   #emitError(m: string): void {
     for (const cb of this.#errors) cb(m);
   }
-  #send(obj: Record<string, unknown>): void {
+  #send(obj: Record<string, unknown>, audio = false): void {
     const s = JSON.stringify(obj);
     if (this.#ready) this.#ws.send(s);
-    else this.#queue.push(s); // anything sent before setupComplete is delivered right after it
+    else this.#queue.push(s, audio); // anything sent before setupComplete is delivered right after it (audio only up to a bound)
   }
   #flushTranscripts(): void {
     if (this.#heard.trim()) for (const cb of this.#transcript) cb('caller', this.#heard.trim());
@@ -227,8 +228,7 @@ export class GeminiLiveLink implements RealtimeLink {
     if (m.setupComplete !== undefined) {
       clearTimeout(this.#setupTimer);
       this.#ready = true;
-      for (const q of this.#queue) this.#ws.send(q);
-      this.#queue = [];
+      for (const q of this.#queue.drain()) this.#ws.send(q);
       return;
     }
     if (m.error) {
@@ -288,7 +288,7 @@ export class GeminiLiveLink implements RealtimeLink {
   sendAudio(pcm: Uint8Array): void {
     if (!pcm.length) return;
     const out = this.#o.autoGain === false ? pcm : this.#gain.process(pcm);
-    this.#send({ realtimeInput: { audio: { data: Buffer.from(out).toString('base64'), mimeType: `audio/pcm;rate=${GEMINI_INPUT_RATE}` } } });
+    this.#send({ realtimeInput: { audio: { data: Buffer.from(out).toString('base64'), mimeType: `audio/pcm;rate=${GEMINI_INPUT_RATE}` } } }, true);
   }
   /** The caller's words as TEXT (when another recogniser does the listening): a user turn the model answers. */
   sendUserText(text: string): void {

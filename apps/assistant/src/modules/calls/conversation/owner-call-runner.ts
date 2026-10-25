@@ -24,7 +24,7 @@ export interface OwnerCallRunnerDeps {
   contacts?: ContactService | undefined;
   contactCalls?: ContactCallService | undefined;
   recall?: RecallService | undefined;
-  /** Estimated provider cost, used only to settle the call budget. Unset => settles 0 (documented gap). */
+  /** Estimated provider cost, used only to settle the call budget. Unset => a connected call is settled at its full reservation. */
   costUsdPerMinute?: number | undefined;
   log?: ((line: string) => void) | undefined;
   /** Put what was said and tool arguments into log lines (development only). */
@@ -49,13 +49,13 @@ const GREETING_REMINDER = (first: boolean): string => `Qo'ng'iroqqa hozir javob 
 export class OwnerCallRunner implements CallSessionRunner {
   constructor(private readonly d: OwnerCallRunnerDeps) {}
 
-  async run(ctx: Parameters<CallSessionRunner['run']>[0]): Promise<{ endReason: CallEndReason; usageMicroUsd?: number }> {
+  async run(ctx: Parameters<CallSessionRunner['run']>[0]): Promise<{ endReason: CallEndReason; usageMicroUsd?: number; conversationHeld?: boolean }> {
     const { ownerId, plan, handle } = ctx;
     const { db } = this.d;
     const owner = (await db.query<{ timezone: string; telegram_user_id: string }>('SELECT timezone, telegram_user_id FROM owners WHERE id=$1', [ownerId]))
       .rows[0];
     // Defence in depth: the orchestrator classified the call already; this layer talks only to the authenticated owner.
-    if (!owner || owner.telegram_user_id !== plan.recipientTelegramId) return { endReason: 'cancelled' };
+    if (!owner || owner.telegram_user_id !== plan.recipientTelegramId) return { endReason: 'cancelled', usageMicroUsd: 0, conversationHeld: false };
 
     let endRequested!: () => void;
     const endAsked = new Promise<void>((r) => (endRequested = r));
@@ -132,12 +132,22 @@ export class OwnerCallRunner implements CallSessionRunner {
 
     let timer: NodeJS.Timeout | undefined;
     const limit = new Promise<'limit'>((r) => (timer = setTimeout(() => r('limit'), plan.maxDurationSeconds * 1000)));
-    const why = await Promise.race([endAsked.then(() => 'end' as const), bridge.finished.then(() => 'over' as const), limit]);
+    const why = await Promise.race([
+      endAsked.then(() => 'end' as const),
+      bridge.finished.then(() => 'over' as const),
+      bridge.fatal.then(() => 'fatal' as const), // the AI session was lost: do not keep a silent call open until the time limit
+      limit,
+    ]);
     clearTimeout(timer);
     clearInterval(watcher);
     bridge.stop();
     const seconds = (Date.now() - started) / 1000;
     const usageMicroUsd = this.d.costUsdPerMinute ? Math.round((seconds / 60) * this.d.costUsdPerMinute * 1_000_000) : undefined;
-    return { endReason: why === 'limit' ? 'duration_limit' : 'completed', ...(usageMicroUsd !== undefined ? { usageMicroUsd } : {}) };
+    const heardOwner = bridge.stats.callerTranscripts > 0 || bridge.stats.nonSilentFramesIn >= 100; // words heard, not just line noise
+    return {
+      endReason: why === 'fatal' ? 'transport_error' : why === 'limit' ? 'duration_limit' : 'completed',
+      conversationHeld: heardOwner && why !== 'fatal',
+      ...(usageMicroUsd !== undefined ? { usageMicroUsd } : {}),
+    };
   }
 }

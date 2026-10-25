@@ -56,7 +56,10 @@ class FakeLink implements RealtimeLink {
   onAudio() {}
   onSpeechStarted() {}
   onTranscript() {}
-  onError() {}
+  errorCb?: (m: string) => void;
+  onError(cb: (m: string) => void) {
+    this.errorCb = cb;
+  }
   onToolCall(cb: (c: ToolCall) => void) {
     this.toolCb = cb;
   }
@@ -231,6 +234,41 @@ const finish = async (s: Awaited<ReturnType<typeof setup>>, link: FakeLink, dial
   await dialing;
   return s.texts().find((x) => x.includes('Call report')) ?? '';
 };
+
+describe('audit: failures around a contact call are reported truthfully', () => {
+  it('F-09: a failing memory write does not turn a completed conversation into a transport error', async () => {
+    const s = await setup();
+    s.memory.remember = async () => {
+      throw new Error('memory store down');
+    };
+    const { dialing, link } = await meetingCall(s);
+    link.toolCb!({ id: 'r', name: 'submit_report', args: { outcome: 'delivered', summary: 'Javlon rozi.' } });
+    const report = await finish(s, link, dialing);
+    expect(report).toContain('Javlon rozi.');
+    const call = (await t.db.query(`SELECT state, end_reason FROM calls`)).rows[0];
+    expect(call).toMatchObject({ state: 'ended', end_reason: 'completed' });
+    await s.app.close();
+  });
+
+  it('F-02/F-04: a lost AI session ends the call as a failure with an honest report, not as a normal completion', async () => {
+    const s = await setup();
+    const { dialing, link } = await meetingCall(s);
+    await new Promise((r) => setTimeout(r, 50));
+    link.errorCb!('websocket closed (1006) ');
+    for (let i = 0; i < 100 && s.texts().every((x) => !x.includes('Call report')); i++) {
+      await new Promise((r) => setTimeout(r, 30));
+      await s.app.tick();
+    }
+    await dialing;
+    const report = s.texts().find((x) => x.includes('Call report')) ?? '';
+    expect(report).toContain('ai_failed');
+    expect(report).toContain('uzildi');
+    const call = (await t.db.query(`SELECT end_reason FROM calls`)).rows[0];
+    expect(call.end_reason).toBe('transport_error');
+    expect((await t.db.query(`SELECT structured_result FROM call_reports`)).rows[0].structured_result.conversationHeld).toBe(false);
+    await s.app.close();
+  });
+});
 
 describe('meeting arrangement through a contact call', () => {
   it('the owner offers times; the AI may confirm only one of them, and the system then creates the owner task from committed state', async () => {

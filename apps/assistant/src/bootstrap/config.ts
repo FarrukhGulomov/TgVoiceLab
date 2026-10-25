@@ -52,7 +52,7 @@ const EnvSchema = z
     GEMINI_LANGUAGE_CODE: opt(z.string()),
     /** Log the Gemini Live session's protocol events (setup, audio counts, tool calls, close codes) at info level. No speech content is logged. */
     GEMINI_DEBUG: bool.default(false),
-    /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset settles 0 (documented gap). */
+    /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset: a connected call is settled at its full reservation (an unknown cost never counts as free). */
     AI_VOICE_COST_USD_PER_MINUTE: opt(z.coerce.number().positive().max(100)),
     /** Who speaks on calls. Unset: the AI voice provider's own voice. `voicelab`: VoiceLab's Uzbek voice (the listening/thinking model answers in text). Needs AI_VOICE_PROVIDER=openai or gemini (the model answers in text; for gemini the Live model must support TEXT output). */
     TTS_PROVIDER: z.preprocess(providerChoice, z.enum(['voicelab']).optional()),

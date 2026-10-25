@@ -33,8 +33,15 @@ class FakeLink implements RealtimeLink {
   onResponseStart() {}
   onAudio() {}
   onSpeechStarted() {}
-  onTranscript() {}
-  onError() {}
+  onTranscript(cb: (who: 'assistant' | 'caller', text: string) => void) {
+    this.transcriptCbs.push(cb);
+  }
+  errorCb?: (m: string) => void;
+  onError(cb: (m: string) => void) {
+    this.errorCb = cb;
+  }
+  transcriptCbs: Array<(who: 'assistant' | 'caller', text: string) => void> = [];
+  transcriptCb = (who: 'assistant' | 'caller', text: string) => this.transcriptCbs.forEach((f) => f(who, text)); // the bridge and the runner both listen
   onToolCall(cb: (c: ToolCall) => void) {
     this.toolCb = cb;
   }
@@ -202,5 +209,40 @@ describe('OwnerCallRunner', () => {
     expect(s.links[1]!.link.closed).toBe(true);
     h2.hangUp();
     await s.app.close();
+  });
+
+  it('audit F-02: when the AI session is lost the call ends as a failure at once (not as "completed" after the time limit)', async () => {
+    const s = await setup();
+    const h = fakeHandle();
+    const run = s.runner.run({ callId: 'c1', ownerId: o.ownerId, plan: plan({ maxDurationSeconds: 3600 }), handle: h.handle });
+    await until(() => s.links.length > 0 && !!s.links[0]!.link.errorCb);
+    s.links[0]!.link.errorCb!('websocket closed (1006) ');
+    const res = await Promise.race([run, tick(2000).then(() => 'still running' as const)]);
+    expect(res).not.toBe('still running');
+    expect((res as { endReason: string }).endReason).toBe('transport_error');
+    expect((res as { conversationHeld?: boolean }).conversationHeld).toBe(false);
+    h.hangUp();
+    await s.app.close();
+  });
+
+  it('audit F-04: conversationHeld follows what the recogniser heard, not line noise', async () => {
+    const quiet = await setup();
+    const h1 = fakeHandle();
+    const r1 = quiet.runner.run({ callId: 'c1', ownerId: o.ownerId, plan: plan(), handle: h1.handle });
+    await until(() => quiet.links.length > 0 && !!quiet.links[0]!.link.toolCb);
+    quiet.links[0]!.link.toolCb!({ id: 'b', name: 'end_call', args: {} });
+    expect((await r1).conversationHeld).toBe(false); // nobody said anything
+    h1.hangUp();
+    await quiet.app.close();
+
+    const talked = await setup();
+    const h2 = fakeHandle();
+    const r2 = talked.runner.run({ callId: 'c2', ownerId: o.ownerId, plan: plan(), handle: h2.handle });
+    await until(() => talked.links.length > 0 && talked.links[0]!.link.transcriptCbs.length > 1 && !!talked.links[0]!.link.toolCb);
+    talked.links[0]!.link.transcriptCb('caller', 'Salom, vazifalarim qanday?');
+    talked.links[0]!.link.toolCb!({ id: 'b', name: 'end_call', args: {} });
+    expect((await r2).conversationHeld).toBe(true);
+    h2.hangUp();
+    await talked.app.close();
   });
 });

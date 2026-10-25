@@ -166,7 +166,9 @@ export type ContactReport = { outcome: string; summary: string };
 export class ContactCallRunner implements CallSessionRunner {
   constructor(private readonly d: ContactCallRunnerDeps) {}
 
-  async run(ctx: Parameters<CallSessionRunner['run']>[0]): Promise<{ endReason: CallEndReason; usageMicroUsd?: number; report?: ContactReport }> {
+  async run(
+    ctx: Parameters<CallSessionRunner['run']>[0],
+  ): Promise<{ endReason: CallEndReason; usageMicroUsd?: number; report?: ContactReport; conversationHeld?: boolean }> {
     const { ownerId, callId, plan, handle } = ctx;
     const { db } = this.d;
     const row = (
@@ -178,7 +180,7 @@ export class ContactCallRunner implements CallSessionRunner {
       )
     ).rows[0];
     // Defence in depth: the dial policy already required the attestation; the conversation layer re-checks it.
-    if (!row || !row.attested || row.revoked) return { endReason: 'cancelled' };
+    if (!row || !row.attested || row.revoked) return { endReason: 'cancelled', usageMicroUsd: 0, conversationHeld: false }; // no AI session was opened: nothing spent
 
     await this.#consent(ownerId, callId, plan.recipientTelegramId, 'granted');
 
@@ -288,10 +290,15 @@ export class ContactCallRunner implements CallSessionRunner {
 
     let timer: NodeJS.Timeout | undefined;
     const limit = new Promise<'limit'>((r) => (timer = setTimeout(() => r('limit'), plan.maxDurationSeconds * 1000)));
-    const why = await Promise.race([endAsked.then(() => 'end' as const), bridge.finished.then(() => 'over' as const), limit]);
+    const why = await Promise.race([
+      endAsked.then(() => 'end' as const),
+      bridge.finished.then(() => 'over' as const),
+      bridge.fatal.then(() => 'fatal' as const), // the AI session was lost: do not keep a silent call open until the time limit
+      limit,
+    ]);
     clearTimeout(timer);
-    // The contact spoke at all? No speech in => the report must not claim a conversation happened.
-    const spoke = bridge.stats.nonSilentFramesIn > 0;
+    // The contact spoke at all? What the recogniser wrote down proves it; loud line noise alone does not.
+    const spoke = bridge.stats.callerTranscripts > 0 || bridge.stats.nonSilentFramesIn >= 100;
     bridge.stop();
     this.d.onDone?.({
       stats: { ...bridge.stats, errors: undefined },
@@ -310,28 +317,36 @@ export class ContactCallRunner implements CallSessionRunner {
       const gist = `${when} (${report.outcome}) ${facts} ${report.summary}`.replace(/\s+/g, ' ');
       notes = [gist.slice(0, 400), ...notes];
     }
+    // Writing what was learnt must never change how the call ended: a failing memory write is logged, the call stays "completed".
     if (this.d.memory && report && notes.length) {
       for (const n of notes)
-        await this.d.memory.remember(db, ownerId, contactScope(row.id), n, { source: 'call_report', callId }, this.d.clock?.now() ?? new Date(), {
-          confidence: 0.8,
-        });
+        await this.d.memory
+          .remember(db, ownerId, contactScope(row.id), n, { source: 'call_report', callId }, this.d.clock?.now() ?? new Date(), { confidence: 0.8 })
+          .catch((e: unknown) => this.d.log?.(`error: call memory was not saved (${String((e as Error)?.message ?? e).slice(0, 120)})`));
     }
     if (this.d.memory && report) {
       // What went well or badly is kept as a lesson in the owner's memory and read before the next calls (the assistant improves day by day).
       for (const l of lessonNotes)
-        await this.d.memory.remember(db, ownerId, LESSON_SCOPE, l.slice(0, 400), { source: 'call_report', callId }, memNow, {
-          confidence: 0.7,
-        });
+        await this.d.memory
+          .remember(db, ownerId, LESSON_SCOPE, l.slice(0, 400), { source: 'call_report', callId }, memNow, { confidence: 0.7 })
+          .catch((e: unknown) => this.d.log?.(`error: call lesson was not saved (${String((e as Error)?.message ?? e).slice(0, 120)})`));
     }
-    const note = await this.#finalize(ownerId, row.display_name, report, agreedSlot, proposal, tz, fmt, deal);
+    const note = await this.#finalize(ownerId, row.display_name, report, agreedSlot, proposal, tz, fmt, deal).catch((e: unknown) => {
+      this.d.log?.(`error: call follow-up was not recorded (${String((e as Error)?.message ?? e).slice(0, 120)})`);
+      return '';
+    });
     const finalReport =
       (report ? { ...report, summary: `${report.summary}${note}` } : undefined) ??
       (spoke
         ? { outcome: 'incomplete', summary: 'Suhbat bo‘ldi, lekin AI hisobot topshirmadi.' }
         : { outcome: 'no_speech', summary: 'Suhbatdosh javob bermadi.' });
     return {
-      endReason: why === 'limit' ? 'duration_limit' : 'completed',
-      report: finalReport,
+      endReason: why === 'fatal' ? 'transport_error' : why === 'limit' ? 'duration_limit' : 'completed',
+      report:
+        why === 'fatal'
+          ? { outcome: 'ai_failed', summary: `AI xizmati qo'ng'iroq paytida uzildi, shuning uchun suhbat to'liq o'tmadi. ${finalReport.summary}`.slice(0, 600) }
+          : finalReport,
+      conversationHeld: spoke && why !== 'fatal',
       ...(usageMicroUsd !== undefined ? { usageMicroUsd } : {}),
     };
   }

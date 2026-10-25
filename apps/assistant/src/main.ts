@@ -252,6 +252,10 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   // What was said on a call is private. It reaches the log (at debug level) only in development with LOG_LEVEL=debug|trace.
   const logContent = cfg.NODE_ENV !== 'production' && (cfg.LOG_LEVEL === 'debug' || cfg.LOG_LEVEL === 'trace');
   const callLog = (line: string) => (/^(realtime error|error): /.test(line) ? log.warn : log.debug).call(log, { call: true }, line.slice(0, 300)); // provider errors must be visible
+  if (cfg.CALLS_ENABLED && cfg.AI_VOICE_COST_USD_PER_MINUTE === undefined)
+    log.warn(
+      'AI_VOICE_COST_USD_PER_MINUTE is not set: the cost of a call is unknown, so every connected call is charged its full reservation against the daily budget (the budget stays a hard ceiling, but it will fill up fast). Set it to your provider cost.',
+    );
   const ownerRunner = new OwnerCallRunner({
     db,
     recall,

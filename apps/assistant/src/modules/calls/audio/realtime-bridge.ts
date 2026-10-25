@@ -58,6 +58,14 @@ export function rmsS16(b: Uint8Array): number {
   return Math.sqrt(sum / n);
 }
 
+/**
+ * Link errors after which the AI session is gone for good (the socket closed without a resumable session, or the setup was never
+ * acknowledged): the call can no longer be conducted. Other errors (a rejected message, a bad audio chunk) are survivable.
+ */
+export function isFatalLinkError(m: string): boolean {
+  return /^(websocket closed \(|no setupComplete within )/.test(m);
+}
+
 const CALL_RATE = 48_000;
 const FRAME_BYTES = (CALL_RATE / 100) * 2; // 10 ms
 
@@ -78,6 +86,8 @@ export interface BridgeStats {
   /** Incoming 10 ms frames with real signal (RMS above a small floor): proof that audio from the person arrives, not just silence. */
   nonSilentFramesIn: number;
   modelAudioChunks: number;
+  /** Transcripts of what the other person said, as written by the recogniser: the proof that someone SPOKE (loud audio can be noise). */
+  callerTranscripts: number;
   callFramesOut: number;
   bargeIns: number;
   errors: string[];
@@ -89,7 +99,15 @@ export interface BridgeStats {
  * and the in-flight response is cancelled, so the assistant stops talking over the person.
  */
 export class RealtimeCallBridge {
-  readonly stats: BridgeStats = { callFramesIn: 0, nonSilentFramesIn: 0, modelAudioChunks: 0, callFramesOut: 0, bargeIns: 0, errors: [] };
+  readonly stats: BridgeStats = {
+    callFramesIn: 0,
+    nonSilentFramesIn: 0,
+    modelAudioChunks: 0,
+    callerTranscripts: 0,
+    callFramesOut: 0,
+    bargeIns: 0,
+    errors: [],
+  };
   readonly log: (line: string) => void;
   readonly silenceMs: number;
   readonly logContent: boolean;
@@ -97,6 +115,9 @@ export class RealtimeCallBridge {
   readonly onTool: BridgeOptions['onTool'];
   /** Resolves when the call's incoming audio ends, i.e. the call is over (hung up by either side, or ended by the orchestrator). */
   readonly finished: Promise<void>;
+  /** Resolves with the error when the AI session is lost for good (see isFatalLinkError); never while the bridge is stopping. */
+  readonly fatal: Promise<string>;
+  #raiseFatal!: (m: string) => void;
   #finish!: () => void;
   #stopped = false;
   #pendingAction = false;
@@ -120,6 +141,7 @@ export class RealtimeCallBridge {
     this.playoutGraceMs = o.playoutGraceMs ?? 400;
     this.onTool = o.onTool;
     this.finished = new Promise<void>((r) => (this.#finish = r));
+    this.fatal = new Promise<string>((r) => (this.#raiseFatal = r));
     this.#up = new StreamingResampler(CALL_RATE, link.inputRateHz);
     this.#down = new StreamingResampler(link.outputRateHz, CALL_RATE);
   }
@@ -194,10 +216,14 @@ export class RealtimeCallBridge {
         }
       })().catch((e: unknown) => this.stats.errors.push(`tool: ${String((e as Error)?.message ?? e)}`));
     });
-    this.link.onTranscript((who, text) => this.log(this.logContent ? `${who}: ${text}` : `${who}: [${text.length} characters]`));
+    this.link.onTranscript((who, text) => {
+      if (who === 'caller' && /[\p{L}\p{N}]/u.test(text)) this.stats.callerTranscripts++;
+      this.log(this.logContent ? `${who}: ${text}` : `${who}: [${text.length} characters]`);
+    });
     this.link.onError((m) => {
       this.stats.errors.push(m);
       this.log(`realtime error: ${m}`);
+      if (!this.#stopped && isFatalLinkError(m)) this.#raiseFatal(m);
     });
 
     void (async () => {
