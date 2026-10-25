@@ -507,10 +507,24 @@ const lanes = (['jobs', 'calls', 'outbox'] as const).map((name) =>
   }),
 );
 
+// Live calls converge to the durable policy (kill switch, opt-out, revoked permission) even when the hangup that should have followed the
+// committed change failed or its result was lost.
+const policySweep = setInterval(() => {
+  for (const ownerId of new Set(app.registry.all().map((c) => c.ownerId)))
+    void app.operations.enforceLivePolicy(ownerId).then(
+      (ended) => {
+        if (ended) log.warn({ ended }, 'live-call policy sweep ended calls that the committed policy forbids');
+      },
+      (e: Error) => log.error({ err: e.message }, 'live-call policy sweep failed'),
+    );
+}, 5_000);
+policySweep.unref();
+
 async function shutdown(sig: string) {
   if (stopping) return;
   stopping = true;
   log.info({ sig }, 'draining');
+  clearInterval(policySweep);
   const hard = setTimeout(() => process.exit(1), 30_000); // spec §11.2: shut down within 30 s
   hard.unref();
   // Stop claiming, ask every live call to end, and let supervisors persist their final or uncertain state (restart recovery

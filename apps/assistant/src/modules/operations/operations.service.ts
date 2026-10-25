@@ -9,6 +9,8 @@ export interface ActiveCallControl {
   callId: string;
   ownerId: string;
   contactId: string | null;
+  /** The owner called the assistant (not a call the assistant started): the owner's "stop calling me" switch does not end it. */
+  inbound?: boolean;
   /** `owner_call` = a call TO the owner (no contact row); `contact_call` = a call to an authorized third party. */
   kind: 'owner_call' | 'contact_call';
   end(reason: 'cancelled' | 'consent_withdrawn' | 'budget_limit' | 'duration_limit'): Promise<void>;
@@ -34,6 +36,7 @@ export class OperationsService {
     private readonly db: Db,
     private readonly clock: Clock,
     private readonly registry: ActiveCallRegistry,
+    private readonly opts: { retryDelayMs?: number; terminateAttempts?: number } = {},
   ) {}
 
   /**
@@ -87,7 +90,33 @@ export class OperationsService {
     return r.rows.length;
   }
 
-  /** End live media (in-process). Runs AFTER the database change committed, never inside a transaction. */
+  /** Ends one live call, retrying a few times; throws the last error when every attempt failed. */
+  private async endWithRetry(call: ActiveCallControl, reason: 'cancelled' | 'consent_withdrawn'): Promise<void> {
+    const attempts = this.opts.terminateAttempts ?? 3;
+    const delay = this.opts.retryDelayMs ?? 150;
+    for (let n = 1; ; n++) {
+      try {
+        await call.end(reason);
+        return;
+      } catch (e) {
+        if (n >= attempts) throw e;
+        await new Promise((r) => setTimeout(r, delay * n));
+      }
+    }
+  }
+
+  /** The owner cancelled ONE call (`/v1/calls/:id/cancel`): retried like every other safety hangup. */
+  async terminateCall(ownerId: string, callId: string, reason: 'cancelled' | 'consent_withdrawn'): Promise<boolean> {
+    const call = this.registry.list(ownerId).find((c) => c.callId === callId);
+    if (!call) return false;
+    await this.endWithRetry(call, reason);
+    return true;
+  }
+
+  /**
+   * End live media (in-process). Runs AFTER the database change committed, never inside a transaction. Every matching call is tried even
+   * when an earlier one fails, each is retried a few times, and failures are reported at the end (the policy sweep below keeps trying).
+   */
   async terminateLive(
     ownerId: string,
     contactId: string | undefined,
@@ -95,12 +124,55 @@ export class OperationsService {
     kind?: 'owner_call' | 'contact_call',
   ): Promise<number> {
     let terminated = 0;
-    for (const call of this.registry.list(ownerId))
-      if ((!contactId || call.contactId === contactId) && (!kind || call.kind === kind)) {
-        await call.end(reason);
+    const failures: unknown[] = [];
+    for (const call of this.registry.list(ownerId)) {
+      if ((contactId && call.contactId !== contactId) || (kind && call.kind !== kind)) continue;
+      try {
+        await this.endWithRetry(call, reason);
         terminated++;
+      } catch (e) {
+        failures.push(e);
       }
+    }
+    if (failures.length) throw new AggregateError(failures, `could not end ${failures.length} live call(s); the policy sweep keeps trying`);
     return terminated;
+  }
+
+  /**
+   * Convergence of live calls to the DURABLE policy. A kill switch, opt-out or revoked permission is committed first and live media is ended
+   * after it; if that hangup failed (or its result was lost), this sweep reads the committed state again and ends every live call it forbids.
+   * Run periodically and after any failed termination. Returns how many calls it ended.
+   */
+  async enforceLivePolicy(ownerId: string): Promise<number> {
+    const live = this.registry.list(ownerId);
+    if (!live.length) return 0;
+    const now = this.clock.now();
+    const killSwitch = (await this.db.query<{ calling_kill_switch: boolean }>('SELECT calling_kill_switch FROM operation_settings WHERE owner_id=$1', [ownerId]))
+      .rows[0]?.calling_kill_switch;
+    const optOut = (await this.db.query<{ call_opt_out: boolean }>('SELECT call_opt_out FROM owners WHERE id=$1', [ownerId])).rows[0]?.call_opt_out ?? false;
+    let ended = 0;
+    for (const call of live) {
+      let reason: 'cancelled' | 'consent_withdrawn' | null = null;
+      if (killSwitch === true) reason = 'cancelled';
+      else if (optOut && !call.inbound) reason = 'cancelled';
+      else if (call.kind === 'contact_call' && call.contactId) {
+        const p = (
+          await this.db.query<{ allow_call: boolean; expires_at: Date; revoked_at: Date | null }>(
+            'SELECT allow_call, expires_at, revoked_at FROM contact_permissions WHERE contact_id=$1 AND owner_id=$2 ORDER BY version DESC LIMIT 1',
+            [call.contactId, ownerId],
+          )
+        ).rows[0];
+        if (!p || !p.allow_call || p.expires_at.getTime() <= now.getTime() || (p.revoked_at && p.revoked_at.getTime() <= now.getTime())) reason = 'consent_withdrawn';
+      }
+      if (!reason) continue;
+      try {
+        await call.end(reason);
+        ended++;
+      } catch {
+        /* the next sweep tries again */
+      }
+    }
+    return ended;
   }
 
   /** Owner opt-out ("stop calling me") scope: EVERY call the assistant would place. DB part (callable in the caller's transaction)... */

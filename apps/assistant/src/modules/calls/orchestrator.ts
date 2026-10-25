@@ -311,7 +311,7 @@ export class CallOrchestrator {
           metadata: { callRequestId, attempt, planHash: plan.planHash, kind },
         });
         // Registered BEFORE commit so a kill switch / opt-out that is waiting on our locks always finds this call (no handover gap).
-        this.d.registry.add({ callId: id, ownerId, contactId, kind, end: async () => ac.abort() });
+        this.d.registry.add({ callId: id, ownerId, contactId, kind, ...(opts.inbound ? { inbound: true } : {}), end: async () => ac.abort() });
         registered = id;
         return id;
       });
@@ -336,7 +336,7 @@ export class CallOrchestrator {
     }
     clearTimeout(dialTimer);
     // A stop requested during the dial (kill switch, opt-out, revocation, deadline) must not vanish in the handover.
-    return this.supervise(ownerId, callRequestId, callId, plan, handle, contactId, kind, ac.signal.aborted);
+    return this.supervise(ownerId, callRequestId, callId, plan, handle, contactId, kind, ac.signal.aborted, !!opts.inbound);
   }
 
   /** Dial failed. Distinguish "definitely not placed" from "may have been placed"; never redial in either case. */
@@ -428,6 +428,7 @@ export class CallOrchestrator {
     contactId: string | null,
     kind: 'owner_call' | 'contact_call',
     abortRequested: boolean,
+    inbound = false,
   ): Promise<DialOutcome> {
     const { db, clock } = this.d;
     const tm = this.tm;
@@ -438,14 +439,32 @@ export class CallOrchestrator {
     let terminalSeen = false;
     let usageMicroUsd = 0;
     let report: { outcome: string; summary: string } | undefined;
+    const endAttempt = async (reason: CallEndReason) => {
+      endReason ??= reason;
+      await withTimeout(handle.end(reason), tm.hangupMs, 'hangup');
+    };
+    // Internal use: a failed hangup is not fatal here (the proof is checked after the loop) but must stay retryable, so `ending` is cleared.
     const endOnce = async (reason: CallEndReason) => {
       if (ending) return;
       ending = true;
-      endReason ??= reason;
-      // An abort signal or a resolved promise is not proof: swallow the failure here, the proof is checked after the loop.
-      await withTimeout(handle.end(reason), tm.hangupMs, 'hangup').catch(() => undefined);
+      try {
+        await endAttempt(reason);
+      } catch {
+        ending = false;
+      }
     };
-    this.d.registry.add({ callId, ownerId, contactId, kind, end: (r) => endOnce(r) });
+    // For the kill switch / revocation / cancel: a failed hangup is REPORTED to the caller (who retries) and a later attempt really tries again.
+    const endChecked = async (reason: CallEndReason) => {
+      if (ending) return;
+      ending = true;
+      try {
+        await endAttempt(reason);
+      } catch (e) {
+        ending = false;
+        throw e;
+      }
+    };
+    this.d.registry.add({ callId, ownerId, contactId, kind, ...(inbound ? { inbound: true } : {}), end: (r) => endChecked(r) });
     if (abortRequested) void endOnce('cancelled');
 
     const ringMs = this.d.ringTimeoutMs ?? 30_000;

@@ -95,6 +95,7 @@ export class IntakeService {
         listOpenCallStates?(q: pg.PoolClient | Db, ownerId: string): Promise<string[]>;
         resolveAllUnknownCalls?(q: pg.PoolClient, ownerId: string, now: Date): Promise<number>;
         terminateLiveContactCalls(ownerId: string, contactId: string): Promise<number>;
+        enforceLivePolicy?(ownerId: string): Promise<number>;
       };
       contacts?: ContactService;
       /** Owner-controlled memory ("eslab qol", "xotira", "unut"); also gives the free-form fallback what it remembers. */
@@ -285,7 +286,12 @@ export class IntakeService {
       return { status: 'handled', intent: kind } as const;
     });
     // External effects (ending a live call) happen only after the transaction committed.
-    if (result.status === 'handled') for (const f of afterCommit) await f().catch(() => undefined);
+    if (result.status === 'handled')
+      for (const f of afterCommit)
+        await f().catch(() => {
+          // The state change is committed; a failed hangup is retried by the live-call policy sweep, not forgotten.
+          void this.d.ownerCalls?.enforceLivePolicy?.(p.ownerId).catch(() => undefined);
+        });
     return result;
   }
 

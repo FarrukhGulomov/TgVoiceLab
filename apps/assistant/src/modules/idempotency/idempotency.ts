@@ -28,7 +28,17 @@ export function canonicalJson(v: unknown): string {
  */
 export async function runIdempotent<T>(
   db: Db,
-  args: { ownerId: string; action: string; key: string; requestBody: unknown; ttlMs?: number; now: Date; crypto: DataCrypto },
+  args: {
+    ownerId: string;
+    action: string;
+    key: string;
+    requestBody: unknown;
+    ttlMs?: number;
+    now: Date;
+    crypto: DataCrypto;
+    /** The effect that runs after commit (e.g. ending a live call) failed. The response is already recorded and still goes out; the caller must arrange a retry. */
+    onAfterCommitError?: (e: unknown) => void;
+  },
   handler: (c: pg.PoolClient) => Promise<{ status: number; body: T; afterCommit?: () => Promise<void> }>,
 ): Promise<IdempotentOutcome<T>> {
   const reqHash = hashRequest(args.requestBody);
@@ -62,7 +72,15 @@ export async function runIdempotent<T>(
     return { kind: 'executed', status: out.status, body: out.body } as const;
   });
   // External effects (ending a live call) run only AFTER the transaction committed, never while holding it. If the process dies
-  // in this window the effect is not repeated on retry (the key replays); a live call dies with the process anyway.
-  if (out.kind === 'executed' && after) await after();
+  // in this window the effect is not repeated on retry (the key replays); a live call dies with the process anyway. If the effect
+  // FAILS, the committed answer is still returned (the state change happened) and the failure goes to the caller's hook, which
+  // schedules a retry (for live calls: the policy sweep).
+  if (out.kind === 'executed' && after) {
+    try {
+      await after();
+    } catch (e) {
+      args.onAfterCommitError?.(e);
+    }
+  }
   return out;
 }

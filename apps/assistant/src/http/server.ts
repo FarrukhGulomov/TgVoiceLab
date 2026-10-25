@@ -139,7 +139,19 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
       const merged = { body, params: req.params };
       const out = await runIdempotent<{ data: unknown }>(
         app.db,
-        { ownerId, action, key, requestBody: merged, now: app.clock.now(), crypto: app.crypto },
+        {
+          ownerId,
+          action,
+          key,
+          requestBody: merged,
+          now: app.clock.now(),
+          crypto: app.crypto,
+          // A failed hangup after the commit is not lost: the sweep re-reads the committed policy and ends what it forbids.
+          onAfterCommitError: (e) => {
+            req.log.error({ err: String((e as Error)?.message ?? e).slice(0, 200), action }, 'effect after commit failed; the live-call policy sweep will retry');
+            void app.operations.enforceLivePolicy(ownerId).catch(() => undefined);
+          },
+        },
         async (c) => {
           const r = await handler({ ownerId, body, c, req });
           return { status: r.status, body: { data: r.data }, ...(r.afterCommit ? { afterCommit: r.afterCommit } : {}) };
@@ -338,7 +350,7 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
         if (!exists.rowCount) throw new DomainError('not_found', 'call not found');
       }
       // The provider hangup is awaited only after the idempotency transaction committed.
-      return { status: 202, data: { stopRequested: true, wasLive: !!live }, afterCommit: async () => void (await live?.end('cancelled')) };
+      return { status: 202, data: { stopRequested: true, wasLive: !!live }, afterCommit: async () => void (await app.operations.terminateCall(ownerId, id, 'cancelled')) };
     }),
   );
   // An outcome_unknown call occupies the account (it might be live). Only an operator who has CHECKED the real phone/account may clear it.
