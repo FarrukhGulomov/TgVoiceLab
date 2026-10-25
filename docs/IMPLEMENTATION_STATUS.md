@@ -1,14 +1,15 @@
 # Implementation status
 
-Last updated: 2026-10-17 · Branch `claude/new-session-o6be3b`
+Last updated: 2026-10-25 · Branch `claude/new-session-o6be3b`
 
-**Bottom line: the requested outcome is NOT complete.** The text/task/reminder assistant works and is tested. Real Telegram private calling
-(owner calls, authorized contact calls, live AI conversation) is **not implemented and not verified**: it is blocked on live evidence that cannot be
-produced from this sandbox. Production calling is **disabled by construction** (see "How calling is held off").
+**Bottom line: production voice calling is NOT approved.** The text/task/reminder assistant works and is tested. Telegram private calling, live AI conversation,
+VoiceLab speech and answering the owner's own calls exist in code and have been exercised in operator tests on the owner's machine, but none of that is a recorded
+live-verification pass for the deployed build, and the 2026-10-24 independent audit found release blockers that are now fixed in code but not yet verified live
+(see [AUDIT_2026-10-24_RESPONSE.md](AUDIT_2026-10-24_RESPONSE.md)). Calling is **disabled by default** (see "How calling is held off").
 
-**Since the previous update:** the 20 findings of the 2026-10-17 audit were confirmed and fixed offline (see [AUDIT_REMEDIATION.md](AUDIT_REMEDIATION.md)); the image
-now runs as real containers in `deploy/smoke.sh`; and a first **operator-run** call session against a second account of the owner is recorded in
-`docs/research/telegram-private-calls.md` §9a (setup, 60 s and 300 s answered calls with clean two-way audio, and a decline run; see F-10…F-13). That session is **not** a gate pass and does not enable calling.
+**Since the previous update:** the 2026-10-24 audit (19 findings) was reviewed against the code; the confirmed ones were fixed with regression tests, and the rest are listed
+with their reason in the response document. Earlier: the 20 findings of the 2026-10-17 audit were fixed ([AUDIT_REMEDIATION.md](AUDIT_REMEDIATION.md)); the image runs as real
+containers in `deploy/smoke.sh`.
 
 Status vocabulary (spec §15): **implemented** · **automatically tested** · **live verified** · **blocked** · **not started**.
 Nothing in this repository is _live verified_ today. Fakes are labeled `FAKE`/`TEST-ONLY` and never count as live evidence.
@@ -125,4 +126,4 @@ voice message instead of text is not built (needs speech synthesis).
 
 ## Test inventory (all offline; real PostgreSQL for integration/e2e)
 
-`pnpm verify` → lint, format, typecheck, unit (161), contract (7), integration (124), e2e (4) = 296 tests. Live scripts are separate and refuse to run without authorization.
+`pnpm verify` → lint, format, typecheck, unit (504), contract (7), integration (283), e2e (4) = 798 tests (counts as of 2026-10-25; the numbers in older sections of this file are historical). Live scripts are separate and refuse to run without authorization.

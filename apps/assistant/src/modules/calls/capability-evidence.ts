@@ -112,11 +112,24 @@ export function deriveCapabilities(
   };
 }
 
-/** Directories whose source defines what the evidence was recorded against: the Telegram gateway, the production call adapter and the audio path. */
+/**
+ * Directories whose source defines what the evidence was recorded against and what a call can do or cost: the Telegram gateway and media path,
+ * the AI/voice providers, the orchestrator, adapter, audio bridge and conversation runners (all of modules/calls), the dial policy,
+ * live-call control and the contracts. A change in any of them means the evidence no longer describes the running code (audit F-14).
+ */
 export const FINGERPRINT_DIRS = [
+  // transport and media
   'apps/assistant/src/infrastructure/telegram',
-  'apps/assistant/src/modules/calls/ntgcalls',
-  'apps/assistant/src/modules/calls/audio',
+  'apps/assistant/src/infrastructure/audio',
+  // the AI / voice providers a call talks through
+  'apps/assistant/src/infrastructure/openai',
+  'apps/assistant/src/infrastructure/gemini',
+  'apps/assistant/src/infrastructure/voicelab',
+  // orchestration, adapter, audio bridge and the conversation runners (everything under modules/calls), the dial policy and live-call control
+  'apps/assistant/src/modules/calls',
+  'apps/assistant/src/modules/policy',
+  'apps/assistant/src/modules/operations',
+  'packages/contracts/src',
 ] as const;
 
 /** Deployment fingerprint: lockfile + the call-path sources. Evidence recorded for other code/deps does not transfer. */

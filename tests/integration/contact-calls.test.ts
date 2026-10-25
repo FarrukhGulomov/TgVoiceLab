@@ -113,6 +113,7 @@ async function setup() {
   });
   const memory = new MemoryService(new DataCrypto(new Envelope(parseKeyRing(TEST_KEYRING))));
   ref.inner = new ContactCallRunner({
+    memoryRetentionDays: 30,
     db: app.db,
     tasks: app.tasks,
     memory,
@@ -234,6 +235,32 @@ const finish = async (s: Awaited<ReturnType<typeof setup>>, link: FakeLink, dial
   await dialing;
   return s.texts().find((x) => x.includes('Call report')) ?? '';
 };
+
+describe('audit F-13: what a call taught the assistant about a contact does not outlive the retention setting', () => {
+  it('call-derived contact memories expire after the configured days; style lessons do not', async () => {
+    const s = await setup();
+    const { dialing, link } = await meetingCall(s);
+    link.toolCb!({
+      id: 'r',
+      name: 'submit_report',
+      args: { outcome: 'delivered', summary: 'Javlon narxni 9000 dollar dedi.', lesson: 'Qisqaroq javob ber.' },
+    });
+    await finish(s, link, dialing);
+    const rows = (await t.db.query(`SELECT subject_scope, expires_at, created_at FROM memories ORDER BY created_at`)).rows as Array<{
+      subject_scope: string;
+      expires_at: Date | null;
+      created_at: Date;
+    }>;
+    const contactRows = rows.filter((r) => r.subject_scope.startsWith('contact:'));
+    expect(contactRows.length).toBeGreaterThan(0);
+    for (const r of contactRows) {
+      expect(r.expires_at).not.toBeNull();
+      expect(Math.round((r.expires_at!.getTime() - r.created_at.getTime()) / 86_400_000)).toBe(30);
+    }
+    for (const r of rows.filter((x) => x.subject_scope === 'owner:lessons')) expect(r.expires_at).toBeNull();
+    await s.app.close();
+  });
+});
 
 describe('audit: failures around a contact call are reported truthfully', () => {
   it('F-09: a failing memory write does not turn a completed conversation into a transport error', async () => {

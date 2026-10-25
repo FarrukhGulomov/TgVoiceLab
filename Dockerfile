@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# Production image for the assistant (text/task/reminder core). It deliberately EXCLUDES the Phase 0 spike and the
-# LGPL-3.0 `ntgcalls` native addon: no production call adapter exists yet, so shipping the binary would add license
-# obligations and attack surface for nothing. When a production call adapter lands, add it via an ADR + LGPL notice review.
+# Production image for the assistant. It EXCLUDES the Phase 0 spike (experiments/). It DOES contain the LGPL-3.0 `ntgcalls` native addon
+# (a production dependency of apps/assistant, loaded only when CALL_ADAPTER=ntgcalls), about 98 MB: redistributing this image carries the
+# LGPL obligations listed in docs/THIRD_PARTY_NOTICES.md. Calling stays disabled by default (CALLS_ENABLED=false, CALL_ADAPTER=disabled).
 FROM node:22-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH
 RUN corepack enable && corepack prepare pnpm@10.28.0 --activate

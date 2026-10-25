@@ -53,6 +53,8 @@ const EnvSchema = z
     /** Log the Gemini Live session's protocol events (setup, audio counts, tool calls, close codes) at info level. No speech content is logged. */
     GEMINI_DEBUG: bool.default(false),
     /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset: a connected call is settled at its full reservation (an unknown cost never counts as free). */
+    /** How long what a call taught the assistant about a contact (summary, offers, notes) is remembered. 0 = forever. Call reports themselves are deleted after 30 days; memories derived from them follow this setting instead of outliving them silently. Style lessons (no personal data) are kept. */
+    CALL_MEMORY_RETENTION_DAYS: z.coerce.number().int().min(0).max(3650).default(180),
     AI_VOICE_COST_USD_PER_MINUTE: opt(z.coerce.number().positive().max(100)),
     /** Who speaks on calls. Unset: the AI voice provider's own voice. `voicelab`: VoiceLab's Uzbek voice (the listening/thinking model answers in text). Needs AI_VOICE_PROVIDER=openai or gemini (the model answers in text; for gemini the Live model must support TEXT output). */
     TTS_PROVIDER: z.preprocess(providerChoice, z.enum(['voicelab']).optional()),

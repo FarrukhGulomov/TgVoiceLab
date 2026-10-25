@@ -23,6 +23,8 @@ export interface ContactCallRunnerDeps {
   memory?: import('../../memory/memory.service.js').MemoryService | undefined;
   clock?: { now(): Date } | undefined;
   costUsdPerMinute?: number | undefined;
+  /** Days what the call taught the assistant about the contact is remembered (0 or unset: forever). */
+  memoryRetentionDays?: number | undefined;
   log?: ((line: string) => void) | undefined;
   /** Put what was said and tool arguments into log lines (development only). */
   logContent?: boolean | undefined;
@@ -317,11 +319,17 @@ export class ContactCallRunner implements CallSessionRunner {
       const gist = `${when} (${report.outcome}) ${facts} ${report.summary}`.replace(/\s+/g, ' ');
       notes = [gist.slice(0, 400), ...notes];
     }
+    const memoryExpiry = this.d.memoryRetentionDays
+      ? new Date((this.d.clock?.now() ?? new Date()).getTime() + this.d.memoryRetentionDays * 86_400_000)
+      : undefined;
     // Writing what was learnt must never change how the call ended: a failing memory write is logged, the call stays "completed".
     if (this.d.memory && report && notes.length) {
       for (const n of notes)
         await this.d.memory
-          .remember(db, ownerId, contactScope(row.id), n, { source: 'call_report', callId }, this.d.clock?.now() ?? new Date(), { confidence: 0.8 })
+          .remember(db, ownerId, contactScope(row.id), n, { source: 'call_report', callId }, this.d.clock?.now() ?? new Date(), {
+            confidence: 0.8,
+            ...(memoryExpiry ? { expiresAt: memoryExpiry } : {}),
+          })
           .catch((e: unknown) => this.d.log?.(`error: call memory was not saved (${String((e as Error)?.message ?? e).slice(0, 120)})`));
     }
     if (this.d.memory && report) {

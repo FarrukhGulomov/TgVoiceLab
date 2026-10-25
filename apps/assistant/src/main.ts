@@ -272,6 +272,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   });
   const { ContactCallRunner, RoutingCallRunner } = await import('./modules/calls/conversation/contact-call-runner.js');
   const contactRunner = new ContactCallRunner({
+    memoryRetentionDays: cfg.CALL_MEMORY_RETENTION_DAYS,
     db,
     tasks: new TaskService(crypto),
     memory: new (await import('./modules/memory/memory.service.js')).MemoryService(crypto),

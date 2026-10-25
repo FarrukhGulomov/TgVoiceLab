@@ -71,11 +71,11 @@ non-interactive use. Rotation: runbooks `key-rotation`, `session-compromise`.
 
 - No KMS integration (file/env refs only). `pnpm keys:rotate` re-encrypts every ciphertext location (including call plans, permission context, drafts, idempotency responses); transient outbox payloads are not rewritten (drain first).
 - Admin API has no TLS or per-token scopes; it must stay on loopback/private network.
-- No metrics export/alerting yet; only structured logs, audit rows, and `/health/ready`.
+- No metrics export/alerting yet; only structured logs, audit rows, and `/health/ready` (which now also reports overdue jobs/outbox and incomplete Telegram recovery).
 - No row-level security (optional per spec).
 - Prompt-injection and consent-refusal behavior against real speech cannot be tested until the conversation layer exists.
 - The image and database run as real containers in `deploy/smoke.sh` (run locally and in CI); a real host canary with Telegram has **not** been done. `pnpm audit` runs in CI and was run locally on 2026-10-17.
-- LGPL-3.0 `ntgcalls`: excluded from the production image; legal review required before bundling (ADR-0001).
+- LGPL-3.0 `ntgcalls`: it IS part of the production image (a production dependency); see docs/THIRD_PARTY_NOTICES.md and obtain legal review before redistributing an image (ADR-0001).
 
 ## Voice, memory and persona data flows (added with the VoiceLab / persona work)
 
@@ -106,3 +106,10 @@ non-interactive use. Rotation: runbooks `key-rotation`, `session-compromise`.
 - The owner's ring becomes an owner-approved call request and runs through the same orchestrator as every other call: kill switch, verified-build gate (`ownerCallingAllowed`), single active call, call budget, durable call state, events and report. Only the owner's opt-out and quiet hours are skipped, because they limit calls the assistant starts, not calls the owner makes.
 - Key exchange: the assistant answers with its half (`g_b`) and checks that the key derived from the caller's `g_a` carries the fingerprint the caller announced; a mismatch hangs up. Audio is not stored.
 - Not verified against the live service. Strangers and contacts calling in are a later phase.
+
+## Live-call safety and privacy (2026-10-24 audit follow-up)
+
+- A kill switch, opt-out or revoked permission is committed first; ending the live call follows. A periodic sweep (every 5 s) re-reads the committed policy and ends any live call it forbids, and every hangup is retried, so a failed hangup does not leave a call running.
+- What was said and tool arguments are never written to logs by default. `debug`/`trace` logging is refused in production.
+- What a call taught the assistant about a contact (summary, offers, notes) expires after `CALL_MEMORY_RETENTION_DAYS` (default 180; 0 = forever). Call reports are deleted after 30 days. Style lessons contain no personal data and are kept.
+- A paid call whose cost is unknown is settled at its full reservation against the daily budget; an unknown cost never counts as free.

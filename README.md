@@ -16,7 +16,7 @@ voice calls to the owner and to explicitly authorized business contacts.
 
 ## What does not work yet
 
-Owner calls, contact calls, live AI conversation, voice-note transcription, daily briefings, memory, OpenAI adapters. See the status document.
+Everything that talks to a real service from this repository's tests is verified only against fakes. Real Telegram calls (owner calls, answering the owner's calls, contact calls), live AI conversation, VoiceLab speech, voice-note transcription and the text-AI fallbacks have run in operator tests on the owner's machine but are **not** covered by a live-verification record in this repository, and production voice calling is held off until the audit release gates are closed (see [docs/AUDIT_2026-10-24_RESPONSE.md](docs/AUDIT_2026-10-24_RESPONSE.md) and the status document).
 
 ## Quickstart (development)
 
@@ -89,5 +89,6 @@ tests/{unit,contract,integration,e2e}   docs/{research,adr,runbooks}   deploy/  
 
 ## Licenses
 
-Application code: unlicensed/private (owner to choose). Dependencies are MIT/Apache/ISC except the Phase 0 candidate **`ntgcalls` (LGPL-3.0-only)**, which is
-confined to `experiments/` and excluded from the production image. Do not redistribute an image containing it before the LGPL review in ADR-0001.
+Application code: unlicensed/private (owner to choose). Dependencies are MIT/Apache/ISC except **`ntgcalls` (LGPL-3.0-only)**, the native call-media addon. It is a
+production dependency of `apps/assistant` (loaded only when `CALL_ADAPTER=ntgcalls`) and is therefore **inside the production image**. Use it unmodified, as a dynamically
+loaded addon, and see [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md) before redistributing an image. `experiments/` is not packaged.
