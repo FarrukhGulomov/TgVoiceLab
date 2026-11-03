@@ -48,7 +48,7 @@ export interface ContainerDeps {
   textAiDisabled?: boolean;
   /** Daily cap (micro-USD); the day's budget row is created lazily so budgets survive midnights without a restart. */
   dailyCapMicroUsd?: number;
-  callTimeouts?: { dialMs?: number; eventIdleMs?: number; hangupMs?: number };
+  callTimeouts?: { dialMs?: number; eventIdleMs?: number; hangupMs?: number; runnerMs?: number };
   ringTimeoutMs?: number;
   interpreter?: TextInterpreterPort;
   /** Free-form understanding for text the rules did not recognise (Gemini). */

@@ -200,7 +200,13 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     return new VoiceLabMouthLink(
       ears ?? brain,
       callTts,
-      { timer, stream: ttsStream, fillers: cfg.VOICELAB_FILLER ? FILLERS : [], log: (line) => log.info({ call: true, voicelab: true }, line) }, // lengths and timings only, never the words
+      {
+        timer,
+        stream: ttsStream,
+        brainSpeaks: cfg.AI_VOICE_PROVIDER === 'gemini' && cfg.GEMINI_TEXT_OUTPUT === 'transcript',
+        fillers: cfg.VOICELAB_FILLER ? FILLERS : [],
+        log: (line) => log.info({ call: true, voicelab: true }, line),
+      }, // lengths and timings only, never the words
     );
   };
   const makeOpenAi = (o: ConstructorParameters<typeof OpenAiRealtimeLink>[0]) =>
@@ -266,6 +272,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
     contacts: new ContactService(crypto),
     contactCalls: cfg.CALLS_ENABLED ? new ContactCallService(new AuthorizationService(db, systemClock, crypto), systemClock) : undefined,
     costUsdPerMinute: cfg.AI_VOICE_COST_USD_PER_MINUTE,
+    ownerName: cfg.OWNER_NAME,
     log: callLog,
     logContent,
     makeLink,
@@ -289,7 +296,7 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
       ),
   });
   sessionRunner = new RoutingCallRunner(db, ownerRunner, contactRunner);
-  if (cfg.AI_VOICE_PROVIDER === 'gemini')
+  if (cfg.AI_VOICE_PROVIDER === 'gemini' && !sttOnCalls)
     log.warn(
       "contact calls send the contact's voice to Gemini; on the free tier Google may use that data to improve its products — use a paid tier before calling contacts",
     );
@@ -310,7 +317,7 @@ if (cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_NOTES) {
 let textFallback: import('./application/ports.js').IntentFallbackPort | undefined;
 if (cfg.GEMINI_API_KEY && cfg.GEMINI_TEXT_MODEL && cfg.TEXT_AI_ADAPTER === 'rules') {
   const { GeminiTextFallback } = await import('./infrastructure/gemini/text.js');
-  textFallback = new GeminiTextFallback({ apiKey: cfg.GEMINI_API_KEY, model: cfg.GEMINI_TEXT_MODEL });
+  textFallback = new GeminiTextFallback({ apiKey: cfg.GEMINI_API_KEY, model: cfg.GEMINI_TEXT_MODEL, ownerName: cfg.OWNER_NAME });
   log.warn(
     'free-form text understanding is on (Gemini, not live verified): text the rules do not recognise is sent to Gemini; on the free tier Google may use it to improve its products',
   );

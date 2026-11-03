@@ -492,7 +492,9 @@ export async function buildServer(d: ServerDeps): Promise<FastifyInstance> {
       overdueJobs,
       overdueOutbox,
       ...(messaging !== undefined ? { messaging } : {}),
-      capabilities: await capabilities(null),
+      capabilities: await capabilities(
+        dbOk ? ((await app.db.query<{ id: string }>('SELECT id FROM owners ORDER BY created_at LIMIT 1')).rows[0]?.id ?? null) : null,
+      ),
     };
     return rep.status(status === 'ready' ? 200 : 503).send({ requestId: req.id, data: body });
   });

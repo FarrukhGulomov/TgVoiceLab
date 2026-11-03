@@ -131,7 +131,14 @@ export interface OwnerCallToolsDeps {
 
 export class OwnerCallTools {
   #numbered: Task[] = [];
+  #ownerTurns = 0; // utterances of the owner heard on this call (the recogniser's transcripts)
+  #pendingCall: { key: string; turns: number } | undefined;
   constructor(private readonly d: OwnerCallToolsDeps) {}
+
+  /** The runner reports every utterance the owner makes: placing a call needs one AFTER the assistant read the plan back. */
+  noteOwnerSpoke(): void {
+    this.#ownerTurns++;
+  }
 
   /** Open tasks that are overdue or due today (local day), oldest first, numbered from 1. Replaces the call-local numbering. */
   async load(): Promise<Task[]> {
@@ -266,6 +273,20 @@ export class OwnerCallTools {
           if (currency && num(call.args.max_price)) lim.push({ kind: 'max', amount: num(call.args.max_price)!, currency });
           const opening = num(call.args.opening_price);
           const fullMessage = opening && currency ? `${message} Boshlang'ich narx: ${opening} ${currency}.` : message;
+          // A call to someone else is never placed on the model's say-so alone: the first request only reads the plan back; it is placed when
+          // the SAME request comes again after the owner said something (their confirmation), so the model can not confirm on the owner's behalf.
+          const key = JSON.stringify([name.trim().toLowerCase(), fullMessage, due?.utc.getTime() ?? null, slots.map((x) => x.getTime()), lim]);
+          if (this.#pendingCall?.key !== key || this.#ownerTurns <= this.#pendingCall.turns) {
+            this.#pendingCall = { key, turns: this.#ownerTurns };
+            return {
+              result: {
+                ok: false,
+                needs_confirmation: true,
+                note: `Hali qo'ng'iroq qilinmadi. Egasiga ovoz chiqarib o'qib ber: kimga (${name}), nima deyiladi, qachon. Egasi "ha" desa, shu argumentlar bilan call_contact ni YANA chaqir.`,
+              },
+            };
+          }
+          this.#pendingCall = undefined;
           const out = await this.d.db.tx(async (c) => {
             const r = await contacts.resolveByName(c, this.d.ownerId, name);
             if (r.kind === 'none') return { ok: false as const, error: `'${name}' nomli kontakt yo'q` };

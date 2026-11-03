@@ -155,6 +155,8 @@ export class VoiceLabMouthLink implements RealtimeLink {
        * A sentence whose stream fails before any audio is voiced by the REST synthesizer instead; a half-played one is never replayed.
        */
       stream?: StreamingSynthesizer | undefined;
+      /** The brain also produces audio (Gemini in 'transcript' mode), so it can keep talking in its own voice when VoiceLab is out of service. */
+      brainSpeaks?: boolean | undefined;
     } = {},
   ) {
     this.inputRateHz = brain.inputRateHz;
@@ -283,6 +285,9 @@ export class VoiceLabMouthLink implements RealtimeLink {
         if (!voiced && ++this.#failures >= DEGRADE_AFTER && !this.#degraded) {
           this.#degraded = true;
           this.o.log?.("voicelab: unavailable, switching to the AI model's own voice for the rest of the call");
+          // A text-only brain has no voice of its own: nobody can speak any more, so say so (the bridge ends the call) instead of staying silent until the time limit.
+          if (this.o.brainSpeaks === false)
+            for (const cb of this.#errors) cb('voicelab tts unavailable: the voice failed repeatedly and the AI model produces no audio of its own');
         }
       }
     });

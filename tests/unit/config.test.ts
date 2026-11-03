@@ -96,4 +96,11 @@ describe('config validation', () => {
     expect(() => loadConfig({ ...base, NODE_ENV: 'production', LOG_LEVEL: 'trace' })).toThrow(/LOG_LEVEL/);
     expect(loadConfig({ ...base, LOG_LEVEL: 'debug' }).LOG_LEVEL).toBe('debug'); // development is fine
   });
+
+  it('audit 2026-11-03 L2: switches for features that do not exist are refused, not silently ignored', () => {
+    expect(() => loadConfig({ ...base, RAW_AUDIO_RECORDING_ENABLED: 'true' })).toThrow(/RAW_AUDIO_RECORDING_ENABLED/);
+    expect(() => loadConfig({ ...base, FULL_TRANSCRIPT_RETENTION_ENABLED: 'true' })).toThrow(/FULL_TRANSCRIPT_RETENTION_ENABLED/);
+    expect(loadConfig({ ...base, OWNER_NAME: '' }).OWNER_NAME).toBeUndefined();
+    expect(loadConfig({ ...base, OWNER_NAME: 'Farruh' }).OWNER_NAME).toBe('Farruh');
+  });
 });

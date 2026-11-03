@@ -56,6 +56,15 @@ describe('retention & deletion (A15)', () => {
     expect(await count('audit_events')).toBe(1);
     expect(await count('idempotency_keys')).toBe(1);
   });
+  it('audit 2026-11-03 L9: dead-lettered jobs are removed after 90 days, newer ones stay for inspection', async () => {
+    await t.db.query(
+      `INSERT INTO jobs (owner_id, kind, due_at, status, dedupe_key, updated_at) VALUES ($1,'x',$2,'dead','old-dead',$3), ($1,'x',$2,'dead','new-dead',$4)`,
+      [o.ownerId, NOW, days(-91), days(-10)],
+    );
+    const r = await runRetention(t.db, NOW);
+    expect(r.deadLetters).toBe(1);
+    expect((await t.db.query(`SELECT dedupe_key FROM jobs`)).rows).toEqual([{ dedupe_key: 'new-dead' }]);
+  });
   it('the retention switch does not leak: outside the job, audit rows still cannot be deleted', async () => {
     await t.db.query(`INSERT INTO audit_events (owner_id, actor_type, action, allowed, reason_code) VALUES ($1,'system','x',true,'ok')`, [o.ownerId]);
     await runRetention(t.db, NOW);

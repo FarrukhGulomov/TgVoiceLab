@@ -52,9 +52,9 @@ const EnvSchema = z
     GEMINI_LANGUAGE_CODE: opt(z.string()),
     /** Log the Gemini Live session's protocol events (setup, audio counts, tool calls, close codes) at info level. No speech content is logged. */
     GEMINI_DEBUG: bool.default(false),
-    /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset: a connected call is settled at its full reservation (an unknown cost never counts as free). */
     /** How long what a call taught the assistant about a contact (summary, offers, notes) is remembered. 0 = forever. Call reports themselves are deleted after 30 days; memories derived from them follow this setting instead of outliving them silently. Style lessons (no personal data) are kept. */
     CALL_MEMORY_RETENTION_DAYS: z.coerce.number().int().min(0).max(3650).default(180),
+    /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset: a connected call is settled at its full reservation (an unknown cost never counts as free). */
     AI_VOICE_COST_USD_PER_MINUTE: opt(z.coerce.number().positive().max(100)),
     /** Who speaks on calls. Unset: the AI voice provider's own voice. `voicelab`: VoiceLab's Uzbek voice (the listening/thinking model answers in text). Needs AI_VOICE_PROVIDER=openai or gemini (the model answers in text; for gemini the Live model must support TEXT output). */
     TTS_PROVIDER: z.preprocess(providerChoice, z.enum(['voicelab']).optional()),
@@ -95,9 +95,11 @@ const EnvSchema = z
     MESSAGING_ADAPTER: z.enum(['disabled', 'telegram', 'fake']).default('disabled'),
     TEXT_AI_ADAPTER: z.enum(['disabled', 'rules', 'openai']).default('rules'),
     CALL_FEASIBILITY_EVIDENCE_PATH: opt(z.string()),
-    MEDIA_SOCKET_PATH: z.string().default('/run/assistant/media.sock'),
+    /** Not implemented: raw audio and full transcripts are never stored. The switches exist only so that turning them on is refused instead of silently ignored. */
     RAW_AUDIO_RECORDING_ENABLED: bool.default(false),
     FULL_TRANSCRIPT_RETENTION_ENABLED: bool.default(false),
+    /** The owner's first name, used in the assistant's greetings and prompts. Unset: the assistant addresses the owner without a name. */
+    OWNER_NAME: opt(z.string().min(1).max(40)),
     DAILY_AI_BUDGET_USD: opt(z.coerce.number().positive().max(10000)),
     HTTP_HOST: z.string().default('127.0.0.1'),
     HTTP_PORT: z.coerce.number().int().min(0).max(65535).default(8080),
@@ -129,6 +131,9 @@ const EnvSchema = z
           'live-call recognition by VoiceLab needs TTS_PROVIDER=voicelab (the thinking model then works in text only); set VOICELAB_STT_CALLS=false to use it for voice notes only',
         );
     }
+    if (e.RAW_AUDIO_RECORDING_ENABLED) bad('RAW_AUDIO_RECORDING_ENABLED', 'raw audio recording is not implemented; audio is never stored');
+    if (e.FULL_TRANSCRIPT_RETENTION_ENABLED)
+      bad('FULL_TRANSCRIPT_RETENTION_ENABLED', 'full transcript retention is not implemented; transcripts are never stored');
     if (e.NODE_ENV === 'production' && (e.LOG_LEVEL === 'debug' || e.LOG_LEVEL === 'trace'))
       bad('LOG_LEVEL', 'debug and trace are refused in production: they can carry conversation content');
     if (e.ANSWER_OWNER_CALLS && (!e.CALLS_ENABLED || e.CALL_ADAPTER !== 'ntgcalls'))

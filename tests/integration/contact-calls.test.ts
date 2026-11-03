@@ -348,11 +348,20 @@ describe('call_contact by voice (owner call tool)', () => {
       });
     expect((await mk(false).execute({ id: '1', name: 'call_contact', args: { name: 'Javlon', message: 'Salom ayt' } })).result).toMatchObject({ ok: false });
     expect((await mk(true).execute({ id: '2', name: 'call_contact', args: { name: 'Nodir', message: 'Salom ayt' } })).result).toMatchObject({ ok: false });
-    const ok = await mk(true).execute({
-      id: '3',
-      name: 'call_contact',
-      args: { name: 'Javlon', message: 'Hisobot tayyor', date: '2026-10-16', time: '10:00' },
+    const args = { name: 'Javlon', message: 'Hisobot tayyor', date: '2026-10-16', time: '10:00' };
+    const tools = mk(true);
+    // The model can not confirm on the owner's behalf: the first request only reads the plan back, and so does a repeat before the owner spoke.
+    expect((await tools.execute({ id: '3', name: 'call_contact', args })).result).toMatchObject({ ok: false, needs_confirmation: true });
+    expect((await tools.execute({ id: '4', name: 'call_contact', args })).result).toMatchObject({ ok: false, needs_confirmation: true });
+    expect((await t.db.query(`SELECT count(*)::int n FROM call_requests WHERE contact_id IS NOT NULL`)).rows[0].n).toBe(0);
+    tools.noteOwnerSpoke(); // the owner said "ha"
+    // ...and a changed request needs a fresh confirmation.
+    expect((await tools.execute({ id: '5', name: 'call_contact', args: { ...args, message: 'Boshqa gap' } })).result).toMatchObject({
+      needs_confirmation: true,
     });
+    expect((await tools.execute({ id: '6', name: 'call_contact', args })).result).toMatchObject({ needs_confirmation: true });
+    tools.noteOwnerSpoke();
+    const ok = await tools.execute({ id: '7', name: 'call_contact', args });
     expect(ok.result).toMatchObject({ ok: true, contact: 'Javlon' });
     expect((await t.db.query(`SELECT count(*)::int n FROM call_requests WHERE contact_id IS NOT NULL`)).rows[0].n).toBe(1);
     await s.app.close();
@@ -456,11 +465,10 @@ describe('price limits can not be bypassed', () => {
       contactCalls: s.app.contactCalls,
       onEndCall: () => undefined,
     });
-    const r = await tools.execute({
-      id: '1',
-      name: 'call_contact',
-      args: { name: 'Javlon', message: 'Onix mashinasini sot', min_price: 10000, currency: 'USD', opening_price: 12000 },
-    });
+    const args = { name: 'Javlon', message: 'Onix mashinasini sot', min_price: 10000, currency: 'USD', opening_price: 12000 };
+    expect((await tools.execute({ id: '0', name: 'call_contact', args })).result).toMatchObject({ needs_confirmation: true });
+    tools.noteOwnerSpoke();
+    const r = await tools.execute({ id: '1', name: 'call_contact', args });
     expect(r.result).toMatchObject({ ok: true });
     const dialing = s.app.tick();
     for (let i = 0; i < 100 && s.links.length === 0; i++) await new Promise((r2) => setTimeout(r2, 20));

@@ -192,6 +192,7 @@ describe('VoiceLabMouthLink', () => {
   });
 });
 
+import { isFatalLinkError } from '../../apps/assistant/src/modules/calls/audio/realtime-bridge.js';
 import { geminiSetup } from '../../apps/assistant/src/infrastructure/gemini/live.js';
 describe('VoiceLab out of service', () => {
   it("after repeated synthesis failures the brain's own voice takes over; before that its audio is dropped", async () => {
@@ -214,6 +215,38 @@ describe('VoiceLab out of service', () => {
     await new Promise((r) => setTimeout(r, 20));
     brain.audioCb(new Uint8Array(100));
     expect(got).toEqual([100]);
+  });
+});
+
+describe('audit 2026-11-03 M1/M2: a lost recogniser or a lost voice with nothing to fall back on ends the call', () => {
+  it('a text-only brain has no voice of its own: the failure is reported as fatal; a brain that makes audio takes over silently', async () => {
+    const run = async (brainSpeaks: boolean) => {
+      const errors: string[] = [];
+      const link = new VoiceLabMouthLink(
+        new FakeBrain(),
+        {
+          synthesize: async () => {
+            throw new Error('HTTP 402 insufficient_credits');
+          },
+        },
+        { brainSpeaks },
+      );
+      link.onError((m) => errors.push(m));
+      (link as any).brain.textCb('Birinchi. ', false);
+      (link as any).brain.textCb('Ikkinchi. ', false);
+      await waitFor(() => errors.length >= 2);
+      await new Promise((r) => setTimeout(r, 20));
+      return errors;
+    };
+    const mute = await run(false);
+    expect(mute.some((m) => isFatalLinkError(m))).toBe(true);
+    expect((await run(true)).some((m) => isFatalLinkError(m))).toBe(false);
+  });
+
+  it('the recogniser giving up for this call is a fatal link error (the AI would hear nothing)', () => {
+    expect(isFatalLinkError('stt: the server keeps refusing the start message; speech recognition is off for this call')).toBe(true);
+    expect(isFatalLinkError('stt websocket closed (1006)')).toBe(true);
+    expect(isFatalLinkError('stt error: busy')).toBe(false);
   });
 });
 

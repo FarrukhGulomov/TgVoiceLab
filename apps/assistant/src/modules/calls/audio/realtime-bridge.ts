@@ -60,10 +60,10 @@ export function rmsS16(b: Uint8Array): number {
 
 /**
  * Link errors after which the AI session is gone for good (the socket closed without a resumable session, or the setup was never
- * acknowledged): the call can no longer be conducted. Other errors (a rejected message, a bad audio chunk) are survivable.
+ * acknowledged), VoiceLab's recogniser is gone for good (the AI would hear nothing), or the voice is gone with no voice of the model's own to fall back on (nobody could speak): the call can no longer be conducted. Other errors (a rejected message, a bad audio chunk) are survivable.
  */
 export function isFatalLinkError(m: string): boolean {
-  return /^(websocket closed \(|no setupComplete within )/.test(m);
+  return /^(websocket closed \(|no setupComplete within |stt websocket closed \(|stt: the server keeps refusing|voicelab tts unavailable)/.test(m);
 }
 
 const CALL_RATE = 48_000;
@@ -214,14 +214,14 @@ export class RealtimeCallBridge {
           this.#pendingAction = false;
           await out.afterPlayout();
         }
-      })().catch((e: unknown) => this.stats.errors.push(`tool: ${String((e as Error)?.message ?? e)}`));
+      })().catch((e: unknown) => void (this.stats.errors.length < 50 && this.stats.errors.push(`tool: ${String((e as Error)?.message ?? e)}`)));
     });
     this.link.onTranscript((who, text) => {
       if (who === 'caller' && /[\p{L}\p{N}]/u.test(text)) this.stats.callerTranscripts++;
       this.log(this.logContent ? `${who}: ${text}` : `${who}: [${text.length} characters]`);
     });
     this.link.onError((m) => {
-      this.stats.errors.push(m);
+      if (this.stats.errors.length < 50) this.stats.errors.push(m);
       this.log(`realtime error: ${m}`);
       if (!this.#stopped && isFatalLinkError(m)) this.#raiseFatal(m);
     });
@@ -234,7 +234,7 @@ export class RealtimeCallBridge {
         this.link.sendAudio(this.#up.process(f.samples));
       }
     })()
-      .catch((e: unknown) => this.stats.errors.push(`incoming audio: ${String((e as Error)?.message ?? e)}`))
+      .catch((e: unknown) => void (this.stats.errors.length < 50 && this.stats.errors.push(`incoming audio: ${String((e as Error)?.message ?? e)}`)))
       .finally(() => this.#finish());
 
     if (greeting) {

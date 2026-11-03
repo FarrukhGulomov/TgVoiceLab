@@ -11,6 +11,8 @@ import { ASSISTANT_PERSONA_NAME, CONTENT_BOUNDARY_RULE, OWNER_PERSONA_RULE } fro
  */
 export interface GeminiTextOptions {
   apiKey: string;
+  /** The owner's first name for the prompt; unset: the owner is just "egasi". */
+  ownerName?: string | undefined;
   model: string;
   fetchImpl?: typeof fetch;
   endpoint?: string;
@@ -108,12 +110,12 @@ export function parseModelJson(text: string): unknown {
   }
 }
 
-export function buildPrompt(text: string, ctx: InterpretContext): string {
+export function buildPrompt(text: string, ctx: InterpretContext, ownerName?: string): string {
   const now = DateTime.fromJSDate(ctx.receivedAt, { zone: ctx.timezone });
   const bg = ctx.background;
   const hist = bg?.history?.length ? bg.history.map((h) => `${h.from === 'owner' ? 'Egasi' : 'Yordamchi'}: ${h.text.replace(/\s+/g, ' ')}`).join('\n') : '';
   return [
-    `Sen ${ASSISTANT_PERSONA_NAME}san, Farruhning shaxsiy yordamchisisan, tirik, e'tiborli odam kabi: egasining gapini oldingi suhbat va oxirgi qo'ng'iroq natijasi bilan birga tushun, so'zma-so'z emas, ma'nosiga qarab. Egasi asosan o'zbekcha (lotin), ba'zan ruscha yoki inglizcha yozadi; yozuv xatolari va qisqa gaplar tabiiy ("yuq" = "yo'q", "junat" = "jo'nat").`,
+    `Sen ${ASSISTANT_PERSONA_NAME}san, ${ownerName ? `${ownerName}ning` : 'egasining'} shaxsiy yordamchisisan, tirik, e'tiborli odam kabi: egasining gapini oldingi suhbat va oxirgi qo'ng'iroq natijasi bilan birga tushun, so'zma-so'z emas, ma'nosiga qarab. Egasi asosan o'zbekcha (lotin), ba'zan ruscha yoki inglizcha yozadi; yozuv xatolari va qisqa gaplar tabiiy ("yuq" = "yo'q", "junat" = "jo'nat").`,
     `Hozir: ${now.toFormat('yyyy-LL-dd HH:mm')} (${ctx.timezone}), hafta kuni: ${now.toFormat('cccc')}. Nisbiy sanalarni (ertaga, indinga, 2 soatdan keyin) shu vaqtga nisbatan YYYY-MM-DD va HH:mm ga aylantir.`,
     'Egasining oxirgi xabarini quyidagi JSON buyruqlardan BIRIGA aylantir (faqat bitta JSON obyekt, boshqa matn yozma):',
     '{"kind":"create_task","title":string,"due":{"date":"YYYY-MM-DD","time":"HH:mm"}?}',
@@ -169,7 +171,7 @@ export class GeminiTextFallback implements IntentFallbackPort, MessageComposerPo
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': this.o.apiKey },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: buildPrompt(text, ctx) }] }],
+        contents: [{ parts: [{ text: buildPrompt(text, ctx, this.o.ownerName) }] }],
         generationConfig: { temperature: 0.3, maxOutputTokens: 1200 },
       }),
       signal: AbortSignal.timeout(this.o.timeoutMs ?? 45_000),

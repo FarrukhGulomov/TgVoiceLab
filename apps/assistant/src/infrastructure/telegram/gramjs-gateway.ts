@@ -37,6 +37,7 @@ export class GramjsMessaging implements MessagingPort, PeerResolverPort {
   }
 
   private selfId: string | null = null;
+  readonly #voiceSent = new Set<string>();
 
   /** Call signaling shares this ONE client: a second client on the same session would be kicked by Telegram. Usable after `start()`. */
   callTransport(protocol: CallProtocol): GramjsCallTransport {
@@ -170,8 +171,12 @@ export class GramjsMessaging implements MessagingPort, PeerResolverPort {
   }
 
   /** A voice note (OGG/Opus). The caller treats failure as non-fatal: the reply text was already delivered. */
-  async sendVoice(to: string, ogg: Buffer, durationSeconds: number, _key: string): Promise<void> {
+  async sendVoice(to: string, ogg: Buffer, durationSeconds: number, key: string): Promise<void> {
     if (!this.started) throw new Error('Telegram gateway not started');
+    // A redelivered outbox event must not voice the same reply twice (the voice note has no server-side dedupe key here).
+    if (this.#voiceSent.has(key)) return;
+    this.#voiceSent.add(key);
+    if (this.#voiceSent.size > 500) this.#voiceSent.delete(this.#voiceSent.values().next().value as string);
     const peer = await this.client.getInputEntity(bigInt(to));
     const { CustomFile } = await import('telegram/client/uploads.js');
     await this.client.sendFile(peer, {

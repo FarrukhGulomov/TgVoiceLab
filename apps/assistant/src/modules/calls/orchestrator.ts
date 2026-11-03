@@ -60,7 +60,7 @@ export interface OrchestratorDeps {
    * Bounded waits (audit F04). `dialMs`: the adapter must return a handle or fail; `eventIdleMs`: a live call's event stream must
    * show life (adapters emit a `heartbeat` at least every 30 s); `hangupMs`: ending the call and asking the provider must finish.
    */
-  timeouts?: { dialMs?: number; eventIdleMs?: number; hangupMs?: number };
+  timeouts?: { dialMs?: number; eventIdleMs?: number; hangupMs?: number; runnerMs?: number };
 }
 
 class PolicyDenied extends Error {
@@ -73,10 +73,15 @@ const REASON_TO_STATE: Partial<Record<CallEndReason, CallState>> = { declined: '
 
 export class CallOrchestrator {
   private readonly runner: CallSessionRunner;
-  private readonly tm: { dialMs: number; eventIdleMs: number; hangupMs: number };
+  private readonly tm: { dialMs: number; eventIdleMs: number; hangupMs: number; runnerMs: number };
   constructor(private readonly d: OrchestratorDeps) {
     this.runner = d.sessionRunner ?? noSessionRunner;
-    this.tm = { dialMs: d.timeouts?.dialMs ?? 45_000, eventIdleMs: d.timeouts?.eventIdleMs ?? 90_000, hangupMs: d.timeouts?.hangupMs ?? 10_000 };
+    this.tm = {
+      dialMs: d.timeouts?.dialMs ?? 45_000,
+      eventIdleMs: d.timeouts?.eventIdleMs ?? 90_000,
+      hangupMs: d.timeouts?.hangupMs ?? 10_000,
+      runnerMs: d.timeouts?.runnerMs ?? 20_000,
+    };
   }
 
   private dayKey(tz: string): string {
@@ -210,7 +215,7 @@ export class CallOrchestrator {
     };
   }
 
-  private async reject(ownerId: string, callRequestId: string, reason: string): Promise<DialOutcome> {
+  private async reject(ownerId: string, callRequestId: string, reason: string, quiet = false): Promise<DialOutcome> {
     const now = this.d.clock.now();
     await this.d.db.tx(async (c) => {
       // A dial attempt before the owner approved must not kill the request: it stays pending and approval makes it dialable.
@@ -229,11 +234,13 @@ export class CallOrchestrator {
         allowed: false,
         reasonCode: reason,
       });
-      await emitOutbox(
-        c,
-        { ownerId, aggregateType: 'call_request', aggregateId: callRequestId, type: 'call.notify', payload: { variant: 'rejected', reason } },
-        now,
-      );
+      // The owner ringing again while their first call is still up needs no "refused" message: they are on that call.
+      if (!quiet)
+        await emitOutbox(
+          c,
+          { ownerId, aggregateType: 'call_request', aggregateId: callRequestId, type: 'call.notify', payload: { variant: 'rejected', reason } },
+          now,
+        );
     });
     return { status: 'rejected', reason };
   }
@@ -251,7 +258,7 @@ export class CallOrchestrator {
     }
     if (!pre) return this.reject(ownerId, callRequestId, 'call_request_not_found');
     const first = evaluateDialPolicy(pre);
-    if (!first.allowed) return this.reject(ownerId, callRequestId, first.reasonCode);
+    if (!first.allowed) return this.reject(ownerId, callRequestId, first.reasonCode, !!opts.inbound && first.reasonCode === 'active_call_exists');
     const plan = pre.plan;
     const day = this.dayKey(pre.owner.timezone);
     const contactId = pre.contact?.id ?? null;
@@ -319,9 +326,9 @@ export class CallOrchestrator {
       });
     } catch (e) {
       if (registered) this.d.registry.remove(registered);
-      if (e instanceof PolicyDenied) return this.reject(ownerId, callRequestId, e.reason);
+      if (e instanceof PolicyDenied) return this.reject(ownerId, callRequestId, e.reason, !!opts.inbound && e.reason === 'active_call_exists');
       if ((e as { code?: string }).code === '23505' && String((e as { constraint?: string }).constraint).includes('calls_one_active_per_account'))
-        return this.reject(ownerId, callRequestId, 'active_call_exists');
+        return this.reject(ownerId, callRequestId, 'active_call_exists', !!opts.inbound);
       throw e;
     }
 
@@ -442,6 +449,7 @@ export class CallOrchestrator {
     let usageMicroUsd: number | null = 0; // null = a paid conversation ran and its usage is unknown (settled at the reserved amount, see settleCallBudget)
     let conversationHeld: boolean | undefined;
     let report: { outcome: string; summary: string } | undefined;
+    let runnerDone: Promise<unknown> | undefined; // the conversation layer keeps working (memory, follow-ups) after the line is gone
     const endAttempt = async (reason: CallEndReason) => {
       endReason ??= reason;
       await withTimeout(handle.end(reason), tm.hangupMs, 'hangup');
@@ -507,7 +515,7 @@ export class CallOrchestrator {
           await transitionCall(db, ownerId, callId, 'connected', { providerCallId: ev.providerCallId, now });
           durTimer = setTimeout(() => void endOnce('duration_limit'), plan.maxDurationSeconds * 1000);
           // Conversation (consent gate, Realtime, tools) is Phase 3/4. With no runner this ends the call at once.
-          void this.runner.run({ callId, ownerId, plan, handle }).then(
+          runnerDone = this.runner.run({ callId, ownerId, plan, handle }).then(
             (r) => {
               usageMicroUsd = r.usageMicroUsd ?? null;
               report = r.report;
@@ -519,6 +527,7 @@ export class CallOrchestrator {
               return endOnce('transport_error');
             },
           );
+          void runnerDone.catch(() => undefined);
         } else if (ev.type === 'ended' || ev.type === 'error') {
           terminalSeen = true;
           endReason ??= ev.reason ?? 'transport_error';
@@ -548,6 +557,20 @@ export class CallOrchestrator {
     if (!proven) {
       await this.persistUnknown(ownerId, callRequestId, callId, 'end_not_proven', providerCallId);
       return { status: 'outcome_unknown', callId };
+    }
+
+    // The other side may hang up first: the conversation layer is still writing its report, usage and follow-ups. Wait for it (bounded)
+    // instead of settling the call as "no conversation" with zero cost; if it does not finish, the cost is unknown and the report incomplete.
+    if (runnerDone) {
+      const settled = await withTimeout(runnerDone, this.tm.runnerMs, 'conversation wrap-up').then(
+        () => true,
+        () => false,
+      );
+      if (!settled) {
+        usageMicroUsd = null;
+        report = undefined;
+        conversationHeld = undefined;
+      }
     }
 
     const final = endReason ?? 'transport_error';

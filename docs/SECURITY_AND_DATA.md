@@ -33,21 +33,21 @@ full pipeline is **not** "end-to-end encrypted by Telegram".
 
 ## Data inventory and retention (defaults; configurable before launch)
 
-| Data                                          | Stored as                                                                                  | Default retention              | Mechanism                                       |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------ | ----------------------------------------------- |
-| Owner messages                                | AEAD ciphertext (`messages.content_enc`)                                                   | 30 days                        | `runRetention` (daily job), tombstone           |
-| Call reports                                  | structured JSON + encrypted narrative ref                                                  | 30 days                        | `runRetention`, tombstone                       |
-| Full third-party transcripts                  | **not stored** (feature off)                                                               | — (7 days if ever enabled)     | `FULL_TRANSCRIPT_RETENTION_ENABLED=false`       |
-| Raw audio                                     | **never written**                                                                          | — (7 days max if ever enabled) | `RAW_AUDIO_RECORDING_ENABLED=false`             |
-| Security audit metadata                       | IDs/codes only                                                                             | 90 days                        | `runRetention`                                  |
-| Memory (owner-approved)                       | AEAD ciphertext + provenance                                                               | until expiry/deletion          | table exists; feature **not started**           |
-| Idempotency keys, done jobs, delivered outbox | rows                                                                                       | 24 h / 7 d / 7 d               | `runRetention`                                  |
-| Call plans (purpose, questions, context)      | AEAD in `call_requests.plan_enc`; `plan`/`authorizations.plan` hold routable metadata only | with the call request          | sealed; plan hash is over the logical plan      |
-| Permission context entries                    | AEAD per element (`contact_permissions.context_allowlist`)                                 | with the permission row        | sealed                                          |
-| Idempotency responses                         | AEAD (jsonb string)                                                                        | 24 h                           | `runRetention`; rotation covers it              |
-| Clarification drafts                          | AEAD (`conversation_drafts.draft_enc`)                                                     | 10 min                         | one per owner, expiring, `runRetention`         |
-| Telegram recovery watermarks                  | ids only                                                                                   | until superseded               | `recovery_watermarks`                           |
-| Backups                                       | encrypted dumps (procedure only)                                                           | 30 days                        | runbook; deletion is **not instant** in backups |
+| Data                                          | Stored as                                                                                  | Default retention              | Mechanism                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------ | ------------------------------------------------------ |
+| Owner messages                                | AEAD ciphertext (`messages.content_enc`)                                                   | 30 days                        | `runRetention` (daily job), tombstone                  |
+| Call reports                                  | structured JSON + encrypted narrative ref                                                  | 30 days                        | `runRetention`, tombstone                              |
+| Full third-party transcripts                  | **not stored** (feature off)                                                               | — (7 days if ever enabled)     | `FULL_TRANSCRIPT_RETENTION_ENABLED` (true rad etiladi) |
+| Raw audio                                     | **never written**                                                                          | — (7 days max if ever enabled) | `RAW_AUDIO_RECORDING_ENABLED` (true rad etiladi)       |
+| Security audit metadata                       | IDs/codes only                                                                             | 90 days                        | `runRetention`                                         |
+| Memory (owner-approved)                       | AEAD ciphertext + provenance                                                               | until expiry/deletion          | table exists; feature **not started**                  |
+| Idempotency keys, done jobs, delivered outbox | rows                                                                                       | 24 h / 7 d / 7 d               | `runRetention`                                         |
+| Call plans (purpose, questions, context)      | AEAD in `call_requests.plan_enc`; `plan`/`authorizations.plan` hold routable metadata only | with the call request          | sealed; plan hash is over the logical plan             |
+| Permission context entries                    | AEAD per element (`contact_permissions.context_allowlist`)                                 | with the permission row        | sealed                                                 |
+| Idempotency responses                         | AEAD (jsonb string)                                                                        | 24 h                           | `runRetention`; rotation covers it                     |
+| Clarification drafts                          | AEAD (`conversation_drafts.draft_enc`)                                                     | 10 min                         | one per owner, expiring, `runRetention`                |
+| Telegram recovery watermarks                  | ids only                                                                                   | until superseded               | `recovery_watermarks`                                  |
+| Backups                                       | encrypted dumps (procedure only)                                                           | 30 days                        | runbook; deletion is **not instant** in backups        |
 
 Restore procedure re-applies `deletion_tombstones` (`replayTombstones`) so deleted content does not resurface. AI-processing consent, recording and transcript
 retention are separate consent kinds (`consent_events.kind`), append-only. Defaults: no recording, no persistent third-party transcript.

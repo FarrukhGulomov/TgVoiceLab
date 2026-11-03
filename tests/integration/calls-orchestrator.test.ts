@@ -44,6 +44,7 @@ async function world(
     budget?: number;
     ringTimeoutMs?: number;
     sessionRunner?: any;
+    callTimeouts?: { runnerMs?: number };
   } = {},
 ) {
   const clock = new FakeClock(new Date(NOW));
@@ -54,6 +55,7 @@ async function world(
     deriveCapabilities: () => opts.caps ?? ALL_PASS,
     ringTimeoutMs: opts.ringTimeoutMs ?? 3000,
     ...(opts.sessionRunner ? { sessionRunner: opts.sessionRunner } : {}),
+    ...(opts.callTimeouts ? { callTimeouts: opts.callTimeouts } : {}),
   });
   if (opts.killOff !== false) await app.operations.setKillSwitch(o.ownerId, false, 'test');
   await ensureDailyBudget(t.db, o.ownerId, '2026-10-15', opts.budget ?? 5_000_000);
@@ -483,6 +485,52 @@ describe('audit F-03: a paid conversation of unknown cost is never settled as fr
     const req = await w.request();
     await w.app.orchestrator.dial(o.ownerId, req.callRequestId);
     expect(await spent()).toMatchObject({ reserved_micro_usd: '0', actual_micro_usd: '0' });
+    await w.app.close();
+  });
+});
+
+describe('audit 2026-11-03 H1: the other side hangs up while the conversation layer is still finishing', () => {
+  const hangsUpFirst = (done: any) => ({
+    run: async ({ handle }: any) => {
+      await handle.end('completed'); // the remote end: the adapter reports `ended` before the conversation layer is done
+      await new Promise((r) => setTimeout(r, 60)); // memory writes, follow-up task, ...
+      return done;
+    },
+  });
+
+  it('its report, usage and "conversation held" are kept, not replaced by "no conversation took place"', async () => {
+    const w = await world({
+      script: { kind: 'answer' },
+      sessionRunner: hangsUpFirst({
+        endReason: 'completed',
+        usageMicroUsd: 120_000,
+        report: { outcome: 'answered', summary: 'They said yes' },
+        conversationHeld: true,
+      }),
+    });
+    const req = await w.request();
+    await w.app.orchestrator.dial(o.ownerId, req.callRequestId);
+    const rep = (await t.db.query('SELECT structured_result, complete FROM call_reports')).rows[0];
+    expect(rep).toMatchObject({ complete: true, structured_result: { outcome: 'answered', conversationHeld: true } });
+    expect((await t.db.query('SELECT actual_micro_usd FROM usage_budgets WHERE owner_id=$1', [o.ownerId])).rows[0].actual_micro_usd).toBe('120000');
+    await w.app.close();
+  });
+
+  it('a conversation layer that never finishes is waited for only a bounded time; its cost is then unknown (settled at the reservation)', async () => {
+    const w = await world({
+      script: { kind: 'answer' },
+      callTimeouts: { runnerMs: 100 },
+      sessionRunner: {
+        run: async ({ handle }: any) => {
+          await handle.end('completed');
+          await new Promise(() => undefined);
+        },
+      },
+    });
+    const req = await w.request();
+    expect(await w.app.orchestrator.dial(o.ownerId, req.callRequestId)).toMatchObject({ status: 'finished', state: 'ended' });
+    expect((await t.db.query('SELECT actual_micro_usd FROM usage_budgets WHERE owner_id=$1', [o.ownerId])).rows[0].actual_micro_usd).toBe('1000000');
+    expect((await t.db.query('SELECT structured_result FROM call_reports')).rows[0].structured_result).toMatchObject({ conversationHeld: false });
     await w.app.close();
   });
 });
