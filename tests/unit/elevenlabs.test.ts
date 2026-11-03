@@ -308,6 +308,10 @@ describe('config: ElevenLabs', () => {
     });
     expect(c).toMatchObject({ TTS_PROVIDER: 'elevenlabs', STT_PROVIDER: 'elevenlabs', ELEVENLABS_LANGUAGE_CODE: 'uz', ELEVENLABS_STT_CALLS: true });
   });
+  it('a stray character after the language code is refused with a pointer to .env, not sent to the service', () => {
+    expect(() => loadConfig({ ...base, ELEVENLABS_LANGUAGE_CODE: 'uz)' })).toThrow(/ELEVENLABS_LANGUAGE_CODE/);
+    expect(loadConfig({ ...base, ELEVENLABS_LANGUAGE_CODE: ' uz ' }).ELEVENLABS_LANGUAGE_CODE).toBe('uz');
+  });
   it('live-call recognition by ElevenLabs needs its model and a speaking voice', () => {
     const e = { ...base, STT_PROVIDER: 'elevenlabs', ELEVENLABS_API_KEY: 'k' };
     expect(() => loadConfig(e)).toThrow(/ELEVENLABS_STT_MODEL/);

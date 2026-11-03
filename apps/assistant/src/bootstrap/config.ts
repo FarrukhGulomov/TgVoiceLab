@@ -77,7 +77,11 @@ const EnvSchema = z
     /** File recognition model id for the owner's voice notes (e.g. scribe_v2). Unset: voice notes keep using the other transcription (Gemini). */
     ELEVENLABS_STT_FILE_MODEL: opt(z.string()),
     /** ISO language of the speech to recognise and of the voice (ISO-639-1). */
-    ELEVENLABS_LANGUAGE_CODE: z.string().min(2).max(8).default('uz'),
+    ELEVENLABS_LANGUAGE_CODE: z
+      .string()
+      .trim()
+      .regex(/^[a-z]{2,3}$/, 'must be an ISO language code such as uz (check .env for a stray character after the value)')
+      .default('uz'),
     ELEVENLABS_SPEED: opt(z.coerce.number().min(0.7).max(1.2)),
     ELEVENLABS_STABILITY: opt(z.coerce.number().min(0).max(1)),
     ELEVENLABS_STT_CALLS: bool.default(true),
