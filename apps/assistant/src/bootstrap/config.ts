@@ -57,7 +57,7 @@ const EnvSchema = z
     /** Estimated provider cost of a live call, in USD per minute. Used only to settle the call budget; unset: a connected call is settled at its full reservation (an unknown cost never counts as free). */
     AI_VOICE_COST_USD_PER_MINUTE: opt(z.coerce.number().positive().max(100)),
     /** Who speaks on calls. Unset: the AI voice provider's own voice. `voicelab`: VoiceLab's Uzbek voice (the listening/thinking model answers in text). Needs AI_VOICE_PROVIDER=openai or gemini (the model answers in text; for gemini the Live model must support TEXT output). */
-    TTS_PROVIDER: z.preprocess(providerChoice, z.enum(['voicelab']).optional()),
+    TTS_PROVIDER: z.preprocess(providerChoice, z.enum(['voicelab', 'elevenlabs']).optional()),
     /** Also speak the reply to an owner's voice note (needs TTS_PROVIDER=voicelab and `ffmpeg`). */
     VOICE_REPLIES: bool.default(true),
     /** VoiceLab voice: say a short "Xo'p." the moment the caller stops talking, before the model's answer is ready. */
@@ -66,7 +66,21 @@ const EnvSchema = z
     VOICELAB_TTS_STREAM: bool.default(false),
     VOICELAB_TTS_STREAM_URL: opt(z.string()),
     /** Speech recognition. Unset: the AI voice model hears the call itself (and Gemini transcribes voice notes). `voicelab`: VoiceLab's Uzbek recogniser (key needs stt:realtime for calls, stt:write + stt:read for voice notes). */
-    STT_PROVIDER: z.preprocess(providerChoice, z.enum(['voicelab']).optional()),
+    STT_PROVIDER: z.preprocess(providerChoice, z.enum(['voicelab', 'elevenlabs']).optional()),
+    /** ElevenLabs (TTS_PROVIDER=elevenlabs and/or STT_PROVIDER=elevenlabs). Models and the voice are never defaulted: check which model speaks Uzbek on your plan. */
+    ELEVENLABS_API_KEY: opt(z.string()),
+    ELEVENLABS_VOICE_ID: opt(z.string()),
+    /** Text-to-speech model id (e.g. eleven_v3, eleven_flash_v2_5). */
+    ELEVENLABS_TTS_MODEL: opt(z.string()),
+    /** Live recognition model id for calls (e.g. scribe_v2_realtime). */
+    ELEVENLABS_STT_MODEL: opt(z.string()),
+    /** File recognition model id for the owner's voice notes (e.g. scribe_v2). Unset: voice notes keep using the other transcription (Gemini). */
+    ELEVENLABS_STT_FILE_MODEL: opt(z.string()),
+    /** ISO language of the speech to recognise and of the voice (ISO-639-1). */
+    ELEVENLABS_LANGUAGE_CODE: z.string().min(2).max(8).default('uz'),
+    ELEVENLABS_SPEED: opt(z.coerce.number().min(0.7).max(1.2)),
+    ELEVENLABS_STABILITY: opt(z.coerce.number().min(0).max(1)),
+    ELEVENLABS_STT_CALLS: bool.default(true),
     /** With STT_PROVIDER=voicelab: use it for live calls (needs TTS_PROVIDER=voicelab: the model then only reads and writes text) and for the owner's voice notes. */
     VOICELAB_STT_CALLS: bool.default(true),
     VOICELAB_STT_NOTES: bool.default(true),
@@ -117,6 +131,23 @@ const EnvSchema = z
       if (!e.ADMIN_TOKEN_SECRET_REF) bad('ADMIN_TOKEN_SECRET_REF', 'required in production');
       if (!e.OWNER_TELEGRAM_USER_ID) bad('OWNER_TELEGRAM_USER_ID', 'required in production');
     }
+    if (e.TTS_PROVIDER === 'elevenlabs') {
+      if (!e.ELEVENLABS_API_KEY) bad('ELEVENLABS_API_KEY', 'TTS_PROVIDER=elevenlabs requires ELEVENLABS_API_KEY');
+      if (!e.ELEVENLABS_VOICE_ID) bad('ELEVENLABS_VOICE_ID', 'TTS_PROVIDER=elevenlabs requires ELEVENLABS_VOICE_ID (a voice id from your ElevenLabs account)');
+      if (!e.ELEVENLABS_TTS_MODEL) bad('ELEVENLABS_TTS_MODEL', 'TTS_PROVIDER=elevenlabs requires ELEVENLABS_TTS_MODEL (no model is hardcoded)');
+      if (!e.AI_VOICE_PROVIDER)
+        bad('TTS_PROVIDER', 'the ElevenLabs voice needs AI_VOICE_PROVIDER=openai or gemini (that model listens and answers in text, ElevenLabs speaks)');
+    }
+    if (e.STT_PROVIDER === 'elevenlabs') {
+      if (!e.ELEVENLABS_API_KEY) bad('ELEVENLABS_API_KEY', 'STT_PROVIDER=elevenlabs requires ELEVENLABS_API_KEY');
+      if (e.ELEVENLABS_STT_CALLS && !e.ELEVENLABS_STT_MODEL)
+        bad('ELEVENLABS_STT_MODEL', 'live-call recognition by ElevenLabs requires ELEVENLABS_STT_MODEL (e.g. scribe_v2_realtime)');
+      if (e.ELEVENLABS_STT_CALLS && e.CALLS_ENABLED && !e.TTS_PROVIDER)
+        bad(
+          'STT_PROVIDER',
+          'live-call recognition by ElevenLabs needs TTS_PROVIDER (voicelab or elevenlabs): the thinking model then works in text only; set ELEVENLABS_STT_CALLS=false to use it for voice notes only',
+        );
+    }
     if (e.TTS_PROVIDER === 'voicelab') {
       if (!e.VOICELAB_API_KEY) bad('VOICELAB_API_KEY', 'TTS_PROVIDER=voicelab requires VOICELAB_API_KEY');
       if (!e.VOICELAB_VOICE_ID) bad('VOICELAB_VOICE_ID', 'TTS_PROVIDER=voicelab requires VOICELAB_VOICE_ID (list voices with `pnpm voicelab:check`)');
@@ -125,10 +156,10 @@ const EnvSchema = z
     }
     if (e.STT_PROVIDER === 'voicelab') {
       if (!e.VOICELAB_API_KEY) bad('VOICELAB_API_KEY', 'STT_PROVIDER=voicelab requires VOICELAB_API_KEY');
-      if (e.VOICELAB_STT_CALLS && e.CALLS_ENABLED && e.TTS_PROVIDER !== 'voicelab')
+      if (e.VOICELAB_STT_CALLS && e.CALLS_ENABLED && !e.TTS_PROVIDER)
         bad(
           'STT_PROVIDER',
-          'live-call recognition by VoiceLab needs TTS_PROVIDER=voicelab (the thinking model then works in text only); set VOICELAB_STT_CALLS=false to use it for voice notes only',
+          'live-call recognition by VoiceLab needs TTS_PROVIDER (voicelab or elevenlabs): the thinking model then works in text only; set VOICELAB_STT_CALLS=false to use it for voice notes only',
         );
     }
     if (e.RAW_AUDIO_RECORDING_ENABLED) bad('RAW_AUDIO_RECORDING_ENABLED', 'raw audio recording is not implemented; audio is never stored');

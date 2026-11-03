@@ -130,34 +130,51 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   const { VoiceLabTts } = await import('./infrastructure/voicelab/tts.js');
   const { VoiceLabMouthLink } = await import('./infrastructure/voicelab/mouth-link.js');
   const { VOICE_TEXT_OUTPUT_RULE: RULE_PLAIN, VOICE_TEXT_OUTPUT_RULE_WITH_REACTIONS } = await import('./modules/calls/conversation/language-rule.js');
-  const sttOnCalls = cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_CALLS;
+  const sttOnCalls = (cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_CALLS) || (cfg.STT_PROVIDER === 'elevenlabs' && cfg.ELEVENLABS_STT_CALLS);
   const EARS_NOTE =
     " SUHBATDOSH GAPI: suhbatdoshning nutqi senga MATN bo'lib keladi (nutqni tanish tizimi yozadi), unda imlo va so'z xatolari bo'lishi mumkin. Ma'nosiga qarab tushun; ma'no noaniq bo'lsa, qisqa aniqlashtir.";
   const VOICE_TEXT_OUTPUT_RULE = (cfg.VOICELAB_FILLER ? VOICE_TEXT_OUTPUT_RULE_WITH_REACTIONS : RULE_PLAIN) + (sttOnCalls ? EARS_NOTE : '');
-  const voicelab = cfg.TTS_PROVIDER === 'voicelab';
+  const voicelab = cfg.TTS_PROVIDER !== undefined; // a separate voice speaks (VoiceLab or ElevenLabs); the thinking model answers in text
+  const { ElevenLabsClient } = cfg.ELEVENLABS_API_KEY ? await import('@elevenlabs/elevenlabs-js') : { ElevenLabsClient: undefined };
+  const eleven = ElevenLabsClient ? new ElevenLabsClient({ apiKey: cfg.ELEVENLABS_API_KEY! }) : undefined;
   const { VoiceLabEars } = await import('./infrastructure/voicelab/stt-ears.js');
   const { VoiceLabSttStream } = await import('./infrastructure/voicelab/stt-stream.js');
+  const { ElevenLabsSttStream } = await import('./infrastructure/elevenlabs/stt-stream.js');
   const { TurnTimer } = await import('./infrastructure/voicelab/turn-timer.js');
   const sttUrl = cfg.VOICELAB_STT_URL ?? `${(cfg.VOICELAB_BASE_URL ?? 'https://api.voicelab.uz').replace(/\/+$/, '').replace(/^http/, 'ws')}/v1/stt/stream`;
-  if (voicelab && cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_CALLS)
+  if (voicelab && sttOnCalls)
     log.warn(
-      "live calls: VoiceLab listens (speech recognition), the AI model only reads the text; the caller's audio is sent to VoiceLab, not to Gemini/OpenAI",
+      `live calls: ${cfg.STT_PROVIDER === 'elevenlabs' ? 'ElevenLabs' : 'VoiceLab'} listens (speech recognition), the AI model only reads the text; the caller's audio is sent to ${cfg.STT_PROVIDER === 'elevenlabs' ? 'ElevenLabs' : 'VoiceLab'}, not to Gemini/OpenAI`,
     );
   const { CachingSynthesizer } = await import('./infrastructure/voicelab/tts.js');
   const FILLERS = ["Xo'p.", 'Ha.', 'Mayli.', 'Tushundim.'];
   // One cache for all calls of this process: stock phrases and openers are voiced instantly after the first time.
+  const { ElevenLabsTts } = await import('./infrastructure/elevenlabs/tts.js');
+  const elevenTts =
+    cfg.TTS_PROVIDER === 'elevenlabs' && eleven
+      ? new ElevenLabsTts({
+          client: eleven,
+          voiceId: cfg.ELEVENLABS_VOICE_ID!,
+          model: cfg.ELEVENLABS_TTS_MODEL!,
+          languageCode: cfg.ELEVENLABS_LANGUAGE_CODE,
+          speed: cfg.ELEVENLABS_SPEED,
+          stability: cfg.ELEVENLABS_STABILITY,
+        })
+      : undefined;
   const callTts = new CachingSynthesizer(
-    new VoiceLabTts({
-      apiKey: cfg.VOICELAB_API_KEY!,
-      voiceId: cfg.VOICELAB_VOICE_ID!,
-      baseUrl: cfg.VOICELAB_BASE_URL,
-      model: cfg.VOICELAB_TTS_MODEL,
-      speed: cfg.VOICELAB_SPEED,
-    }),
+    elevenTts ??
+      new VoiceLabTts({
+        apiKey: cfg.VOICELAB_API_KEY!,
+        voiceId: cfg.VOICELAB_VOICE_ID!,
+        baseUrl: cfg.VOICELAB_BASE_URL,
+        model: cfg.VOICELAB_TTS_MODEL,
+        speed: cfg.VOICELAB_SPEED,
+      }),
   );
   const { VoiceLabTtsStream } = await import('./infrastructure/voicelab/tts-stream.js');
-  const ttsStream =
-    voicelab && cfg.VOICELAB_TTS_STREAM
+  const ttsStream = elevenTts
+    ? elevenTts // ElevenLabs audio always arrives as a stream: it is played while it is still being produced
+    : cfg.TTS_PROVIDER === 'voicelab' && cfg.VOICELAB_TTS_STREAM
       ? new VoiceLabTtsStream({
           apiKey: cfg.VOICELAB_API_KEY!,
           voiceId: cfg.VOICELAB_VOICE_ID!,
@@ -174,21 +191,29 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
   // VoiceLab only speaks: the model that listens and decides answers in text (tools, memory and negotiation limits work as before).
   const voiced = <T extends import('./infrastructure/voicelab/mouth-link.js').TextBrain>(brain: T) => {
     log.info(
-      { listens: cfg.AI_VOICE_PROVIDER, speaks: 'voicelab', geminiTextOutput: cfg.GEMINI_TEXT_OUTPUT },
+      { listens: cfg.AI_VOICE_PROVIDER, speaks: cfg.TTS_PROVIDER, geminiTextOutput: cfg.GEMINI_TEXT_OUTPUT },
       'call voice: the AI model listens, VoiceLab speaks',
     );
-    const sttCalls = cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_CALLS;
+    const sttCalls = sttOnCalls;
     const timer = new TurnTimer((line) => log.info({ call: true, voicelab: true }, line)); // timings only, never words
     const ears = sttCalls
       ? new VoiceLabEars(
           brain as unknown as import('./infrastructure/voicelab/stt-ears.js').UserTextBrain,
-          new VoiceLabSttStream({
-            apiKey: cfg.VOICELAB_API_KEY!,
-            url: sttUrl,
-            language: cfg.VOICELAB_STT_LANGUAGE,
-            sampleRateHz: 16_000,
-            log: (line) => log.info({ call: true, voicelab: true }, line),
-          }),
+          cfg.STT_PROVIDER === 'elevenlabs' && eleven
+            ? new ElevenLabsSttStream({
+                client: eleven,
+                model: cfg.ELEVENLABS_STT_MODEL!,
+                language: cfg.ELEVENLABS_LANGUAGE_CODE,
+                sampleRateHz: 16_000,
+                log: (line) => log.info({ call: true, elevenlabs: true }, line),
+              })
+            : new VoiceLabSttStream({
+                apiKey: cfg.VOICELAB_API_KEY!,
+                url: sttUrl,
+                language: cfg.VOICELAB_STT_LANGUAGE,
+                sampleRateHz: 16_000,
+                log: (line) => log.info({ call: true, voicelab: true }, line),
+              }),
           {
             silenceMs: cfg.VOICELAB_STT_SILENCE_MS,
             level: cfg.VOICELAB_STT_LEVEL,
@@ -304,7 +329,16 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
 }
 
 let transcription: import('./application/ports.js').TranscriptionPort | undefined;
-if (cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_NOTES) {
+if (cfg.STT_PROVIDER === 'elevenlabs' && cfg.ELEVENLABS_STT_FILE_MODEL) {
+  const { ElevenLabsClient } = await import('@elevenlabs/elevenlabs-js');
+  const { ElevenLabsFileStt } = await import('./infrastructure/elevenlabs/stt-file.js');
+  transcription = new ElevenLabsFileStt({
+    client: new ElevenLabsClient({ apiKey: cfg.ELEVENLABS_API_KEY! }),
+    model: cfg.ELEVENLABS_STT_FILE_MODEL,
+    language: cfg.ELEVENLABS_LANGUAGE_CODE,
+  });
+  log.warn('voice notes are transcribed by ElevenLabs (not live verified); the audio is sent to ElevenLabs');
+} else if (cfg.STT_PROVIDER === 'voicelab' && cfg.VOICELAB_STT_NOTES) {
   const { VoiceLabFileStt } = await import('./infrastructure/voicelab/stt-file.js');
   transcription = new VoiceLabFileStt({ apiKey: cfg.VOICELAB_API_KEY!, baseUrl: cfg.VOICELAB_BASE_URL, language: cfg.VOICELAB_STT_LANGUAGE });
   log.warn('voice notes are transcribed by VoiceLab (not live verified); the audio is sent to VoiceLab');
@@ -331,21 +365,32 @@ if (cfg.TEXT_AI_ADAPTER === 'openai') {
 }
 
 let voiceReplies: import('./application/ports.js').VoiceReplyPort | undefined;
-if (gateway && cfg.TTS_PROVIDER === 'voicelab' && cfg.VOICE_REPLIES) {
+if (gateway && cfg.TTS_PROVIDER && cfg.VOICE_REPLIES) {
   const { VoiceReplies, ffmpegAvailable } = await import('./infrastructure/voicelab/voice-reply.js');
   const { VoiceLabTts } = await import('./infrastructure/voicelab/tts.js');
   if (!(await ffmpegAvailable())) {
     log.warn('voice replies are off: `ffmpeg` is not installed (macOS: brew install ffmpeg; Debian/Ubuntu: apt install ffmpeg)');
   } else {
     const gw = gateway;
+    const speaker =
+      cfg.TTS_PROVIDER === 'elevenlabs'
+        ? new (await import('./infrastructure/elevenlabs/tts.js')).ElevenLabsTts({
+            client: new (await import('@elevenlabs/elevenlabs-js')).ElevenLabsClient({ apiKey: cfg.ELEVENLABS_API_KEY! }),
+            voiceId: cfg.ELEVENLABS_VOICE_ID!,
+            model: cfg.ELEVENLABS_TTS_MODEL!,
+            languageCode: cfg.ELEVENLABS_LANGUAGE_CODE,
+            speed: cfg.ELEVENLABS_SPEED,
+            stability: cfg.ELEVENLABS_STABILITY,
+          })
+        : new VoiceLabTts({
+            apiKey: cfg.VOICELAB_API_KEY!,
+            voiceId: cfg.VOICELAB_VOICE_ID!,
+            baseUrl: cfg.VOICELAB_BASE_URL,
+            model: cfg.VOICELAB_TTS_MODEL,
+            speed: cfg.VOICELAB_SPEED,
+          });
     voiceReplies = new VoiceReplies(
-      new VoiceLabTts({
-        apiKey: cfg.VOICELAB_API_KEY!,
-        voiceId: cfg.VOICELAB_VOICE_ID!,
-        baseUrl: cfg.VOICELAB_BASE_URL,
-        model: cfg.VOICELAB_TTS_MODEL,
-        speed: cfg.VOICELAB_SPEED,
-      }),
+      speaker,
       (to, ogg, dur, key) => gw.sendVoice(to, ogg, dur, key),
       undefined,
       (line) => log.warn(line),

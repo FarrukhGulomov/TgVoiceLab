@@ -14,6 +14,7 @@ export const FINGERPRINT_DIRS = [
   'apps/assistant/src/infrastructure/openai',
   'apps/assistant/src/infrastructure/gemini',
   'apps/assistant/src/infrastructure/voicelab',
+  'apps/assistant/src/infrastructure/elevenlabs',
   // orchestration, adapter, audio bridge and the conversation runners (everything under modules/calls), the dial policy and live-call control
   'apps/assistant/src/modules/calls',
   'apps/assistant/src/modules/policy',

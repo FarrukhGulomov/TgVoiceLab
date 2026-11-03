@@ -11,3 +11,5 @@
 ## Other dependencies
 
 MIT, Apache-2.0, BSD or ISC licensed (see `pnpm-lock.yaml` and each package). The archived GramJS package (`telegram`) is MIT; see the audit response for the maintenance risk.
+
+- **@elevenlabs/elevenlabs-js** (MIT): the official ElevenLabs SDK, used for speech synthesis, live and file speech recognition when `TTS_PROVIDER` / `STT_PROVIDER` is `elevenlabs`.

@@ -93,6 +93,14 @@ non-interactive use. Rotation: runbooks `key-rotation`, `session-compromise`.
 - The integration was written from the vendor's documentation as given to us and is NOT live verified (voicelab.uz is unreachable from the build sandbox). The JSON field names of the file-API job id and transcript are read defensively; an unrecognised shape is reported by key names only.
 - Accuracy and speed are not claimed: measure with `pnpm voicelab:stt-bench -- <folder>` on your own recordings, and read the `turn timing` log lines (synthesis time is reported separately from recognition time).
 
+## ElevenLabs (TTS_PROVIDER=elevenlabs, STT_PROVIDER=elevenlabs)
+
+- **Speech (TTS)** receives only text the assistant itself wrote (call sentences, voice-note replies), over HTTPS through the official SDK; audio comes back as raw 24 kHz PCM and is played while it arrives. No audio of a person is sent.
+- **Live calls** (`ELEVENLABS_STT_CALLS`): the caller's audio (16 kHz PCM) goes to ElevenLabs over the SDK's realtime WebSocket (`xi-api-key`); the thinking model receives only the recognised TEXT. Utterances are ended here (silence detection) and committed manually.
+- **Voice notes** (`ELEVENLABS_STT_FILE_MODEL`): the owner's OGG/Opus note is uploaded as it is.
+- Retention at ElevenLabs follows the account's own settings (zero-retention mode is an enterprise option and is not requested here). Review the account's data-retention and training settings before calling contacts.
+- **Not live verified** from the build sandbox (elevenlabs.io is unreachable there): unit tests use fakes of the SDK; run `pnpm elevenlabs:check` and a short call before relying on it. Which models speak Uzbek is the account owner's decision (`ELEVENLABS_TTS_MODEL`, `ELEVENLABS_STT_MODEL` are never defaulted).
+
 ## VoiceLab streaming speech (VOICELAB_TTS_STREAM=true)
 
 - Each spoken sentence opens its own WebSocket to `wss://api.voicelab.uz/v1/tts/stream` (header `xvl-api-key`, key permission `tts:realtime`) and sends exactly one request: the sentence text, language, voice id and speed. The text is what the assistant is about to say, not what the other person said. Audio is played as it arrives and is not stored.

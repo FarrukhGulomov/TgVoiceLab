@@ -39,6 +39,7 @@
     "keys:rotate": "pnpm --filter @tgvl/assistant run keys:rotate",
     "verify": "pnpm run lint && pnpm run format && pnpm run typecheck && pnpm run build && pnpm run test:all",
     "voicelab:check": "pnpm --filter @tgvl/assistant run voicelab:check",
+    "elevenlabs:check": "pnpm --filter @tgvl/assistant run elevenlabs:check",
     "voicelab:stt-bench": "pnpm --filter @tgvl/assistant run voicelab:stt-bench",
     "live:ai-call": "pnpm --filter @tgvl/assistant run live:ai-call",
     "live:gate-calls": "pnpm --filter @tgvl/assistant run live:gate-calls",
