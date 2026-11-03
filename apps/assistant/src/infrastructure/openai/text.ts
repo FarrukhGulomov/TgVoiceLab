@@ -1,3 +1,4 @@
+import { fetchWithRetry } from '../http-retry.js';
 import type { IntentFallbackPort, MessageComposerPort } from '../../application/ports.js';
 import type { Intent, InterpretContext } from '../../application/intent.js';
 import { CONTENT_BOUNDARY_RULE } from '../../modules/calls/conversation/language-rule.js';
@@ -26,12 +27,12 @@ export class OpenAiTextFallback implements IntentFallbackPort, MessageComposerPo
   async #chat(prompt: string, extra: Record<string, unknown>, maxTokens: number): Promise<string> {
     const f = this.o.fetchImpl ?? fetch;
     const base = (this.o.baseUrl ?? 'https://api.openai.com/v1').replace(/\/+$/, '');
-    const res = await f(`${base}/chat/completions`, {
+    const res = await fetchWithRetry(f, `${base}/chat/completions`, () => ({
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${this.o.apiKey}` },
       body: JSON.stringify({ model: this.o.model, messages: [{ role: 'user', content: prompt }], max_completion_tokens: maxTokens, ...extra }),
       signal: AbortSignal.timeout(this.o.timeoutMs ?? 25_000),
-    });
+    }));
     if (!res.ok) throw new Error(`text AI request failed: HTTP ${res.status}`);
     const body = (await res.json()) as ChatBody;
     const content = body.choices?.[0]?.message?.content;

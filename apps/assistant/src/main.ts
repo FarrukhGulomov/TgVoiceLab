@@ -183,7 +183,8 @@ if (cfg.CALL_ADAPTER === 'ntgcalls' && cfg.AI_VOICE_PROVIDER) {
           speed: cfg.VOICELAB_SPEED,
         })
       : undefined;
-  if (ttsStream)
+  if (ttsStream && elevenTts) log.warn('ElevenLabs speech is on (not live verified): each sentence is requested as a stream and played while it arrives');
+  else if (ttsStream)
     log.warn(
       'VoiceLab streaming speech is on (not live verified): each sentence opens its own WebSocket; the streaming voice ignores VOICELAB_TTS_MODEL, the REST fallback uses it',
     );
