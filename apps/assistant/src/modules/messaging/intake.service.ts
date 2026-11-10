@@ -108,6 +108,8 @@ export class IntakeService {
       onVoiceError?: (e: Error) => void;
       /** Present only when calling is enabled in this deployment; without it a call to a contact is refused with an honest message. */
       contactCalls?: ContactCallService;
+      /** Can the assistant place or take an owner call right now? When not, "call me" is answered with the reason instead of a promise. */
+      callingStatus?: (q: pg.PoolClient, ownerId: string) => Promise<'ready' | 'off' | 'kill_switch' | 'not_verified'>;
     },
   ) {
     this.downloads = new Limiter(d.voiceMaxConcurrentDownloads ?? 2);
@@ -725,6 +727,8 @@ export class IntakeService {
       case 'call_owner': {
         const rem = this.d.reminders;
         if (!rem) return t(loc, 'unknown');
+        const status = this.d.callingStatus ? await this.d.callingStatus(c, p.ownerId) : 'ready';
+        if (status !== 'ready') return t(loc, 'call_owner_unavailable', { why: t(loc, `call_block_${status}`) });
         // Same path as a call reminder, due right now: kill switch, quiet hours, opt-out and gates still apply.
         const at = DateTime.fromJSDate(this.d.clock.now(), { zone: p.timezone }).toFormat("yyyy-LL-dd'T'HH:mm");
         await rem.create(

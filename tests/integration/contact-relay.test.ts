@@ -16,9 +16,21 @@ afterEach(async () => {
 });
 
 let seq = 0;
-function setup() {
+const ALL_PASS = {
+  privateOutbound: true,
+  privateInbound: false,
+  pcmSend: true,
+  pcmReceive: true,
+  evidenceArtifact: 'TEST-ONLY',
+  buildFingerprint: 'test',
+  productionCallingAllowed: true,
+  ownerCallingAllowed: true,
+  thirdPartyConsentMechanismProven: true,
+  reasons: [],
+};
+function setup(opts: { callingReady?: boolean } = {}) {
   const clock = new FakeClock(new Date('2026-10-15T06:00:00Z'));
-  const app = boot(t.url, clock);
+  const app = boot(t.url, clock, undefined, undefined, opts.callingReady ? { deriveCapabilities: () => ALL_PASS } : {});
   const send = async (from: string, text: string | undefined, extra: Partial<IncomingMessage> = {}) => {
     const id = String(++seq);
     return app.intake.handle({
@@ -95,8 +107,22 @@ describe('replies from contacts are relayed to the owner', () => {
     await s.app.close();
   });
 
+  it('"menga qo\'ng\'iroq qil" while calls are held back says why and how to fix it, instead of promising a call that cannot happen', async () => {
+    const s = setup(); // new owner: the kill switch is on and no evidence is recorded for this build
+    await s.say("Srochno menga qo'ng'iroq qil");
+    expect((await t.db.query(`SELECT count(*)::int n FROM reminders`)).rows[0].n).toBe(0);
+    const said = (await s.texts()).join('\n');
+    expect(said).toContain('cannot call you right now');
+    expect(said).toContain('kill switch is on');
+    await s.app.operations.setKillSwitch(o.ownerId, false, 'test');
+    await s.say("Srochno menga qo'ng'iroq qil");
+    expect((await s.texts()).join('\n')).toContain('docs/runbooks/owner-calling.md'); // not verified for this build
+    await s.app.close();
+  });
+
   it('"srochno menga qo\'ng\'iroq qil" queues a call reminder due right now, not a minute later', async () => {
-    const s = setup();
+    const s = setup({ callingReady: true });
+    await s.app.operations.setKillSwitch(o.ownerId, false, 'test');
     await s.say("Srochno menga qo'ng'iroq qil");
     const r = (
       await t.db.query<{ mode: string; at: Date; late: boolean }>(

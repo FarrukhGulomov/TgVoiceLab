@@ -7,6 +7,7 @@ import type { CallOrchestrator } from './orchestrator.js';
 import type { DerivedCapabilities } from './capability-evidence.js';
 import type { IncomingCall } from './ntgcalls/adapter.js';
 import type { DiscardKind } from './ntgcalls/ports.js';
+import { emitOutbox } from '../outbox/outbox.js';
 
 export interface InboundCallAdapter {
   registerIncoming(callRequestId: string, call: IncomingCall): void;
@@ -35,8 +36,11 @@ const MAX_DECLINES_PER_MINUTE = 5;
  * the kill switch, the single-active-call rule, the call budget, durable call state, events and report. The adapter answers the ring
  * instead of placing a call. Anyone else is declined as busy, without any conversation, and never recorded as a contact.
  */
+const TELL_OWNER_EVERY_MS = 10 * 60_000;
+
 export class InboundCallService {
   #declines = new Map<string, number[]>();
+  #told = new Map<string, number>();
 
   constructor(private readonly d: InboundCallDeps) {}
 
@@ -50,8 +54,8 @@ export class InboundCallService {
     ).rows[0];
     if (!owner) return this.#decline(call, 'a ring from someone who is not the owner');
     if (owner.disabled) return this.#decline(call, 'the owner account is disabled');
-    if (!this.d.callsEnabled) return this.#decline(call, 'calls are switched off');
-    if (!this.d.derive().ownerCallingAllowed) return this.#decline(call, 'owner calls are not verified for this build');
+    if (!this.d.callsEnabled) return this.#decline(call, 'calls are switched off', owner.id, 'calls_disabled');
+    if (!this.d.derive().ownerCallingAllowed) return this.#decline(call, 'owner calls are not verified for this build', owner.id, 'calling_not_verified');
 
     const now = this.d.clock.now();
     const callRequestId = randomUUID();
@@ -98,7 +102,27 @@ export class InboundCallService {
       });
   }
 
-  async #decline(call: IncomingCall, why: string): Promise<void> {
+  /** A busy tone does not say why: the owner gets one message in words (at most every 10 minutes), never a flood. */
+  async #tellOwner(ownerId: string, reason: string): Promise<void> {
+    const now = this.d.clock.now();
+    const last = this.#told.get(ownerId);
+    if (last !== undefined && now.getTime() - last < TELL_OWNER_EVERY_MS) return;
+    this.#told.set(ownerId, now.getTime());
+    try {
+      await this.d.db.tx((c) =>
+        emitOutbox(
+          c,
+          { ownerId, aggregateType: 'owner', aggregateId: ownerId, type: 'call.notify', payload: { variant: 'rejected', reason, inbound: true } },
+          now,
+        ),
+      );
+    } catch {
+      /* the notice is a courtesy: the ring is declined either way */
+    }
+  }
+
+  async #decline(call: IncomingCall, why: string, ownerId?: string, reason?: string): Promise<void> {
+    if (ownerId && reason) await this.#tellOwner(ownerId, reason);
     const now = Date.now();
     const recent = (this.#declines.get(call.callerId) ?? []).filter((t) => now - t < 60_000);
     recent.push(now);

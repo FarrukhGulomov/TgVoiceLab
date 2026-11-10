@@ -30,6 +30,13 @@ const recurrenceText = (loc: Locale, rec: Recurrence | null): string => {
   return t(loc, key, { n: rec.interval });
 };
 
+/** Why a call is held back, in the owner's language and with the way out (the English table below is the fallback for the rest). */
+const BLOCK_KEYS: Record<string, MessageKey> = {
+  calls_disabled: 'call_block_off',
+  kill_switch_on: 'call_block_kill_switch',
+  calling_not_verified: 'call_block_not_verified',
+};
+
 const REASONS: Record<string, string> = {
   kill_switch_on: 'calling is switched off',
   calling_not_verified: 'real calling is not verified on this deployment',
@@ -192,14 +199,24 @@ export function makeOutboxHandlers(deps: {
     },
 
     'call.notify': async (row) => {
-      const p = row.payload as { variant: 'rejected' | 'ended' | 'outcome_unknown'; reason?: string };
+      const p = row.payload as { variant: 'rejected' | 'ended' | 'outcome_unknown'; reason?: string; inbound?: boolean };
       const owner = await loadOwner(row.ownerId);
       const q =
         row.aggregateType === 'call'
           ? 'SELECT c.display_name FROM calls k JOIN call_requests r ON r.id=k.call_request_id JOIN contacts c ON c.id=r.contact_id WHERE k.id=$1 AND k.owner_id=$2'
           : 'SELECT c.display_name FROM call_requests r JOIN contacts c ON c.id=r.contact_id WHERE r.id=$1 AND r.owner_id=$2';
       const contactRow = (await db.query<{ display_name: string }>(q, [row.aggregateId, row.ownerId])).rows[0];
-      const reason = REASONS[p.reason ?? ''] ?? p.reason ?? '';
+      const blockKey = BLOCK_KEYS[p.reason ?? ''];
+      const reason = blockKey ? t(owner.locale, blockKey) : (REASONS[p.reason ?? ''] ?? p.reason ?? '');
+      if (!contactRow && p.inbound) {
+        // The owner rang the assistant and was turned away: the busy tone says nothing, so tell them why, once, in words.
+        await messaging.sendMessage({
+          toTelegramUserId: owner.telegram_user_id,
+          text: t(owner.locale, 'inbound_declined', { why: reason || 'unknown' }),
+          idempotencyKey: row.eventId,
+        });
+        return;
+      }
       if (!contactRow) {
         // A call to the OWNER (e.g. a call reminder): a completed call needs no notice; any other outcome is reported once, and the
         // reminder text itself was already sent as a message when the call was queued.

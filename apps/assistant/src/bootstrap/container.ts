@@ -120,6 +120,11 @@ export function buildContainer(d: ContainerDeps) {
     ...(d.onVoiceError ? { onVoiceError: d.onVoiceError } : {}),
     ...(d.peers ? { peers: d.peers } : {}),
     ...(contactCalls ? { contactCalls } : {}),
+    callingStatus: async (q, ownerId) => {
+      if (!d.callsEnabled) return 'off';
+      if (await operations.isKillSwitchOn(q, ownerId)) return 'kill_switch';
+      return derive().ownerCallingAllowed ? 'ready' : 'not_verified';
+    },
     ...(d.voiceDownloadTimeoutMs ? { voiceDownloadTimeoutMs: d.voiceDownloadTimeoutMs } : {}),
     ...(d.voiceMaxConcurrentDownloads ? { voiceMaxConcurrentDownloads: d.voiceMaxConcurrentDownloads } : {}),
   });

@@ -215,7 +215,7 @@ export class CallOrchestrator {
     };
   }
 
-  private async reject(ownerId: string, callRequestId: string, reason: string, quiet = false): Promise<DialOutcome> {
+  private async reject(ownerId: string, callRequestId: string, reason: string, quiet = false, inbound = false): Promise<DialOutcome> {
     const now = this.d.clock.now();
     await this.d.db.tx(async (c) => {
       // A dial attempt before the owner approved must not kill the request: it stays pending and approval makes it dialable.
@@ -238,7 +238,13 @@ export class CallOrchestrator {
       if (!quiet)
         await emitOutbox(
           c,
-          { ownerId, aggregateType: 'call_request', aggregateId: callRequestId, type: 'call.notify', payload: { variant: 'rejected', reason } },
+          {
+            ownerId,
+            aggregateType: 'call_request',
+            aggregateId: callRequestId,
+            type: 'call.notify',
+            payload: { variant: 'rejected', reason, ...(inbound ? { inbound: true } : {}) },
+          },
           now,
         );
     });
@@ -258,7 +264,8 @@ export class CallOrchestrator {
     }
     if (!pre) return this.reject(ownerId, callRequestId, 'call_request_not_found');
     const first = evaluateDialPolicy(pre);
-    if (!first.allowed) return this.reject(ownerId, callRequestId, first.reasonCode, !!opts.inbound && first.reasonCode === 'active_call_exists');
+    if (!first.allowed)
+      return this.reject(ownerId, callRequestId, first.reasonCode, !!opts.inbound && first.reasonCode === 'active_call_exists', !!opts.inbound);
     const plan = pre.plan;
     const day = this.dayKey(pre.owner.timezone);
     const contactId = pre.contact?.id ?? null;
@@ -326,9 +333,9 @@ export class CallOrchestrator {
       });
     } catch (e) {
       if (registered) this.d.registry.remove(registered);
-      if (e instanceof PolicyDenied) return this.reject(ownerId, callRequestId, e.reason, !!opts.inbound && e.reason === 'active_call_exists');
+      if (e instanceof PolicyDenied) return this.reject(ownerId, callRequestId, e.reason, !!opts.inbound && e.reason === 'active_call_exists', !!opts.inbound);
       if ((e as { code?: string }).code === '23505' && String((e as { constraint?: string }).constraint).includes('calls_one_active_per_account'))
-        return this.reject(ownerId, callRequestId, 'active_call_exists', !!opts.inbound);
+        return this.reject(ownerId, callRequestId, 'active_call_exists', !!opts.inbound, !!opts.inbound);
       throw e;
     }
 

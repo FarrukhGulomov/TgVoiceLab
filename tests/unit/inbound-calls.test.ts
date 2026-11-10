@@ -22,9 +22,19 @@ function mk(
   const declined: Array<{ kind?: string }> = [];
   const dials: Array<{ ownerId: string; id: string; opts: unknown }> = [];
   const logs: string[] = [];
+  const notices: unknown[][] = [];
   const rows = o.ownerRows ?? [{ id: 'owner-1', locale: 'uz', disabled: false }];
   const svc = new InboundCallService({
-    db: { query: async (_sql: string, args: unknown[]) => ({ rows: args[0] === OWNER_TG ? rows : [] }) } as never,
+    db: {
+      query: async (_sql: string, args: unknown[]) => ({ rows: args[0] === OWNER_TG ? rows : [] }),
+      tx: async (fn: (c: unknown) => Promise<unknown>) =>
+        fn({
+          query: async (_sql: string, args: unknown[]) => {
+            notices.push(args);
+            return { rows: [] };
+          },
+        }),
+    } as never,
     authorizations: {
       createCallRequest: async (_o: string, body: Record<string, unknown>, opts: unknown) => {
         requests.push({ body, opts });
@@ -50,7 +60,7 @@ function mk(
     derive: () => ({ ownerCallingAllowed: o.allowed ?? true }),
     log: (l) => logs.push(l),
   });
-  return { svc, requests, registered, released, declined, dials, logs };
+  return { svc, requests, registered, released, declined, dials, logs, notices };
 }
 
 describe('InboundCallService (phase 1: the owner calling in)', () => {
@@ -81,6 +91,22 @@ describe('InboundCallService (phase 1: the owner calling in)', () => {
       expect(t.declined).toHaveLength(1);
       expect(t.dials).toEqual([]);
     }
+  });
+
+  it('tells the owner WHY the ring was turned away (once per 10 minutes), never a stranger', async () => {
+    const t = mk({ allowed: false });
+    await t.svc.handle(call());
+    await t.svc.handle(call());
+    expect(t.notices).toHaveLength(1); // the second ring within 10 minutes does not repeat the message
+    expect(JSON.stringify(t.notices[0])).toContain('calling_not_verified');
+    expect(JSON.stringify(t.notices[0])).toContain('inbound');
+    const off = mk({ enabled: false });
+    await off.svc.handle(call());
+    expect(JSON.stringify(off.notices[0])).toContain('calls_disabled');
+    const stranger = mk();
+    await stranger.svc.handle(call('777'));
+    expect(stranger.notices).toEqual([]);
+    expect(stranger.declined).toHaveLength(1);
   });
 
   it('hangs up a ring that the orchestrator refused before the adapter took it', async () => {

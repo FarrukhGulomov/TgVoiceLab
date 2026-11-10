@@ -532,7 +532,7 @@ log.info(
     if (cfg.CALLS_ENABLED && actual !== cfg.BUILD_FINGERPRINT)
       log.warn(
         { configured: cfg.BUILD_FINGERPRINT.slice(0, 12), actual: actual.slice(0, 12) },
-        'the call-path code in this checkout differs from BUILD_FINGERPRINT: the live evidence was recorded for other code. Run `pnpm evidence:production` and re-record the 5-minute call if the call path changed',
+        'the call-path code in this checkout differs from BUILD_FINGERPRINT, so owner calls stay refused (rings are answered with a busy tone and you get a message why). To switch them on again: stop this process, run `pnpm live:ai-call` (5-minute call, steps in docs/runbooks/owner-calling.md), then `pnpm evidence:production`, and put the BUILD_FINGERPRINT and CALL_FEASIBILITY_EVIDENCE_PATH it prints into .env',
       );
   } catch {
     /* not a source checkout (e.g. a container image): the deployment pins the fingerprint */
