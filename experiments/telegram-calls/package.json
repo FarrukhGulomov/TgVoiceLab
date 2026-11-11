@@ -6,10 +6,13 @@
   "description": "Phase 0 Telegram private-call feasibility spike (not production code)",
   "scripts": {
     "smoke": "node smoke-offline.mjs",
-    "login": "node login.mjs",
-    "call": "node live-call.mjs"
+    "login": "node --env-file-if-exists=../../.env login.mjs",
+    "call": "node --env-file-if-exists=../../.env live-call.mjs",
+    "record-gate": "node record-gate.mjs",
+    "evidence": "node build-evidence.mjs"
   },
   "dependencies": {
+    "big-integer": "1.6.52",
     "ntgcalls": "3.0.3",
     "telegram": "2.26.22"
   }

@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { decodeMediaFrame, encodeMediaFrame, MAX_HEADER_BYTES, MAX_PAYLOAD_BYTES, MediaFrameError, MediaFrameSequencer, type MediaFrameHeader } from '@tgvl/contracts';
+import {
+  decodeMediaFrame,
+  encodeMediaFrame,
+  MAX_HEADER_BYTES,
+  MAX_PAYLOAD_BYTES,
+  MediaFrameError,
+  MediaFrameSequencer,
+  type MediaFrameHeader,
+} from '@tgvl/contracts';
 
 const callId = '11111111-1111-4111-8111-111111111111';
-const hdr = (o: Partial<MediaFrameHeader> = {}): MediaFrameHeader => ({ callId, sequence: 0, monotonicTimestampUs: 0, sampleRateHz: 24000, channels: 1, encoding: 's16le', ...o });
+const hdr = (o: Partial<MediaFrameHeader> = {}): MediaFrameHeader => ({
+  callId,
+  sequence: 0,
+  monotonicTimestampUs: 0,
+  sampleRateHz: 24000,
+  channels: 1,
+  encoding: 's16le',
+  ...o,
+});
 const pcm = (n: number) => new Uint8Array(n).map((_, i) => i % 251);
 
 describe('media frame codec (spec §5.1)', () => {

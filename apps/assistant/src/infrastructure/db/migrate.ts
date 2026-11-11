@@ -16,7 +16,9 @@ export interface MigrationResult {
  * This runner NEVER drops or resets anything (spec: never auto-reset a nonempty database).
  */
 export async function migrate(db: Db, dir: string): Promise<MigrationResult> {
-  const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
   for (const f of files) if (!FILE_RE.test(f)) throw new Error(`bad migration filename: ${f}`);
   const client = await db.pool.connect();
   const result: MigrationResult = { applied: [], alreadyApplied: [] };

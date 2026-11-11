@@ -8,8 +8,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 let t: TestDb;
-beforeAll(async () => { t = await createTestDb(); });
-afterAll(async () => { await t.drop(); });
+beforeAll(async () => {
+  t = await createTestDb();
+});
+afterAll(async () => {
+  await t.drop();
+});
 
 const insertCall = (accountId: string, ownerId: string, callRequestId: string, authorizationId: string, state: string, attempt = 1) =>
   t.db.query(
@@ -102,7 +106,10 @@ describe('owner isolation (composite foreign keys)', () => {
       t.db.query(`INSERT INTO call_requests (owner_id, contact_id, plan, plan_hash) VALUES ($1,$2,'{}',$3)`, [o1.ownerId, contactOfO2, 'b'.repeat(64)]),
     ).rejects.toThrow(/foreign key/);
     await expect(
-      t.db.query(`INSERT INTO contact_permissions (owner_id, contact_id, version, expires_at) VALUES ($1,$2,1, now() + interval '1 day')`, [o1.ownerId, contactOfO2]),
+      t.db.query(`INSERT INTO contact_permissions (owner_id, contact_id, version, expires_at) VALUES ($1,$2,1, now() + interval '1 day')`, [
+        o1.ownerId,
+        contactOfO2,
+      ]),
     ).rejects.toThrow(/foreign key/);
   });
   it("cannot attach another owner's task to a reminder", async () => {
@@ -110,7 +117,10 @@ describe('owner isolation (composite foreign keys)', () => {
     const o2 = await seedOwner(t.db);
     const task = await t.db.query<{ id: string }>(`INSERT INTO tasks (owner_id, title_enc) VALUES ($1,'e1.x') RETURNING id`, [o2.ownerId]);
     await expect(
-      t.db.query(`INSERT INTO reminders (owner_id, task_id, title_enc, local_wall_clock, timezone) VALUES ($1,$2,'e1.x', now()::timestamp, 'Asia/Samarkand')`, [o1.ownerId, task.rows[0]!.id]),
+      t.db.query(`INSERT INTO reminders (owner_id, task_id, title_enc, local_wall_clock, timezone) VALUES ($1,$2,'e1.x', now()::timestamp, 'Asia/Samarkand')`, [
+        o1.ownerId,
+        task.rows[0]!.id,
+      ]),
     ).rejects.toThrow(/foreign key/);
   });
   it("cannot create a call using another owner's account or authorization", async () => {
@@ -141,7 +151,10 @@ describe('append-only tables', () => {
       `INSERT INTO calls (owner_id, call_request_id, account_id, attempt, authorization_id, gateway_generation, state) VALUES ($1,$2,$3,1,$4,1,'awaiting_consent') RETURNING id`,
       [o.ownerId, s.callRequestId, o.accountId, s.authorizationId],
     );
-    await t.db.query(`INSERT INTO consent_events (owner_id, call_id, subject_telegram_id, kind, decision, source, disclosure_version) VALUES ($1,$2,'123','ai_processing','denied','local_recognizer','v1')`, [o.ownerId, call.rows[0]!.id]);
+    await t.db.query(
+      `INSERT INTO consent_events (owner_id, call_id, subject_telegram_id, kind, decision, source, disclosure_version) VALUES ($1,$2,'123','ai_processing','denied','local_recognizer','v1')`,
+      [o.ownerId, call.rows[0]!.id],
+    );
     await expect(t.db.query(`UPDATE consent_events SET decision='granted'`)).rejects.toThrow(/append-only/);
   });
 });
@@ -150,14 +163,28 @@ describe('value constraints', () => {
   it('rejects expired-at-creation permissions/authorizations, negative budgets and attempts', async () => {
     const o = await seedOwner(t.db);
     const c = await seedContact(t.db, o.ownerId);
-    await expect(t.db.query(`INSERT INTO contact_permissions (owner_id, contact_id, version, expires_at, created_at) VALUES ($1,$2,1, now() - interval '1 day', now())`, [o.ownerId, c])).rejects.toThrow(/check/);
-    await expect(t.db.query(`INSERT INTO usage_budgets (owner_id, day, cap_micro_usd, reserved_micro_usd) VALUES ($1, current_date, 100, 200)`, [o.ownerId])).rejects.toThrow(/check/);
+    await expect(
+      t.db.query(`INSERT INTO contact_permissions (owner_id, contact_id, version, expires_at, created_at) VALUES ($1,$2,1, now() - interval '1 day', now())`, [
+        o.ownerId,
+        c,
+      ]),
+    ).rejects.toThrow(/check/);
+    await expect(
+      t.db.query(`INSERT INTO usage_budgets (owner_id, day, cap_micro_usd, reserved_micro_usd) VALUES ($1, current_date, 100, 200)`, [o.ownerId]),
+    ).rejects.toThrow(/check/);
     await expect(t.db.query(`INSERT INTO jobs (owner_id, kind, due_at, attempts) VALUES ($1,'k', now(), -1)`, [o.ownerId])).rejects.toThrow(/check/);
   });
   it('duplicate provider message ids are rejected (durable dedupe)', async () => {
     const o = await seedOwner(t.db);
-    const conv = await t.db.query<{ id: string }>(`INSERT INTO conversations (owner_id, actor_role, channel) VALUES ($1,'owner','telegram_text') RETURNING id`, [o.ownerId]);
-    const ins = () => t.db.query(`INSERT INTO messages (owner_id, conversation_id, account_id, provider_message_id, direction, occurred_at) VALUES ($1,$2,$3,'m-1','inbound', now())`, [o.ownerId, conv.rows[0]!.id, o.accountId]);
+    const conv = await t.db.query<{ id: string }>(
+      `INSERT INTO conversations (owner_id, actor_role, channel) VALUES ($1,'owner','telegram_text') RETURNING id`,
+      [o.ownerId],
+    );
+    const ins = () =>
+      t.db.query(
+        `INSERT INTO messages (owner_id, conversation_id, account_id, provider_message_id, direction, occurred_at) VALUES ($1,$2,$3,'m-1','inbound', now())`,
+        [o.ownerId, conv.rows[0]!.id, o.accountId],
+      );
     await ins();
     await expect(ins()).rejects.toThrow(/unique|duplicate/);
   });

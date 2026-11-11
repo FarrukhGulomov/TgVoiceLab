@@ -5,13 +5,13 @@ Production calling stays disabled. Prepared 2026-10-15 in a sandbox with no Tele
 
 ## 1. What this document is and is not
 
-It records what was *actually inspected*, with the exact artifacts, and keeps three evidence classes apart:
+It records what was _actually inspected_, with the exact artifacts, and keeps three evidence classes apart:
 
-| Class | Meaning | Can pass a real-media gate? |
-|---|---|---|
-| **Inspected** | Package metadata, headers, type definitions and wheels/tarballs downloaded from registries and read | No |
-| **Offline-executed** | Native module loaded and exercised on this host without contacting Telegram (`experiments/telegram-calls/evidence/offline-smoke.json`) | No |
-| **Live** | Real Telegram account, real consenting peer, real phone | Only this class |
+| Class                | Meaning                                                                                                                                | Can pass a real-media gate? |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| **Inspected**        | Package metadata, headers, type definitions and wheels/tarballs downloaded from registries and read                                    | No                          |
+| **Offline-executed** | Native module loaded and exercised on this host without contacting Telegram (`experiments/telegram-calls/evidence/offline-smoke.json`) | No                          |
+| **Live**             | Real Telegram account, real consenting peer, real phone                                                                                | Only this class             |
 
 Only the first two classes exist today.
 
@@ -32,19 +32,19 @@ Action for the owner: allow `core.telegram.org`, `github.com` and `developers.op
 
 `Y` = present in inspected code/types; `?` = unverified; `N` = absent. Nothing here is a live result.
 
-| Capability | `telegram` (GramJS) 2.26.22 | `ntgcalls` 3.0.3 (Node + Python) | `py-tgcalls` 3.0.0 | `tgcalls` 2.0.0 (MarshalX) |
-|---|---|---|---|---|
-| User-account login (MTProto) | Y (MIT) | N (media engine only) | via Pyrogram/Telethon | N |
-| `phone.requestCall` / `acceptCall` / `confirmCall` / `receivedCall` / `discardCall` / `sendSignalingData` TL methods | **Y** (in bundled TL, layer 198) | N (caller supplies) | Y (via Pyrogram raw) | N |
-| `updatePhoneCall`, `updatePhoneCallSignalingData` | **Y** | N | Y | N |
-| Private (P2P) call media engine | N | **Y** — `createP2pCall`, `initExchange`, `exchangeKeys`, `skipExchange`, `connectP2p`, `onSignalingData`, `sendSignalingData` | wraps ntgcalls | README: private calls "not in release version" (stale: last release 2023-01) |
-| PCM injection to remote | N | **Y** — `MediaSource.EXTERNAL` + `sendExternalFrame` | partial (`send_frame`) | ? |
-| PCM extraction from remote | N | **Y** — `onFrames(chatId, mode, device, frames)` | partial | ? |
-| Headless (no audio device) | Y | Y (external source; no device required — to be proven live) | Y | ? |
-| Linux x64 prebuilt | pure JS | **Y** — `@ntgcalls/linux-x64` (98.5 MB `.node`) | pure Python | cp37–cp39 wheels only |
-| Linux arm64 prebuilt | pure JS | Y (`@ntgcalls/linux-arm64`) | — | ? |
-| License | MIT | **LGPL-3.0-only** | (LGPL dependency) | LGPLv3 |
-| Maintenance (registry timestamps) | active | releases 3.0.1 (2026-10-04), 3.0.2 (10-06), 3.0.3 (10-11) | 3.0.0 (2026-09-25), 3.0.1b1 (10-11) | stale (last 2023-01-09) |
+| Capability                                                                                                           | `telegram` (GramJS) 2.26.22      | `ntgcalls` 3.0.3 (Node + Python)                                                                                              | `py-tgcalls` 3.0.0                  | `tgcalls` 2.0.0 (MarshalX)                                                   |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------- |
+| User-account login (MTProto)                                                                                         | Y (MIT)                          | N (media engine only)                                                                                                         | via Pyrogram/Telethon               | N                                                                            |
+| `phone.requestCall` / `acceptCall` / `confirmCall` / `receivedCall` / `discardCall` / `sendSignalingData` TL methods | **Y** (in bundled TL, layer 198) | N (caller supplies)                                                                                                           | Y (via Pyrogram raw)                | N                                                                            |
+| `updatePhoneCall`, `updatePhoneCallSignalingData`                                                                    | **Y**                            | N                                                                                                                             | Y                                   | N                                                                            |
+| Private (P2P) call media engine                                                                                      | N                                | **Y** — `createP2pCall`, `initExchange`, `exchangeKeys`, `skipExchange`, `connectP2p`, `onSignalingData`, `sendSignalingData` | wraps ntgcalls                      | README: private calls "not in release version" (stale: last release 2023-01) |
+| PCM injection to remote                                                                                              | N                                | **Y** — `MediaSource.EXTERNAL` + `sendExternalFrame`                                                                          | partial (`send_frame`)              | ?                                                                            |
+| PCM extraction from remote                                                                                           | N                                | **Y** — `onFrames(chatId, mode, device, frames)`                                                                              | partial                             | ?                                                                            |
+| Headless (no audio device)                                                                                           | Y                                | Y (external source; no device required — to be proven live)                                                                   | Y                                   | ?                                                                            |
+| Linux x64 prebuilt                                                                                                   | pure JS                          | **Y** — `@ntgcalls/linux-x64` (98.5 MB `.node`)                                                                               | pure Python                         | cp37–cp39 wheels only                                                        |
+| Linux arm64 prebuilt                                                                                                 | pure JS                          | Y (`@ntgcalls/linux-arm64`)                                                                                                   | —                                   | ?                                                                            |
+| License                                                                                                              | MIT                              | **LGPL-3.0-only**                                                                                                             | (LGPL dependency)                   | LGPLv3                                                                       |
+| Maintenance (registry timestamps)                                                                                    | active                           | releases 3.0.1 (2026-10-04), 3.0.2 (10-06), 3.0.3 (10-11)                                                                     | 3.0.0 (2026-09-25), 3.0.1b1 (10-11) | stale (last 2023-01-09)                                                      |
 
 Interpretation:
 
@@ -56,16 +56,16 @@ Interpretation:
 
 ## 4. Pinned artifacts (reproducibility)
 
-| Artifact | Version | Identifier |
-|---|---|---|
-| `ntgcalls` (npm, JS shim) | 3.0.3 | see `experiments/telegram-calls/package-lock.json` (integrity hashes) |
-| `@ntgcalls/linux-x64` (npm, native) | 3.0.3 | lockfile integrity; `ntgcalls.node` 98,528,104 bytes |
-| `ntgcalls` sdist (PyPI) | 3.0.3 | uploaded 2026-10-11; LGPL-3.0 `LICENSE` inspected |
-| `py-tgcalls` | 3.0.0 | uploaded 2026-09-25; used only as a reference for the handshake sequence |
-| `telegram` (GramJS) | 2.26.22 | MIT; bundled TL layer **198** |
+| Artifact                            | Version | Identifier                                                               |
+| ----------------------------------- | ------- | ------------------------------------------------------------------------ |
+| `ntgcalls` (npm, JS shim)           | 3.0.3   | see root `pnpm-lock.yaml` (integrity hashes)                             |
+| `@ntgcalls/linux-x64` (npm, native) | 3.0.3   | lockfile integrity; `ntgcalls.node` 98,528,104 bytes                     |
+| `ntgcalls` sdist (PyPI)             | 3.0.3   | uploaded 2026-10-11; LGPL-3.0 `LICENSE` inspected                        |
+| `py-tgcalls`                        | 3.0.0   | uploaded 2026-09-25; used only as a reference for the handshake sequence |
+| `telegram` (GramJS)                 | 2.26.22 | MIT; bundled TL layer **198**                                            |
 
 Upstream build inputs read from the sdist `version.properties`: libwebrtc `152.7977.0.3`, Boost `1.92.0`, FFmpeg `9.0.1`, OpenH264 `2.6.0`, clang 22.
-Building from source (instead of the prebuilt binary) is a heavy WebRTC build and is *not* attempted; the prebuilt binary is the pinned deliverable.
+Building from source (instead of the prebuilt binary) is a heavy WebRTC build and is _not_ attempted; the prebuilt binary is the pinned deliverable.
 
 ## 5. Offline-executed evidence (this host: linux-x64, Node v22.22.0)
 
@@ -74,28 +74,36 @@ Produced by `node experiments/telegram-calls/smoke-offline.mjs` → `evidence/of
 - Native module loads; `createP2pCall` succeeds; `calls()` reflects the call.
 - `NTgCalls.getProtocol()` returns `minLayer 92, maxLayer 92, udpP2p true, udpReflector true, libraryVersions [8.0.0, 9.0.0, 12.0.0, 13.0.0]`.
   **Risk R-P1:** whether current official clients negotiate a compatible library version with this protocol descriptor is unverified (G0-F).
-- **Finding F-1 (typing/runtime mismatch):** `index.d.ts` declares byte arguments as `Buffer`, but the native layer rejects `Buffer` and
+- **Finding F-1 (typing/runtime mismatch, bytes):** `index.d.ts` declares byte arguments as `Buffer`, but the native layer rejects `Buffer` and
   `Uint8Array` ("An array was expected") and accepts plain `number[]`. Returned byte data comes back as `Uint8Array`. The adapter must
   convert at the boundary and have a contract test, otherwise a library upgrade silently changes behavior.
+- **Finding F-2 (typing/runtime mismatch, enums):** `index.d.ts` lists enums as sequential ordinals, but the runtime enums are **bit flags**
+  (`MediaSource.EXTERNAL` is `32`, not `6`; `ConnectionState.CONNECTED` is `2`; `StreamMode` is `CAPTURE=0, PLAYBACK=1`). Passing a hand-written ordinal
+  fails with "Invalid input mode". Always use the runtime enum objects exported by the module, never numeric literals.
+- **Finding F-3 (outgoing `initExchange` argument):** for an _outgoing_ call the third argument (`ga_hash`) must be **absent** (`undefined`, `null` or omitted):
+  the call returns the 32-byte `g_a_hash` that `phone.requestCall` needs. An empty array is treated as the _incoming_ case and returns a 256-byte `g_b`.
+  This was found by comparison with `py-tgcalls` 3.0.0 (`connect_call.py` passes `None` for outgoing) and then confirmed against the binding.
+- Order that the binding accepts offline (and that `py-tgcalls` uses): `createP2pCall` → `setStreamSources(CAPTURE, external microphone)` → `initExchange`.
+  After that, `sendExternalFrame(MICROPHONE, 20 ms of s16le @ 48 kHz mono = 1,920 bytes)` is accepted without a peer; a frame for an unknown call is rejected.
 - `sendExternalFrame` before a stream source is configured is rejected ("External source not initialized"): fail-closed, as required.
 
 None of this contacts Telegram.
 
-## 6. Handshake sequence (from py-tgcalls source structure + TL schema; **unverified against live**)
+## 6. Handshake sequence (read from `py-tgcalls` 3.0.0 source and the GramJS TL schema; **NOT verified against live Telegram**)
 
 Outgoing private call, owner account = caller:
 
 1. `messages.getDhConfig` → `p`, `g`, `random`.
-2. `ntgcalls.createP2pCall(peerUserId)`; `initExchange(peer, dhConfig, undefined)` → `g_a_hash`.
+2. `ntgcalls.createP2pCall(peerUserId)`; `setStreamSources(CAPTURE, external mic)`; `initExchange(peer, dhConfig, undefined)` → 32-byte `g_a_hash`.
 3. `phone.requestCall(user_id, random_id, g_a_hash, protocol{min/max layer, udp_p2p, udp_reflector, library_versions}, video=false)`.
-4. Updates: `updatePhoneCall(phoneCallWaiting → phoneCallAccepted)`; on `phoneCallAccepted` call `exchangeKeys(peer, g_b, fingerprint)` → `{ gAOrB, keyFingerprint }`.
+4. Updates: `updatePhoneCall(phoneCallWaiting → phoneCallAccepted)`; on `phoneCallAccepted` call `exchangeKeys(peer, g_b, 0)` → `{ gAOrB, keyFingerprint }` (the reference passes the fingerprint field of the _accepted_ update, which is absent, i.e. 0).
 5. `phone.confirmCall(peer, g_a, key_fingerprint, protocol)` → `phoneCall` with `connections[]`/RTC servers.
 6. `connectP2p(peer, servers, versions, p2pAllowed, customParameters)`; relay signaling blobs both ways through
    `onSignalingData` ↔ `phone.sendSignalingData` and `updatePhoneCallSignalingData` ↔ `sendSignalingData`.
-7. `setStreamSources(peer, CAPTURE, {microphone: {mediaSource: EXTERNAL, sampleRate, channelCount:1}})`, then `sendExternalFrame`; receive via `onFrames`.
+7. Send with `sendExternalFrame(MICROPHONE, …)`; to receive remote audio the spike also sets an external `speaker` source in `PLAYBACK` mode and reads `onFrames`. (Whether remote PCM is delivered this way on a _private_ call is exactly what G0-C must show; the group-call examples do not prove it.)
 8. `phone.discardCall` on end; handle `phoneCallDiscarded` (busy/declined/missed reasons).
 
-Whether the exact private-call DH/`confirmCall` details match the *current* Telegram server behavior at layer 198+ is exactly what G0-B must prove.
+Whether the exact private-call DH/`confirmCall` details match the _current_ Telegram server behavior at layer 198+ is exactly what G0-B must prove.
 
 ## 7. Architecture consequence (ADR-0001 draft)
 
@@ -110,14 +118,27 @@ call-worker process of the same codebase). No Python sidecar is required by this
 
 ## 8. Known limitations / open risks
 
-| ID | Risk | Mitigation / gate |
-|---|---|---|
-| R-P1 | Protocol descriptor (`minLayer=maxLayer=92`, lib versions 8–13) may not interoperate with current official clients | G0-B/G0-F on real devices; disable capability on failure |
-| R-P2 | GramJS TL is layer 198; server may require newer layers for some constructors | G0-A/G0-B live; pin and canary |
-| R-P3 | Echo cancellation / speakerphone loop not provided by external-source mode | Measure at G0-C/D; bridge must never feed own output to the model |
-| R-P4 | 98.5 MB native binary; supply-chain and license review | Lockfile integrity, ADR, LGPL notices |
-| R-P5 | Account restrictions/flood waits when automating a user account | Narrow owner-authorized use; no loops; runbook |
-| R-P6 | Docs for Telegram/OpenAI not re-read (proxy) | §2 action; blocks Realtime adapter finalization |
+| ID   | Risk                                                                                                               | Mitigation / gate                                                 |
+| ---- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| R-P1 | Protocol descriptor (`minLayer=maxLayer=92`, lib versions 8–13) may not interoperate with current official clients | G0-B/G0-F on real devices; disable capability on failure          |
+| R-P2 | GramJS TL is layer 198; server may require newer layers for some constructors                                      | G0-A/G0-B live; pin and canary                                    |
+| R-P3 | Echo cancellation / speakerphone loop not provided by external-source mode                                         | Measure at G0-C/D; bridge must never feed own output to the model |
+| R-P4 | 98.5 MB native binary; supply-chain and license review                                                             | Lockfile integrity, ADR, LGPL notices                             |
+| R-P5 | Account restrictions/flood waits when automating a user account                                                    | Narrow owner-authorized use; no loops; runbook                    |
+| R-P6 | Docs for Telegram/OpenAI not re-read (proxy)                                                                       | §2 action; blocks Realtime adapter finalization                   |
+
+## 8a. What the spike scripts do (all exist and are guarded)
+
+| Script (pnpm)                                       | Gate        | Behavior                                                                                                                                                                                                   |
+| --------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm spike:smoke`                                  | none        | Offline load/API-sequence check; writes `offline-smoke.json`. **Never** a gate result.                                                                                                                     |
+| `pnpm spike:login`                                  | G0-A        | Interactive, hidden OTP/2FA, mode-600 session file, prints the assistant numeric id. Refuses non-TTY before any network access.                                                                            |
+| `pnpm spike:call`                                   | G0-B/C/D/E  | Real call to ONE consenting numeric recipient inside a ≤2 h window. Refuses (exit 2) unless opt-in, recipient, consent, window, credentials and session are all present. Never redials after an exception. |
+| `pnpm spike:record-gate <gate> <result> <evidence>` | G0-E/F etc. | Operator attestation for things a script cannot observe (target host, phone clients). `PASS` needs an existing evidence file and `OPERATOR_ATTESTS_LIVE=yes`.                                              |
+| `pnpm spike:evidence`                               | all         | Assembles gate records. Missing records become `BLOCKED_EXTERNAL`. Stamped `producedBy: "spike"`, which the application **rejects**.                                                                       |
+
+Spike evidence proves the _approach_ is feasible. It cannot enable production by design (`producedBy` must be `production-adapter`, and the fingerprint covers the
+production adapter sources), so the same live gates must be re-run against the production adapter before calling can be enabled.
 
 ## 9. Live gate checklist (run locally; exact commands)
 
@@ -127,10 +148,69 @@ Prerequisites (owner, locally): dedicated assistant Telegram account + `api_id`/
 cp .env.example .env            # fill TELEGRAM_API_ID / TELEGRAM_API_HASH only; never paste them in chat
 pnpm install --frozen-lockfile
 pnpm spike:login                # G0-A  protected interactive login; prints assistant numeric ID for you to compare
-LIVE_TEST_OPT_IN=yes LIVE_TEST_RECIPIENT_ID=<numeric id> LIVE_TEST_WINDOW_END=<ISO time> pnpm spike:call   # G0-B/C (script refuses to run without all three)
+LIVE_TEST_OPT_IN=yes LIVE_TEST_RECIPIENT_ID=<numeric id> LIVE_TEST_RECIPIENT_CONSENT=yes \
+  LIVE_TEST_WINDOW_START=<ISO> LIVE_TEST_WINDOW_END=<ISO> pnpm spike:call     # G0-B/C (refuses unless ALL are present)
+LIVE_TEST_MAX_SECONDS=300 ... pnpm spike:call                                   # G0-D five-minute two-way session
+LIVE_TEST_REPEAT=10 ...      pnpm spike:call                                   # G0-D ten consecutive short calls (aborts the whole batch on any uncertain or unproven call)
+LIVE_TEST_SCENARIO=expect_decline LIVE_TEST_EXPECTED_DISCARD_REASON=<exact class> ... pnpm spike:call   # G0-E (ask the participant to decline); the expected Telegram discard class is declared by the operator; repeat for expect_busy
+OPERATOR_ATTESTS_LIVE=yes pnpm spike:record-gate G0-F PASS <evidence file>     # G0-F target host/container + phone clients
+pnpm spike:evidence                                                             # assemble gate records
 ```
 
 Each gate result must be recorded as `PASS` / `FAIL` / `BLOCKED_EXTERNAL` in `docs/IMPLEMENTATION_STATUS.md` with the evidence file path.
+
+## 9a. Live findings so far (single Mac, owner calling own second account; **not** the production adapter, **not** a gate pass)
+
+Recorded from the operator's runs on 2026-10-16. Raw evidence files stay local (`experiments/telegram-calls/evidence/*.local.json`, not committed).
+
+| #   | Finding                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Status                                         |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| F-4 | `ntgcalls` 3.0.3 type declarations do not match runtime: native `bigint` required for `RTCServer.id` (GramJS returns `big-integer` objects); `Array` (not `Buffer`) required for `peerTag`, key material and signaling payloads; empty `customParameters` fails JSON parsing (use `'{}'`).                                                                                                                                                                                                                  | fixed in the spike script; reproduced offline  |
+| F-5 | Outbound external PCM at **20 ms** frames was audibly distorted; at **10 ms** the operator heard a clean continuous tone for 30 s.                                                                                                                                                                                                                                                                                                                                                                          | operator-reported, human judgment, one session |
+| F-6 | G0-B: outgoing call set up, accepted, `CONNECTED`, held 30 s and ended by the script (`time_limit`) in one attempt. One attempt is not the G0-D criterion.                                                                                                                                                                                                                                                                                                                                                  | 1 PASS, still needs G0-D repeats               |
+| F-7 | Inbound audio: remote RTP (PT 111) arrived but was dropped by WebRTC (`Failed to demux RTP packet`, ~500 packets) because no receive stream was created (`recv=0`, no `AddRecvStream`). `onFrames` never fired. Attaching the PLAYBACK stream as `speaker` before `connectP2p` (the documented-looking setup) does not work.                                                                                                                                                                                | root cause localised                           |
+| F-8 | Workaround found in an upstream issue thread (ntgcalls #44, user-reported, **not** maintainer-validated) and reproduced locally with two in-process peers: attach CAPTURE before `connectP2p`; after connect attach PLAYBACK **on the `microphone` slot**, `unmute`, `resume`, and keep a continuous outbound stream. Local result: 801 inbound frames of 960 bytes (10 ms, 48 kHz mono s16), `mode=PLAYBACK device=MICROPHONE`. Applied to `live-call.mjs`; **not yet confirmed on a real Telegram call**. | local only                                     |
+
+| F-9 | After the audit, `live-call.mjs` was refactored (placement tracking, call-bound updates, per-placement window check, validated integers, default 10 ms frames, `LIVE_TEST_EXPECTED_DISCARD_REASON` for G0-E). The guard logic is unit-tested offline; **the refactored script has not been re-run against Telegram**. | re-run needed |
+
+| F-10 | 2026-10-17, refactored `live-call.mjs` re-run (answer, 10 ms frames, 60 s): `G0-B` PASS, `G0-C` outbound PASS (operator: clean tone), inbound PASS (`receivedNonSilent` > 0 while the operator spoke). This **confirms F-8 on a real call**. An earlier run was scored FAIL only because the operator mistyped the tone answer (`clead`) and another because the operator hung up at 20 s (discard reason `Disconnect`, not `time_limit`); both records are kept as they were. | 1 PASS (operator-run, spike script) |
+| F-11 | Same script, 300 s: summary `G0-B` PASS, `G0-C` PASS, `G0-D-candidate` 1/1 at 300 s. | 1 PASS; **10-call repeat not run** |
+| F-12 | G0-E, `expect_decline`: operator rejected the ringing call twice. Telegram reported `PhoneCallDiscardReasonDisconnect` both times, with no redial. The first run declared `Busy` as expected reason and was scored FAIL (wrong expectation, record kept); the second, declaring `Disconnect`, PASS. | decline only; `Disconnect` is **not** a reliable "declined" signal |
+| F-13 | Every script run exits with `SIGABRT` after printing results (native teardown in ntgcalls). Results are not affected, but a production process must shut calls down cleanly. | open defect |
+
+| F-14 | 2026-10-17, first operator-run AI call through the **production** `NtgcallsCallAdapter` (`pnpm live:ai-call`, 90 s, owner phone): ringing at 0.5 s, connected at 6.5 s, two-way conversation with OpenAI Realtime (`ga` dialect, model `gpt-realtime` from the operator's config) in Uzbek, Russian and English; 9012 call frames in, 5545 out (~55 s of model speech), 10 barge-ins, call ended by the duration cap. The `session.update` (GA dialect), audio delta, `speech_started` and `response.*` events were accepted without protocol errors. | 1 operator-run call; **not** a gate pass |
+| F-15 | Defects found by that call: (a) the greeting was passed as `response.create` instructions, which the model treats as a directive, so it answered the text as a question instead of saying it (fixed: explicit "say exactly this" directive); (b) `response.cancel` was sent with no response in flight, giving `response_cancel_not_active` ten times (fixed: track `response.created/done`, treat the lost race as benign); (c) the part of an interrupted response the caller never heard stayed in the conversation (fixed: `conversation.item.truncate` with the played milliseconds; **truncate not yet seen live**). | fixes unit-tested, re-run needed |
+| F-16 | The script still exits 134 (SIGABRT) after the summary, as F-13: native teardown in ntgcalls on process exit. | open defect |
+
+| F-17 | Re-run after the F-15 fixes (90 s): the greeting is now spoken first and correctly, no Realtime protocol errors (`errors: []`), 18 barge-ins, 5941 frames out; `truncate` and `cancel` were accepted. New model behaviour found: with no clock or tools it **invented the time** ("10:12", "10:47") and once promised "I will remind you" (later retracted) — prompt-only guards are not enough; real owner calls must give the model tools and keep commitments in application code (spec §9). Exit 134 persists (F-16). | operator-run call; prompt tightened, tools are the real fix |
+
+| F-18 | First Gemini Live call (`AI_VOICE_PROVIDER=gemini`, 90 s cap, owner phone): setup accepted, no protocol errors, two-way audio, 2 barge-ins, 8353 frames in / 4688 out. Quality findings (operator-reported): the model drifted into Turkish/German/Russian on Uzbek speech (its transcript of the caller shows Uzbek mis-recognised as other languages) and refused general-knowledge questions ("no memory"). Both are prompt defects of ours: "switch to the caller's language" amplified the mis-recognition, and "you have no memory/tools" was over-generalised. Fixed: language locked to Uzbek unless asked, general knowledge allowed, only time/owner data/commitments refused; optional Google Search tool (`GEMINI_GOOGLE_SEARCH=on`) and language hint (`GEMINI_LANGUAGE_CODE`), both off unless configured. The call ended with `transport_error` at 87.9 s, before the 94 s cap; cause not established (remote disconnect after connect maps to `transport_error`). | operator-run call; re-run needed |
+
+| F-19 | Second Gemini call, after adding `GEMINI_GOOGLE_SEARCH=on` and `GEMINI_LANGUAGE_CODE=uz-UZ`: connected, then **no model audio at all** (0 chunks) and **no error** for 30 s; the operator hung up. A model that never speaks produced no event, so the tool stayed silent. Added: a `setupComplete` watchdog (8 s), a "no model audio 15 s after the greeting" watchdog in the bridge, and `GEMINI_DEBUG=on` (structure-only message log). Cause not yet established; the likely suspects are the two new options (bisect by removing them). | operator-run call; open |
+
+| F-20 | Gemini re-run without `GEMINI_GOOGLE_SEARCH` / `GEMINI_LANGUAGE_CODE` (debug on): `setupComplete` at 1.5 s, then a natural Uzbek conversation (transcripts correct, general-knowledge answer "Toshkent", Uzbek speech no longer drifted to other languages after the prompt fix). The silent run of F-19 is therefore caused by one of the two removed options (not bisected). The call did not end on "goodbye": models cannot hang up, only the application can. Added an `end_call` tool (both providers): the model says goodbye, calls the tool, the application lets the already-queued audio play out (`CallHandle.drained()`), then hangs up. | operator-run call; `end_call` re-run needed |
+
+| F-21 | Gemini call with `end_call`: the tool call arrived and the call ended with `completed` (hang-up 0.7 s after the tool call). Two defects: the model called `end_call` too early (right after answering a question, before any goodbye), and when the caller spoke ("yaxshi") the output flush made `drained()` resolve, so the call was hung up mid-reply. Fixed: caller speech after the end request cancels the hang-up (the model may ask again); `end_call` description restricted to an explicit goodbye. Calendar request correctly refused ("I cannot manage calendars"). | operator-run call; fix unit-tested, re-run needed |
+
+Open: `LIVE_TEST_REPEAT=10` (G0-D), busy/no-answer/privacy-restricted/connectivity-loss (G0-E), and a target-host canary (G0-F). The workaround depends on undocumented behaviour of a third-party native library; the adapter must pin the exact version and keep a regression test.
+
+## 9b. Operator-run AI voice test (`pnpm live:ai-call`)
+
+The assistant rings the owner's own phone through the **production** `NtgcallsCallAdapter`, and an OpenAI Realtime session talks on the call (caller audio -> 24 kHz -> model; model audio -> 48 kHz -> exact 10 ms frames; barge-in drops queued audio and cancels the response). It is a test tool: it bypasses the orchestrator/policy/budget on purpose, is guarded like the other live spikes (opt-in, <= 2 h window, hard duration cap) and never enables calling in the service. It spends OpenAI credit while the call lasts.
+
+**Gemini Live** is a second provider for the same test and bridge (`AI_VOICE_PROVIDER=gemini`, `GEMINI_API_KEY`, `GEMINI_LIVE_MODEL`, optional `GEMINI_VOICE`, `GEMINI_TEXT_MODE=realtime|client_content`). It is written from memory of the public protocol and has **never run against the real service**; the model name is never defaulted and server close codes/reasons are printed verbatim. Free-tier API content may be used by the provider to improve its products: use a free key for the owner's own test calls only, never for contact calls or real owner data.
+
+**Not verified:** the OpenAI Realtime wire protocol was written from memory (the OpenAI docs were unreachable from the build sandbox). The model name is never defaulted (`OPENAI_REALTIME_MODEL`), two dialects exist (`OPENAI_REALTIME_DIALECT=ga|beta`), and every server `error` event is printed verbatim so a wrong field name shows up as a readable message on the first run. The production adapter has also not run on a real call before this test.
+
+```bash
+export LIVE_TEST_OPT_IN=yes LIVE_TEST_RECIPIENT_ID=<your numeric id> LIVE_TEST_RECIPIENT_CONSENT=yes
+export LIVE_TEST_WINDOW_START=$(date -u -v-1M +%Y-%m-%dT%H:%M:%SZ) LIVE_TEST_WINDOW_END=$(date -u -v+60M +%Y-%m-%dT%H:%M:%SZ)
+export LIVE_TEST_MAX_SECONDS=90
+# OPENAI_API_KEY and OPENAI_REALTIME_MODEL must be in .env (OPENAI_VOICE optional)
+pnpm live:ai-call
+```
+
+**Briefing mode** (`AI_CALL_MODE=briefing`): the AI reads the owner's real overdue/due-today tasks from `DATABASE_URL` and can `complete_task` / `move_task` (by call-local number) and `end_call`. The recipient must be the owner. The app supplies the current local time (the model never invents dates), tool results report only what was committed (a validation error or a version conflict is reported as such), and task text is passed as data, not instructions. This changes real tasks: use a test owner or accept the edits.
 
 ## 10. Recommendation
 

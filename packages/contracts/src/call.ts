@@ -38,9 +38,11 @@ export const ApprovedCallPlanSchema = z.object({
   callRequestId: UuidSchema,
   ownerId: UuidSchema,
   recipientTelegramId: TelegramUserIdSchema,
-  purpose: z.string().min(3).max(500),
+  /** Short slug matched against the contact's topic-scoped permission (extension to the spec interface; see docs/adr/0002). */
+  topic: z.string().regex(/^[a-z0-9_.-]{1,64}$/),
+  purpose: z.string().min(3).max(2000),
   questions: z.array(z.string().min(1).max(300)).max(10),
-  allowedContext: z.array(z.string().min(1).max(500)).max(20),
+  allowedContext: z.array(z.string().min(1).max(2000)).max(20),
   forbiddenCommitments: z.array(z.string().min(1).max(300)).max(20),
   language: CallLanguageSchema,
   maxDurationSeconds: z.number().int().min(10).max(3600),
@@ -71,6 +73,12 @@ export interface PcmFrame extends z.infer<typeof PcmFrameSchema> {
   samples: Uint8Array;
 }
 
+/**
+ * Events a call adapter streams to the orchestrator. CONTRACT (audit F04): while a call is live the adapter MUST emit a
+ * `heartbeat` at least every 30 s. A stream that shows no event for the orchestrator's idle deadline (default 90 s) is treated as
+ * stalled: the orchestrator asks the provider whether the call is over and, if that is not confirmed, persists `outcome_unknown`
+ * (which keeps the account occupied). A terminal `ended`/`error` event, or `reconcile() === 'ended'`, is the only proof of an end.
+ */
 export interface CallEvent {
   eventId: string;
   type: 'ringing' | 'connected' | 'ended' | 'error' | 'heartbeat' | 'playback_progress';
@@ -85,6 +93,8 @@ export interface CallHandle {
   events: AsyncIterable<CallEvent>;
   sendAudio(frame: PcmFrame): Promise<void>;
   flushOutput(): Promise<void>;
+  /** Resolves once everything queued with `sendAudio` has been played out (bounded; resolves early if the call ends). Optional: adapters without pacing may omit it. */
+  drained?(): Promise<void>;
   end(reason: CallEndReason): Promise<void>;
 }
 
@@ -112,3 +122,25 @@ export const PolicyDecisionSchema = z.object({
   authorizationId: UuidSchema.optional(),
 });
 export type PolicyDecision = z.infer<typeof PolicyDecisionSchema>;
+
+/** Adapter error taxonomy. Adapters MUST classify: unknown outcome is not the same as rejection (spec §7). */
+export class DialRejectedError extends Error {
+  constructor(
+    readonly reason: CallEndReason,
+    message = `dial rejected: ${reason}`,
+    readonly retryAfterSeconds?: number,
+  ) {
+    super(message);
+    this.name = 'DialRejectedError';
+  }
+}
+/** The request may or may not have reached Telegram (timeout/crash after send). Never auto-redial. */
+export class DialOutcomeUnknownError extends Error {
+  constructor(
+    message = 'dial outcome unknown',
+    readonly providerCallId?: string,
+  ) {
+    super(message);
+    this.name = 'DialOutcomeUnknownError';
+  }
+}

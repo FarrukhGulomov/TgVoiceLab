@@ -29,7 +29,22 @@
     "spike:login": "pnpm --filter @tgvl/telegram-calls-spike run login",
     "spike:call": "pnpm --filter @tgvl/telegram-calls-spike run call",
     "live:test": "pnpm --filter @tgvl/telegram-calls-spike run call",
-    "ci": "pnpm run lint && pnpm run typecheck && pnpm run test:all"
+    "bootstrap:owner": "pnpm --filter @tgvl/assistant run bootstrap:owner",
+    "dev:secrets": "pnpm --filter @tgvl/assistant run dev:secrets",
+    "spike:record-gate": "pnpm --filter @tgvl/telegram-calls-spike run record-gate",
+    "spike:evidence": "pnpm --filter @tgvl/telegram-calls-spike run evidence",
+    "secrets:scan": "node scripts/check-secrets.mjs",
+    "fingerprint": "node scripts/build-fingerprint.mjs",
+    "db:replay-tombstones": "pnpm --filter @tgvl/assistant run db:replay-tombstones",
+    "keys:rotate": "pnpm --filter @tgvl/assistant run keys:rotate",
+    "verify": "pnpm run lint && pnpm run format && pnpm run typecheck && pnpm run build && pnpm run test:all",
+    "voicelab:check": "pnpm --filter @tgvl/assistant run voicelab:check",
+    "elevenlabs:check": "pnpm --filter @tgvl/assistant run elevenlabs:check",
+    "voicelab:stt-bench": "pnpm --filter @tgvl/assistant run voicelab:stt-bench",
+    "live:ai-call": "pnpm --filter @tgvl/assistant run live:ai-call",
+    "live:gate-calls": "pnpm --filter @tgvl/assistant run live:gate-calls",
+    "attest:target-host": "pnpm --filter @tgvl/assistant run attest:target-host",
+    "evidence:production": "pnpm --filter @tgvl/assistant run evidence:production"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",

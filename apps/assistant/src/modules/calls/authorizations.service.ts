@@ -1,0 +1,134 @@
+import { ApprovedCallPlanSchema, CallPlanBodySchema, type ApprovedCallPlan, type CallPlanBody } from '@tgvl/contracts';
+import { inTx, type Db, type Queryable } from '../../infrastructure/db/db.js';
+import type { Clock } from '../../application/clock.js';
+import { NotFoundError, ValidationError, DomainError } from '../../application/errors.js';
+import { writeAudit } from '../audit/audit.js';
+import { computePlanHash } from './plan-hash.js';
+import type { DataCrypto } from '../../infrastructure/crypto/data-crypto.js';
+import { redactedPlan, sealPlan } from './plan-store.js';
+
+/**
+ * Immutable call briefs + exact-plan authorizations. The plan JSON and its hash are written once; approval must present
+ * the same hash. A contact allowlist/permission alone never creates an authorization.
+ */
+export class AuthorizationService {
+  constructor(
+    private readonly db: Db,
+    private readonly clock: Clock,
+    private readonly crypto: DataCrypto,
+  ) {}
+
+  /** Create the brief (pending). Returns what the owner must approve. If `ownerExplicitCommand`, approval is recorded immediately. */
+  async createCallRequest(
+    ownerId: string,
+    bodyIn: CallPlanBody,
+    opts: { ownerExplicitCommand?: boolean; sourceMessageId?: string } = {},
+    q: Queryable = this.db,
+  ): Promise<{ callRequestId: string; authorizationId: string; planHash: string; plan: ApprovedCallPlan; state: 'pending' | 'approved' }> {
+    const body = CallPlanBodySchema.parse(bodyIn);
+    if (body.ownerId !== ownerId) throw new DomainError('forbidden', 'plan belongs to another owner');
+    const now = this.clock.now();
+    if (new Date(body.expiresAt).getTime() <= now.getTime()) throw new ValidationError('plan already expired');
+    const planHash = computePlanHash(body);
+
+    return inTx(q, async (c) => {
+      // A call addressed to the owner's own numeric id is an OWNER call: no contact row or permission applies, the owner's
+      // opt-out and quiet hours do (decided in the dial policy). Everything else needs a verified contact.
+      const ownerRow = await c.query<{ telegram_user_id: string }>('SELECT telegram_user_id FROM owners WHERE id=$1', [ownerId]);
+      const isOwnerCall = ownerRow.rows[0]?.telegram_user_id === body.recipientTelegramId;
+      let contactId: string | null = null;
+      let permissionVersion = 0;
+      if (!isOwnerCall) {
+        const contact = await c.query<{ id: string; telegram_user_id: string; verified_at: Date | null }>(
+          'SELECT id, telegram_user_id, verified_at FROM contacts WHERE owner_id=$1 AND telegram_user_id=$2',
+          [ownerId, body.recipientTelegramId],
+        );
+        const ct = contact.rows[0];
+        if (!ct) throw new NotFoundError('contact');
+        if (!ct.verified_at) throw new ValidationError('contact identity is not verified (numeric id required)');
+        const perm = await c.query<{ version: number }>(
+          'SELECT version FROM contact_permissions WHERE contact_id=$1 AND owner_id=$2 ORDER BY version DESC LIMIT 1',
+          [ct.id, ownerId],
+        );
+        contactId = ct.id;
+        permissionVersion = perm.rows[0]?.version ?? 0;
+      }
+
+      const auth = await c.query<{ id: string }>(
+        `INSERT INTO authorizations (owner_id, action, target_contact_id, plan, plan_hash, source_message_id, state, expires_at, approved_at, created_at)
+         VALUES ($1,$10,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+        [
+          ownerId,
+          contactId,
+          JSON.stringify(redactedPlan(body)), // authorizations never hold free text; the approved plan lives sealed in call_requests
+          planHash,
+          opts.sourceMessageId ?? null,
+          opts.ownerExplicitCommand ? 'approved' : 'pending',
+          body.expiresAt,
+          opts.ownerExplicitCommand ? now : null,
+          now,
+          isOwnerCall ? 'owner_call' : 'contact_call',
+        ],
+      );
+      const authorizationId = auth.rows[0]!.id;
+      const plan = ApprovedCallPlanSchema.parse({ ...body, authorizationId, permissionVersion, planHash });
+      const sealed = sealPlan(this.crypto, ownerId, plan);
+      const req = await c.query<{ id: string }>(
+        `INSERT INTO call_requests (id, owner_id, contact_id, plan, plan_enc, plan_hash, authorization_id, permission_version, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+        [
+          body.callRequestId,
+          ownerId,
+          contactId,
+          JSON.stringify(sealed.shell),
+          sealed.enc,
+          planHash,
+          authorizationId,
+          permissionVersion,
+          opts.ownerExplicitCommand ? 'queued' : 'pending_authorization',
+        ],
+      );
+      await writeAudit(c, {
+        ownerId,
+        actorType: 'owner',
+        action: opts.ownerExplicitCommand ? 'authorization.explicit_command' : 'authorization.create',
+        resourceType: 'authorization',
+        resourceId: authorizationId,
+        allowed: true,
+        reasonCode: 'ok',
+        metadata: { planHash },
+      });
+      return { callRequestId: req.rows[0]!.id, authorizationId, planHash, plan, state: opts.ownerExplicitCommand ? 'approved' : 'pending' } as const;
+    });
+  }
+
+  /** Approve exactly the plan the owner saw: the presented hash must equal the stored hash. */
+  async approve(ownerId: string, authorizationId: string, presentedPlanHash: string, q: Queryable = this.db): Promise<void> {
+    const now = this.clock.now();
+    await inTx(q, async (c) => {
+      const a = await c.query<{ plan_hash: string; state: string; expires_at: Date }>(
+        'SELECT plan_hash, state, expires_at FROM authorizations WHERE id=$1 AND owner_id=$2 FOR UPDATE',
+        [authorizationId, ownerId],
+      );
+      const row = a.rows[0];
+      if (!row) throw new NotFoundError('authorization');
+      if (row.plan_hash !== presentedPlanHash) throw new DomainError('plan_changed', 'the plan changed since it was shown; review and approve again');
+      if (row.state !== 'pending') throw new DomainError('invalid_state', `authorization is ${row.state}`);
+      if (row.expires_at.getTime() <= now.getTime()) throw new DomainError('expired', 'authorization expired');
+      await c.query(`UPDATE authorizations SET state='approved', approved_at=$2 WHERE id=$1`, [authorizationId, now]);
+      await c.query(`UPDATE call_requests SET status='queued' WHERE authorization_id=$1 AND owner_id=$2 AND status='pending_authorization'`, [
+        authorizationId,
+        ownerId,
+      ]);
+      await writeAudit(c, {
+        ownerId,
+        actorType: 'owner',
+        action: 'authorization.approve',
+        resourceType: 'authorization',
+        resourceId: authorizationId,
+        allowed: true,
+        reasonCode: 'ok',
+      });
+    });
+  }
+}

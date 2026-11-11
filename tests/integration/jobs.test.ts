@@ -8,11 +8,15 @@ let o: SeededOwner;
 const T0 = new Date('2026-10-15T10:00:00Z');
 const plus = (ms: number) => new Date(T0.getTime() + ms);
 
-beforeAll(async () => { t = await createTestDb(); o = await seedOwner(t.db); });
-afterAll(async () => { await t.drop(); });
+beforeAll(async () => {
+  t = await createTestDb();
+  o = await seedOwner(t.db);
+});
+afterAll(async () => {
+  await t.drop();
+});
 
-const mk = (kind: string, dueAt = T0, extra: Partial<Parameters<typeof enqueueJob>[1]> = {}) =>
-  enqueueJob(t.db, { ownerId: o.ownerId, kind, dueAt, ...extra });
+const mk = (kind: string, dueAt = T0, extra: Partial<Parameters<typeof enqueueJob>[1]> = {}) => enqueueJob(t.db, { ownerId: o.ownerId, kind, dueAt, ...extra });
 
 describe('job queue', () => {
   it('enqueue is idempotent per dedupe key', async () => {
@@ -33,7 +37,9 @@ describe('job queue', () => {
 
   it('concurrent workers never claim the same job twice (SKIP LOCKED)', async () => {
     await Promise.all(Array.from({ length: 40 }, (_, i) => mk('race', T0, { dedupeKey: `race-${i}` })));
-    const claims = await Promise.all(Array.from({ length: 8 }, (_, w) => claimJobs(t.db, { workerId: `w${w}`, leaseMs: 60_000, limit: 10, now: T0, kinds: ['race'] })));
+    const claims = await Promise.all(
+      Array.from({ length: 8 }, (_, w) => claimJobs(t.db, { workerId: `w${w}`, leaseMs: 60_000, limit: 10, now: T0, kinds: ['race'] })),
+    );
     const ids = claims.flat().map((j) => j.id);
     expect(ids).toHaveLength(40);
     expect(new Set(ids).size).toBe(40);
@@ -63,9 +69,21 @@ describe('job queue', () => {
     await mk('flaky', T0, { dedupeKey: 'flaky-1', maxAttempts: 3 });
     const dead: string[] = [];
     let now = T0;
-    const handlers = { flaky: async () => { throw new Error('boom'); } };
+    const handlers = {
+      flaky: async () => {
+        throw new Error('boom');
+      },
+    };
     for (let i = 0; i < 6; i++) {
-      await runJobsOnce(t.db, handlers, { workerId: 'w', leaseMs: 1000, limit: 5, now, onDead: async (j) => { dead.push(j.id); } });
+      await runJobsOnce(t.db, handlers, {
+        workerId: 'w',
+        leaseMs: 1000,
+        limit: 5,
+        now,
+        onDead: async (j) => {
+          dead.push(j.id);
+        },
+      });
       now = new Date(now.getTime() + 20 * 60_000); // beyond max backoff
     }
     const row = await t.db.query('SELECT status, attempts, last_error FROM jobs WHERE dedupe_key=$1', ['flaky-1']);
@@ -86,7 +104,15 @@ describe('job queue', () => {
 
   it('LostLeaseError from a handler is not retried or dead-lettered by the zombie', async () => {
     await mk('zombie', T0, { dedupeKey: 'zombie-1' });
-    const res = await runJobsOnce(t.db, { zombie: async (j) => { throw new LostLeaseError(j.id); } }, { workerId: 'w', leaseMs: 1000, limit: 5, now: T0 });
+    const res = await runJobsOnce(
+      t.db,
+      {
+        zombie: async (j) => {
+          throw new LostLeaseError(j.id);
+        },
+      },
+      { workerId: 'w', leaseMs: 1000, limit: 5, now: T0 },
+    );
     expect(res).toMatchObject({ claimed: 1, lost: 1, done: 0, dead: 0 });
   });
 

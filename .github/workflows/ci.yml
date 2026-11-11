@@ -1,0 +1,50 @@
+name: ci
+on:
+  push:
+  pull_request:
+permissions: { contents: read }
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: tgvl, POSTGRES_PASSWORD: tgvl_dev, POSTGRES_DB: postgres }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U tgvl" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      TEST_DATABASE_ADMIN_URL: postgres://tgvl:tgvl_dev@localhost:5432/postgres
+      # CI is offline-by-design for external services: no Telegram, no OpenAI, no real dialing, no paid calls.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.28.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/check-secrets.mjs
+      - run: pnpm lint
+      - run: pnpm format
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm test:unit
+      - run: pnpm test:contract
+      - run: pnpm test:integration
+      - run: pnpm test:e2e
+      - run: pnpm audit --prod --audit-level high
+  image:
+    runs-on: ubuntu-24.04
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --build-arg BUILD_FINGERPRINT=$(node scripts/build-fingerprint.mjs) -t tgvoicelab:ci .
+  # Real containers on a disposable stack: separate DB roles, migrations as the migrator, least-privilege runtime, secret readability,
+  # authenticated readiness, and refusal of an over-privileged DATABASE_URL (deploy/smoke.sh needs root to chown the temp secrets).
+  deploy-smoke:
+    runs-on: ubuntu-24.04
+    needs: verify
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo -E deploy/smoke.sh

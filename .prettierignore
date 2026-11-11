@@ -1,0 +1,8 @@
+dist
+node_modules
+pnpm-lock.yaml
+coverage
+.local
+experiments/**/evidence
+TECHNICAL_SPEC.md
+CLAUDE_CODE_PROMPT.md

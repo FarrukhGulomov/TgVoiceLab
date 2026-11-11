@@ -13,14 +13,7 @@ const PREFIX_BYTES = 8;
 
 export class MediaFrameError extends Error {
   constructor(
-    readonly code:
-      | 'truncated'
-      | 'header_too_large'
-      | 'payload_too_large'
-      | 'bad_header'
-      | 'odd_sample_bytes'
-      | 'wrong_call'
-      | 'out_of_sequence',
+    readonly code: 'truncated' | 'header_too_large' | 'payload_too_large' | 'bad_header' | 'odd_sample_bytes' | 'wrong_call' | 'out_of_sequence',
     message: string,
   ) {
     super(message);
@@ -53,8 +46,7 @@ export function decodeMediaFrame(buf: Uint8Array): { header: MediaFrameHeader; s
   if (headerLength > MAX_HEADER_BYTES) throw new MediaFrameError('header_too_large', 'header exceeds 4 KiB');
   if (payloadLength > MAX_PAYLOAD_BYTES) throw new MediaFrameError('payload_too_large', 'payload exceeds 64 KiB');
   if (payloadLength % 2 !== 0) throw new MediaFrameError('odd_sample_bytes', 's16le payload must be even-sized');
-  if (buf.byteLength !== PREFIX_BYTES + headerLength + payloadLength)
-    throw new MediaFrameError('truncated', 'length prefix does not match buffer size');
+  if (buf.byteLength !== PREFIX_BYTES + headerLength + payloadLength) throw new MediaFrameError('truncated', 'length prefix does not match buffer size');
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buf.subarray(PREFIX_BYTES, PREFIX_BYTES + headerLength)));

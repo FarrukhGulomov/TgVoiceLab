@@ -1,0 +1,89 @@
+# Single-host deployment: PostgreSQL + the assistant. No Kubernetes, no Redis (spec §4).
+# Secrets are mounted as files (mode 600 on the host) and referenced via *_REF — never placed in environment values.
+# Exception: DATABASE_URL (it embeds the DB password) lives in ../.env.production, a mode-600 file that is never committed (.gitignore covers .env.*).
+# Calling stays disabled until a production adapter + evidence exist; this file contains no call/media configuration.
+name: tgvoicelab
+services:
+  db:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tgvl
+      # Bootstrap superuser: used ONLY to initialise roles (below) and for break-glass maintenance. The application never gets it.
+      POSTGRES_USER: tgvl_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
+    secrets: [db_admin_password, db_migrator_password, db_app_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Creates tgvl_migrator (schema owner, runs migrations) and tgvl_app (DML-only runtime login) on first initialisation.
+      - ./postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+      - ./postgres/roles.sql:/opt/tgvl/roles.sql:ro
+    networks: [internal]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tgvl_admin -d tgvl']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    security_opt: ['no-new-privileges:true']
+
+  migrate:
+    image: 'tgvoicelab-assistant:${TGVL_IMAGE_TAG:-local}'
+    # Run explicitly: `docker compose run --rm migrate`. Connects as tgvl_migrator (schema owner) and needs NO application secrets.
+    build: { context: .., args: { BUILD_FINGERPRINT: '${BUILD_FINGERPRINT:-unset}' } }
+    profiles: [tools]
+    command: ['node', 'dist/infrastructure/db/migrate-cli.js']
+    environment:
+      NODE_ENV: production
+    env_file: ['${TGVL_ENV_MIGRATE:-../.env.migrate}'] # DATABASE_URL=postgres://tgvl_migrator:...@db:5432/tgvl
+    depends_on: { db: { condition: service_healthy } }
+    networks: [internal]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+
+  assistant:
+    image: 'tgvoicelab-assistant:${TGVL_IMAGE_TAG:-local}'
+    build: { context: .., args: { BUILD_FINGERPRINT: '${BUILD_FINGERPRINT:-unset}' } }
+    restart: unless-stopped
+    env_file: ['${TGVL_ENV_PRODUCTION:-../.env.production}'] # DATABASE_URL=postgres://tgvl_app:...@db:5432/tgvl (runtime login)
+    environment:
+      NODE_ENV: production
+      HTTP_HOST: 0.0.0.0
+      DATA_ENCRYPTION_KEY_REF: file:/run/secrets/data_keys
+      ADMIN_TOKEN_SECRET_REF: file:/run/secrets/admin_token
+      TELEGRAM_SESSION_SECRET_REF: file:/run/secrets/telegram_session
+      CALLS_ENABLED: 'false'
+      CALL_ADAPTER: disabled
+    secrets: [data_keys, admin_token, telegram_session]
+    depends_on: { db: { condition: service_healthy } }
+    networks: [internal]
+    ports: ['127.0.0.1:${TGVL_HTTP_PORT:-8080}:8080'] # loopback only; put a private reverse proxy / VPN in front for remote admin
+    read_only: true
+    tmpfs: ['/tmp']
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    stop_grace_period: 30s # spec §11.2: drain within 30 s
+
+# File-based secrets are BIND MOUNTS: the container sees the host file's owner and mode.
+#   db secrets        -> owned by uid 999 (postgres), mode 0400
+#   assistant secrets -> owned by uid 10001 (the image user), mode 0400 (the app refuses group/world-readable secret files)
+# `deploy/prepare-secrets.sh` creates and permissions them; `deploy/smoke.sh` proves they are readable inside the containers.
+secrets:
+  db_admin_password:
+    file: '${TGVL_SECRETS_DIR:-../.local/secrets}/db_admin_password'
+  db_migrator_password:
+    file: '${TGVL_SECRETS_DIR:-../.local/secrets}/db_migrator_password'
+  db_app_password:
+    file: '${TGVL_SECRETS_DIR:-../.local/secrets}/db_app_password'
+  data_keys:
+    file: '${TGVL_SECRETS_DIR:-../.local/secrets}/data-keys.json'
+  admin_token:
+    file: '${TGVL_SECRETS_DIR:-../.local/secrets}/admin-token'
+  telegram_session:
+    file: '${TGVL_SECRETS_DIR:-../.local/secrets}/telegram.session'
+
+networks:
+  internal: { internal: false } # outbound needed for Telegram; no inbound port is published besides loopback 8080
+
+volumes:
+  pgdata: {}

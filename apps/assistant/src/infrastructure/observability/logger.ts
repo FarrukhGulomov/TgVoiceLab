@@ -5,9 +5,34 @@ import { pino, type Logger } from 'pino';
  * `api_hash`, `apiHash` and `API-HASH` all match while `reasonCode` and `relationship` do not.
  */
 const SENSITIVE_EXACT = new Set([
-  'apihash', 'apikey', 'authorization', 'cookie', 'password', 'otp', 'twofa', 'accesshash', 'callkey',
-  'ga', 'gb', 'ip', 'ipaddress', 'remoteip', 'participantip', 'transcript', 'content', 'text', 'audio',
-  'samples', 'payload', 'raw', 'body', 'session', 'sessionstring', 'phonecode', 'logincode', 'plaintext',
+  'apihash',
+  'apikey',
+  'authorization',
+  'cookie',
+  'password',
+  'otp',
+  'twofa',
+  'accesshash',
+  'callkey',
+  'ga',
+  'gb',
+  'ip',
+  'ipaddress',
+  'remoteip',
+  'participantip',
+  'transcript',
+  'content',
+  'text',
+  'audio',
+  'samples',
+  'payload',
+  'raw',
+  'body',
+  'session',
+  'sessionstring',
+  'phonecode',
+  'logincode',
+  'plaintext',
 ]);
 const SENSITIVE_SUFFIX = ['token', 'secret', 'password', 'apikey'];
 const isSensitiveKey = (k: string) => {
@@ -45,7 +70,10 @@ export function createLogger(level: string, destination?: NodeJS.WritableStream)
     hooks: {
       // Message strings (and printf-style args) bypass `formatters.log`, so scrub them here.
       logMethod(this: Logger, args: unknown[], method: (...a: unknown[]) => void) {
-        method.apply(this, args.map((a) => (typeof a === 'string' ? redactString(a) : a)));
+        method.apply(
+          this,
+          args.map((a) => (typeof a === 'string' ? redactString(a) : a)),
+        );
       },
     },
     redact: { paths: ['req.headers.authorization', 'req.headers.cookie', '*.apiHash', '*.session'], censor: '[redacted]' },
