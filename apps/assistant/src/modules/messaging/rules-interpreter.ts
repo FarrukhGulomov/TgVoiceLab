@@ -117,6 +117,10 @@ export class RulesInterpreter implements TextInterpreterPort {
   async completeDraft(raw: string, draft: ClarificationDraft, ctx: InterpretContext): Promise<Intent | null> {
     const low = normalizeApostrophes(raw).trim().toLowerCase();
     if (!low || low.length > 40) return null;
+    if (draft.kind === 'confirm_kill_switch_off') {
+      if (NO.test(low)) return { kind: 'cancel_pending' };
+      return YES.test(low) ? { kind: 'kill_switch', on: false, confirmed: true } : null;
+    }
     if (draft.kind === 'confirm_clear_calls') {
       if (NO.test(low)) return { kind: 'cancel_pending' };
       return YES.test(low) ? { kind: 'clear_stuck_calls', confirmed: true } : null;
@@ -155,6 +159,16 @@ export class RulesInterpreter implements TextInterpreterPort {
     if (/^\/?(?:help|start|yordam)\b/.test(low)) return { kind: 'help' };
     if (/\b(?:stop\s+calling(?:\s+me)?|(?:do\s*n'?t|do\s+not)\s+call\s+me|qo'ng'iroq\s+qilma(?:ng)?|qong'iroq\s+qilma(?:ng)?)\b/.test(low))
       return { kind: 'stop_calling' };
+
+    // The calling kill switch. Matched only on explicit wording, never on an ordinary sentence about calls.
+    if (
+      /\b(?:kill\s*-?\s*switch\s*(?:on|yoq\w*|yoqing)|(?:hamma|barcha)\s+qo'ng'iroqlarni\s+(?:darhol\s+)?to'xtat\w*|favqulodda\s+to'xtat\w*|emergency\s+stop|экстренная\s+остановка)(?![\p{L}'])/u.test(
+        low,
+      )
+    )
+      return { kind: 'kill_switch', on: true };
+    if (/\b(?:kill\s*-?\s*switch\s*(?:off|o'chir\w*)|qo'ng'iroqlarni\s+qayta\s+yoq\w*|favqulodda\s+to'xtatishni\s+(?:o'chir|bekor)\w*)(?![\p{L}'])/u.test(low))
+      return { kind: 'kill_switch', on: false };
 
     // ---- contacts and calls to contacts (the owner's explicit commands) ---------------------------------------------------
     {

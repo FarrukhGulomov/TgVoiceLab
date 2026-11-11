@@ -37,6 +37,57 @@ const BLOCK_KEYS: Record<string, MessageKey> = {
   calling_not_verified: 'call_block_not_verified',
 };
 
+/** The same reasons in Uzbek and Russian (English is the table below and the fallback for anything not listed). */
+const REASONS_UZ: Record<string, string> = {
+  kill_switch_on: 'qo‘ng‘iroqlar o‘chirib qo‘yilgan',
+  calling_not_verified: 'haqiqiy qo‘ng‘iroqlar bu o‘rnatishda tasdiqlanmagan',
+  consent_mechanism_unproven: 'uchinchi shaxslarga qo‘ng‘iroq uchun rozilik mexanizmi isbotlanmagan',
+  permission_revoked: 'ruxsat bekor qilingan',
+  permission_expired: 'ruxsat muddati tugagan',
+  permission_version_stale: 'rejani tasdiqlaganingizdan keyin ruxsatlar o‘zgargan',
+  plan_hash_mismatch: 'tasdiqdan keyin reja o‘zgargan',
+  authorization_expired: 'tasdiq muddati tugagan',
+  authorization_not_approved: 'amaldagi tasdiq yo‘q',
+  active_call_exists: 'boshqa qo‘ng‘iroq davom etmoqda',
+  budget_not_reserved: 'kunlik byudjet tugagan',
+  quiet_hours: 'tinch soatlar',
+  outside_allowed_hours: 'bu kontakt uchun belgilangan soatlardan tashqari',
+  topic_not_permitted: 'bu mavzuga bu kontaktga ruxsat yo‘q',
+  declined: 'rad etdi',
+  busy: 'band',
+  no_answer: 'javob bermadi',
+  privacy_restricted: 'kontaktning maxfiylik sozlamalari qo‘ng‘iroqqa ruxsat bermaydi',
+  transport_error: 'ulanishda muammo',
+  cancelled: 'bekor qilindi',
+  duration_limit: 'vaqt chegarasiga yetdi',
+  outcome_unknown: 'natija noma‘lum',
+};
+const REASONS_RU: Record<string, string> = {
+  kill_switch_on: 'звонки выключены',
+  calling_not_verified: 'настоящие звонки не подтверждены в этой установке',
+  consent_mechanism_unproven: 'механизм согласия для звонков третьим лицам не подтверждён',
+  permission_revoked: 'разрешение отозвано',
+  permission_expired: 'срок разрешения истёк',
+  permission_version_stale: 'разрешения изменились после вашего подтверждения плана',
+  plan_hash_mismatch: 'план изменился после подтверждения',
+  authorization_expired: 'срок подтверждения истёк',
+  authorization_not_approved: 'нет действующего подтверждения',
+  active_call_exists: 'идёт другой звонок',
+  budget_not_reserved: 'дневной бюджет исчерпан',
+  quiet_hours: 'тихие часы',
+  outside_allowed_hours: 'вне часов, заданных для этого контакта',
+  topic_not_permitted: 'эта тема для контакта не разрешена',
+  declined: 'отклонил',
+  busy: 'занято',
+  no_answer: 'нет ответа',
+  privacy_restricted: 'настройки приватности контакта не допускают звонков',
+  transport_error: 'проблема с соединением',
+  cancelled: 'отменено',
+  duration_limit: 'достигнут лимит времени',
+  outcome_unknown: 'результат неизвестен',
+};
+const reasonText = (loc: Locale, code: string): string => (loc === 'uz' ? REASONS_UZ : loc === 'ru' ? REASONS_RU : {})[code] ?? REASONS[code] ?? code;
+
 const REASONS: Record<string, string> = {
   kill_switch_on: 'calling is switched off',
   calling_not_verified: 'real calling is not verified on this deployment',
@@ -207,7 +258,7 @@ export function makeOutboxHandlers(deps: {
           : 'SELECT c.display_name FROM call_requests r JOIN contacts c ON c.id=r.contact_id WHERE r.id=$1 AND r.owner_id=$2';
       const contactRow = (await db.query<{ display_name: string }>(q, [row.aggregateId, row.ownerId])).rows[0];
       const blockKey = BLOCK_KEYS[p.reason ?? ''];
-      const reason = blockKey ? t(owner.locale, blockKey) : (REASONS[p.reason ?? ''] ?? p.reason ?? '');
+      const reason = blockKey ? t(owner.locale, blockKey) : p.reason ? reasonText(owner.locale, p.reason) : '';
       if (!contactRow && p.inbound) {
         // The owner rang the assistant and was turned away: the busy tone says nothing, so tell them why, once, in words.
         await messaging.sendMessage({

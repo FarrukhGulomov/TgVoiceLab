@@ -96,6 +96,8 @@ export class IntakeService {
         resolveAllUnknownCalls?(q: pg.PoolClient, ownerId: string, now: Date): Promise<number>;
         terminateLiveContactCalls(ownerId: string, contactId: string): Promise<number>;
         enforceLivePolicy?(ownerId: string): Promise<number>;
+        applyKillSwitch?(q: pg.PoolClient, ownerId: string, on: boolean, reason: string): Promise<unknown>;
+        terminateLive?(ownerId: string, contactId: string | undefined, reason: 'cancelled' | 'consent_withdrawn'): Promise<number>;
       };
       contacts?: ContactService;
       /** Owner-controlled memory ("eslab qol", "xotira", "unut"); also gives the free-form fallback what it remembers. */
@@ -184,6 +186,9 @@ export class IntakeService {
             kind: 'clarify',
             question: open.length ? t(p.locale, 'clear_calls_other', { states: [...new Set(open)].join(', ') }) : t(p.locale, 'clear_calls_none'),
           };
+    } else if (intent?.kind === 'kill_switch' && !intent.on && !intent.confirmed) {
+      // Switching the kill switch OFF is never done on one sentence: say what it means and wait for "ha".
+      intent = { kind: 'clarify', question: t(p.locale, 'kill_switch_off_confirm'), draft: { kind: 'confirm_kill_switch_off' } };
     } else if (intent?.kind === 'message_contact') {
       // A text the owner typed for a contact is still shown back and sent only after "ha".
       const m = intent;
@@ -625,6 +630,19 @@ export class IntakeService {
           metadata: { scope: 'all_calls', cancelledRequests: cancelled },
         });
         return t(loc, 'calls_stopped');
+      }
+      case 'kill_switch': {
+        const ops = this.d.ownerCalls;
+        if (!ops?.applyKillSwitch) return t(loc, 'unknown');
+        if (!intent.on && !intent.confirmed) return t(loc, 'unknown'); // OFF only ever arrives confirmed (see the draft above)
+        await ops.applyKillSwitch(c, p.ownerId, intent.on, 'owner chat');
+        if (intent.on) {
+          const live = ops.terminateLive;
+          if (live) afterCommit.push(() => live.call(ops, p.ownerId, undefined, 'cancelled'));
+          return t(loc, 'kill_switch_on_ok');
+        }
+        const status = this.d.callingStatus ? await this.d.callingStatus(c, p.ownerId) : 'ready';
+        return status === 'ready' ? t(loc, 'kill_switch_off_ok') : t(loc, 'kill_switch_off_but', { why: t(loc, `call_block_${status}`) });
       }
       case 'add_contact': {
         if (intent.telegramUserId === p.telegramUserId) return t(loc, 'contact_self');

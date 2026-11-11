@@ -96,6 +96,12 @@ const CATALOG = {
     contact_relay_media: '📩 {name} sent a voice message or a file (I do not open those).',
     watch_set_text: 'OK. Whenever {name} replies I will pass it on here (that is the default for every reply).',
     call_owner_ok: 'OK, calling you right now.',
+    kill_switch_on_ok:
+      'Done: the calling kill switch is ON. Every call in progress was ended and no new call will start. To switch it off say «kill switch off».',
+    kill_switch_off_confirm:
+      'Switch the calling kill switch OFF? Calls may start again (if everything else allows them). Reply «ha» to confirm or «yo‘q» to leave it on.',
+    kill_switch_off_ok: 'The calling kill switch is OFF.',
+    kill_switch_off_but: 'The calling kill switch is OFF, but calls still cannot start: {why}.',
     call_block_off: 'calls are switched off in this deployment (CALLS_ENABLED is not true)',
     call_block_kill_switch: 'the calling kill switch is on',
     call_block_not_verified:
@@ -218,6 +224,12 @@ const CATALOG = {
     contact_relay_media: '📩 {name} ovozli xabar yoki fayl yubordi (ularni ochmayman).',
     watch_set_text: 'Xo‘p. {name} javob yozsa, shu yerda yetkazaman (bu har bir javob uchun odatiy tartib).',
     call_owner_ok: 'Xo‘p, hozir sizga qo‘ng‘iroq qilaman.',
+    kill_switch_on_ok:
+      'Tayyor: qo‘ng‘iroqlarning favqulodda o‘chirgichi YOQILDI. Davom etayotgan har bir qo‘ng‘iroq tugatildi va yangisi boshlanmaydi. O‘chirish uchun «kill switch off» deb yozing.',
+    kill_switch_off_confirm:
+      'Qo‘ng‘iroqlarning favqulodda o‘chirgichini O‘CHIRAYMI? Qo‘ng‘iroqlar yana boshlanishi mumkin (boshqa shartlar ruxsat bersa). Tasdiqlash uchun «ha», qoldirish uchun «yo‘q» deb yozing.',
+    kill_switch_off_ok: 'Qo‘ng‘iroqlarning favqulodda o‘chirgichi O‘CHIRILDI.',
+    kill_switch_off_but: 'Favqulodda o‘chirgich o‘chirildi, lekin qo‘ng‘iroqlar hali boshlana olmaydi: {why}.',
     call_block_off: 'bu o‘rnatishda qo‘ng‘iroqlar o‘chirilgan (CALLS_ENABLED true emas)',
     call_block_kill_switch: 'qo‘ng‘iroqlarning favqulodda o‘chirgichi yoqilgan',
     call_block_not_verified:
@@ -338,6 +350,12 @@ const CATALOG = {
     contact_relay_media: '📩 {name} прислал(а) голосовое или файл (я их не открываю).',
     watch_set_text: 'Хорошо. Когда {name} ответит, передам сюда (так и так делаю для каждого ответа).',
     call_owner_ok: 'Хорошо, звоню вам прямо сейчас.',
+    kill_switch_on_ok:
+      'Готово: аварийный выключатель звонков ВКЛЮЧЁН. Все текущие звонки завершены, новые не начнутся. Чтобы выключить, напишите «kill switch off».',
+    kill_switch_off_confirm:
+      'ВЫКЛЮЧИТЬ аварийный выключатель звонков? Звонки смогут снова начинаться (если всё остальное разрешит). Ответьте «да» для подтверждения или «нет», чтобы оставить включённым.',
+    kill_switch_off_ok: 'Аварийный выключатель звонков ВЫКЛЮЧЕН.',
+    kill_switch_off_but: 'Аварийный выключатель выключен, но звонки пока не могут начаться: {why}.',
     call_block_off: 'звонки отключены в этой установке (CALLS_ENABLED не true)',
     call_block_kill_switch: 'включён аварийный выключатель звонков',
     call_block_not_verified:

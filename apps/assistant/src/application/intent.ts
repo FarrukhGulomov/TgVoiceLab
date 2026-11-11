@@ -52,7 +52,11 @@ export interface MessageConfirmDraft {
 export interface ClearCallsDraft {
   kind: 'confirm_clear_calls';
 }
-export type ClarificationDraft = ReminderDraft | CallConfirmDraft | MessageConfirmDraft | ClearCallsDraft;
+/** The owner is asked to confirm before the calling kill switch is switched OFF (calls may start again). */
+export interface KillSwitchOffDraft {
+  kind: 'confirm_kill_switch_off';
+}
+export type ClarificationDraft = ReminderDraft | CallConfirmDraft | MessageConfirmDraft | ClearCallsDraft | KillSwitchOffDraft;
 
 export type Intent =
   | { kind: 'create_task'; title: string; due?: LocalDateTime }
@@ -93,6 +97,8 @@ export type Intent =
   | { kind: 'call_owner'; reason?: string }
   /** Free the calling account from calls whose outcome is unknown, after the owner confirmed there is no live call. */
   | { kind: 'clear_stuck_calls'; confirmed?: boolean }
+  /** The calling kill switch from chat. ON acts at once (the safe direction); OFF needs the owner's confirmation first. */
+  | { kind: 'kill_switch'; on: boolean; confirmed?: boolean }
   | { kind: 'set_owner_name'; name: string }
   | { kind: 'set_briefing'; time: string } // HH:mm, daily
   | { kind: 'cancel_briefing' }
